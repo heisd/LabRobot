@@ -97,12 +97,25 @@ def generate_launch_description():
     )
 
     # 给抓取服务提供颜色识别节点hsv
+    # 配置话题名称和TF坐标系，确保与实际相机驱动匹配
     color_dectet=Node(
             package="grab_demo",
             executable="hsv_range",
             name="color_node",
+            parameters=[{
+                # 相机话题配置 - 根据实际相机驱动调整
+                'rgb_topic': '/camera_arm/color/image_raw',
+                'depth_topic': '/camera_arm/aligned_depth_to_color/image_raw',  # 使用对齐的深度图
+                'camera_info_topic': '/camera_arm/color/camera_info',  # 从相机直接读取内参
+                # TF 坐标系配置
+                'tf_frame_id': 'camera_arm_color_optical_frame',
+                'tf_child_frame_id': 'detected_object',
+            }],
         )
     # 提供相机内参节点
+    # 注意：如果相机驱动已发布 camera_info 话题，此节点可能不再需要
+    # hsv_range 节点现在默认从 /camera_arm/color/camera_info 读取内参
+    # 保留此节点作为备用，可在需要时启用
     camera_info=Node(
             package="grab_demo",
             executable="camera_info_node",
