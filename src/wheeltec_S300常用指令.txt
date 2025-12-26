@@ -1,0 +1,46 @@
+source ./install/setup.bash 
+cd ../wheeltec_lebai_humble_2024_7_17/
+ cd ../WHEELTEC_S300Pro_mini
+rqt_graph
+
+1. 
+机械臂rviz实时控制
+   ros2 launch  lebai_lm3_moveit_config  lm3.launch.py  robot_ip:=192.168.0.50
+   ros2 launch  lebai_lm3_moveit_config  rviz.launch.py （客户端打开）
+
+2. 机械臂运动学正解例程
+   ros2 launch arm_demo fk_demo.launch.py
+
+3. 机械臂运动学逆解例程
+   ros2 launch arm_demo ik_demo.launch.py
+
+4. 标定获取相机内参
+   ros2 launch astra_camera gemini_arm.launch.py
+   ros2 run camera_calibration cameracalibrator  --size 8x6 --square 0.0255 image:=/camera/color/image_raw
+
+
+5. 手眼标定
+    ros2 launch grab_demo hand_eye.launch.py
+
+6. aruco识别夹取
+   ros2 launch grab_demo aruco_grab.launch.py
+   ros2 run grab_demo start_grab aruco_link
+
+7. 颜色识别夹取
+   ros2 launch grab_demo color_grab.launch.py
+   ros2 run grab_demo start_grab color_link
+
+
+指定功能包编译：
+colcon build --packages-select "功能包名"
+colcon build --packages-select grab_demo
+
+ssh登录：
+ssh -Y wheeltec@192.168.0.100
+
+nfs挂载:
+sudo mount -t nfs 192.168.0.100:/home/wheeltec/wheeltec_lebai  /mnt2
+nfs解除挂载:
+sudo umount -t nfs 192.168.0.100:/home/wheeltec/wheeltec_lebai  /mnt2
+[INFO] [1766739556.256350468] [tf2_echo]: Waiting for transform camera_arm_color_optical_frame ->  color_link: Invalid frame ID "camera_arm_color_optical_frame" passed to canTransform argument target_frame - frame does not exist
+
