@@ -1,0 +1,23 @@
+digraph G {
+"lebai_base_link" -> "lebai_link_1"[label=" Broadcaster: default_authority\nAverage rate: 12.6\nBuffer length: 5.0\nMost recent transform: 1762934798.244806\nOldest transform: 1762934793.244781\n"];
+"base_link" -> "lebai_base_link"[label=" Broadcaster: default_authority\nAverage rate: 10000.0\nBuffer length: 0.0\nMost recent transform: 0.0\nOldest transform: 0.0\n"];
+"lebai_link_1" -> "lebai_link_2"[label=" Broadcaster: default_authority\nAverage rate: 12.6\nBuffer length: 5.0\nMost recent transform: 1762934798.244806\nOldest transform: 1762934793.244781\n"];
+"lebai_link_2" -> "lebai_link_3"[label=" Broadcaster: default_authority\nAverage rate: 12.6\nBuffer length: 5.0\nMost recent transform: 1762934798.244806\nOldest transform: 1762934793.244781\n"];
+"lebai_link_3" -> "lebai_link_4"[label=" Broadcaster: default_authority\nAverage rate: 12.6\nBuffer length: 5.0\nMost recent transform: 1762934798.244806\nOldest transform: 1762934793.244781\n"];
+"lebai_link_4" -> "lebai_link_5"[label=" Broadcaster: default_authority\nAverage rate: 12.6\nBuffer length: 5.0\nMost recent transform: 1762934798.244806\nOldest transform: 1762934793.244781\n"];
+"lebai_link_5" -> "lebai_link_6"[label=" Broadcaster: default_authority\nAverage rate: 12.6\nBuffer length: 5.0\nMost recent transform: 1762934798.244806\nOldest transform: 1762934793.244781\n"];
+"world" -> "base_link"[label=" Broadcaster: default_authority\nAverage rate: 10000.0\nBuffer length: 0.0\nMost recent transform: 0.0\nOldest transform: 0.0\n"];
+"lebai_base_link" -> "lebai_base"[label=" Broadcaster: default_authority\nAverage rate: 10000.0\nBuffer length: 0.0\nMost recent transform: 0.0\nOldest transform: 0.0\n"];
+"lebai_link_6" -> "lebai_tool0"[label=" Broadcaster: default_authority\nAverage rate: 10000.0\nBuffer length: 0.0\nMost recent transform: 0.0\nOldest transform: 0.0\n"];
+"lebai_tool0" -> "lebai_gripper"[label=" Broadcaster: default_authority\nAverage rate: 10000.0\nBuffer length: 0.0\nMost recent transform: 0.0\nOldest transform: 0.0\n"];
+"camera_color_optical_frame" -> "color_link"[label=" Broadcaster: default_authority\nAverage rate: 30.036\nBuffer length: 5.027\nMost recent transform: 1762934798.281204\nOldest transform: 1762934793.253949\n"];
+"lebai_tool0" -> "camera_link"[label=" Broadcaster: default_authority\nAverage rate: 10000.0\nBuffer length: 0.0\nMost recent transform: 0.0\nOldest transform: 0.0\n"];
+"camera_link" -> "camera_arm_color_frame"[label=" Broadcaster: default_authority\nAverage rate: 20.327\nBuffer length: 4.329\nMost recent transform: 1762934798.225126\nOldest transform: 1762934793.895959\n"];
+"camera_link" -> "camera_arm_depth_frame"[label=" Broadcaster: default_authority\nAverage rate: 10.164\nBuffer length: 4.329\nMost recent transform: 1762934798.225126\nOldest transform: 1762934793.895959\n"];
+"camera_arm_color_frame" -> "camera_arm_color_optical_frame"[label=" Broadcaster: default_authority\nAverage rate: 10.164\nBuffer length: 4.329\nMost recent transform: 1762934798.225126\nOldest transform: 1762934793.895959\n"];
+"camera_arm_depth_frame" -> "camera_arm_depth_optical_frame"[label=" Broadcaster: default_authority\nAverage rate: 10.164\nBuffer length: 4.329\nMost recent transform: 1762934798.225126\nOldest transform: 1762934793.895959\n"];
+edge [style=invis];
+ subgraph cluster_legend { style=bold; color=black; label ="view_frames Result";
+"Recorded at time: 1762934798.3293476"[ shape=plaintext ] ;
+}->"camera_color_optical_frame";
+}
