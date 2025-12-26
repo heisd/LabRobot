@@ -14,16 +14,35 @@ class ImageProcessor : public rclcpp::Node
 public:
   ImageProcessor(): Node("image_processor")
   {
-    // 订阅RGB话题
-    rgb_sub_.subscribe(this, "/camera_arm/color/image_raw");
+    // 声明参数，允许通过 launch 文件配置话题名
+    this->declare_parameter<std::string>("rgb_topic", "/camera_arm/color/image_raw");
+    this->declare_parameter<std::string>("depth_topic", "/camera_arm/aligned_depth_to_color/image_raw");
+    this->declare_parameter<std::string>("camera_info_topic", "/camera_arm/color/camera_info");
+    this->declare_parameter<std::string>("tf_frame_id", "camera_arm_color_optical_frame");
+    this->declare_parameter<std::string>("tf_child_frame_id", "detected_object");
 
-    // 订阅深度话题
-    depth_sub_.subscribe(this, "/camera_arm/depth/image_raw");
+    std::string rgb_topic = this->get_parameter("rgb_topic").as_string();
+    std::string depth_topic = this->get_parameter("depth_topic").as_string();
+    std::string camera_info_topic = this->get_parameter("camera_info_topic").as_string();
+    tf_frame_id_ = this->get_parameter("tf_frame_id").as_string();
+    tf_child_frame_id_ = this->get_parameter("tf_child_frame_id").as_string();
+
+    RCLCPP_INFO(this->get_logger(), "RGB topic: %s", rgb_topic.c_str());
+    RCLCPP_INFO(this->get_logger(), "Depth topic: %s", depth_topic.c_str());
+    RCLCPP_INFO(this->get_logger(), "Camera info topic: %s", camera_info_topic.c_str());
+
+    // 订阅RGB话题
+    rgb_sub_.subscribe(this, rgb_topic);
+
+    // 订阅深度话题（使用对齐到彩色图的深度图）
+    depth_sub_.subscribe(this, depth_topic);
 
     // 创建同步策略
     approxSync = new message_filters::Synchronizer<syncPolicy>(syncPolicy(10), rgb_sub_, depth_sub_);
     approxSync->registerCallback(std::bind(&ImageProcessor::imageCallback, this, std::placeholders::_1, std::placeholders::_2));
-    camera_info_sub = create_subscription<sensor_msgs::msg::CameraInfo>("/gemini_info", 1, std::bind(&ImageProcessor::rgb_info_callback, this, std::placeholders::_1));
+
+    // 从相机实际发布的话题读取内参，而不是使用硬编码值
+    camera_info_sub = create_subscription<sensor_msgs::msg::CameraInfo>(camera_info_topic, 1, std::bind(&ImageProcessor::rgb_info_callback, this, std::placeholders::_1));
 
     // 初始化TF广播器
     tf_pub = std::make_shared<tf2_ros::TransformBroadcaster>(this);
@@ -68,7 +87,7 @@ private:
         RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
         return;
       }
-      
+
       cv_bridge::CvImagePtr cv_depth_ptr;
       try
       {
@@ -78,6 +97,26 @@ private:
       {
         RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
         return;
+      }
+
+      // 检查并记录分辨率，只在分辨率变化时输出一次
+      if (cv_rgb_ptr->image.cols != rgb_width_ || cv_rgb_ptr->image.rows != rgb_height_ ||
+          cv_depth_ptr->image.cols != depth_width_ || cv_depth_ptr->image.rows != depth_height_)
+      {
+        rgb_width_ = cv_rgb_ptr->image.cols;
+        rgb_height_ = cv_rgb_ptr->image.rows;
+        depth_width_ = cv_depth_ptr->image.cols;
+        depth_height_ = cv_depth_ptr->image.rows;
+
+        RCLCPP_INFO(this->get_logger(), "RGB image size: %dx%d", rgb_width_, rgb_height_);
+        RCLCPP_INFO(this->get_logger(), "Depth image size: %dx%d", depth_width_, depth_height_);
+
+        if (rgb_width_ != depth_width_ || rgb_height_ != depth_height_)
+        {
+          RCLCPP_WARN(this->get_logger(),
+            "WARNING: RGB and Depth image sizes do not match! "
+            "Use aligned_depth_to_color topic for accurate 3D positioning.");
+        }
       }
 
       // 图像处理
@@ -119,45 +158,81 @@ private:
         if(moments.m00 > 0)
         {
           cv::Point newpos(moments.m10 / moments.m00, moments.m01 / moments.m00);
-          
-          // 获取深度值
-          double dis = (cv_depth_ptr->image.at<ushort>(newpos.y, newpos.x)) / 1000.0;
-          RCLCPP_INFO(this->get_logger(), "Dis: %f", dis);
-          
-          if(dis > 0.1 && dis < 10.0)  // 有效的深度范围
+
+          // 确保像素坐标在深度图范围内
+          int depth_x = newpos.x;
+          int depth_y = newpos.y;
+
+          // 如果 RGB 和深度分辨率不同，进行坐标缩放
+          if (rgb_width_ != depth_width_ || rgb_height_ != depth_height_)
+          {
+            depth_x = static_cast<int>(newpos.x * depth_width_ / rgb_width_);
+            depth_y = static_cast<int>(newpos.y * depth_height_ / rgb_height_);
+          }
+
+          // 边界检查
+          depth_x = std::max(0, std::min(depth_x, depth_width_ - 1));
+          depth_y = std::max(0, std::min(depth_y, depth_height_ - 1));
+
+          // 获取深度值，使用小区域的中值滤波来提高稳定性
+          double dis = 0.0;
+          std::vector<ushort> depth_values;
+          int window_size = 3;  // 3x3 窗口
+          for (int dy = -window_size/2; dy <= window_size/2; dy++)
+          {
+            for (int dx = -window_size/2; dx <= window_size/2; dx++)
+            {
+              int px = std::max(0, std::min(depth_x + dx, depth_width_ - 1));
+              int py = std::max(0, std::min(depth_y + dy, depth_height_ - 1));
+              ushort d = cv_depth_ptr->image.at<ushort>(py, px);
+              if (d > 0) depth_values.push_back(d);
+            }
+          }
+
+          if (!depth_values.empty())
+          {
+            std::sort(depth_values.begin(), depth_values.end());
+            dis = depth_values[depth_values.size() / 2] / 1000.0;  // 取中值
+          }
+
+          // 有效的深度范围检查（典型深度相机工作范围：0.2m - 5m）
+          if(dis > 0.15 && dis < 5.0)
           {
             // 通过相机内参将像素坐标转换成物体相对相机的三维坐标
             double x = (newpos.x - camera_matrix.at<double>(0,2)) / camera_matrix.at<double>(0,0) * dis;
             double y = (newpos.y - camera_matrix.at<double>(1,2)) / camera_matrix.at<double>(1,1) * dis;
-            
+
             // 应用x方向偏差调整（转换为米）
             double x_offset = x_offset_cm_ / 100.0;
             x += x_offset;
             double y_offset = y_offset_cm_ / 100.0;
             y += y_offset;
             double z_offset = z_offset_cm_ / 100.0;
-            dis+=z_offset;
-            
-            // 发布TF变换
+            dis += z_offset;
+
+            // 发布TF变换，使用可配置的坐标系名称
             geometry_msgs::msg::TransformStamped obg_msg;
             obg_msg.transform.translation.x = x;
             obg_msg.transform.translation.y = y;
             obg_msg.transform.translation.z = dis;
             obg_msg.header.stamp = this->now();
-            obg_msg.header.frame_id = "camera_arm_color_optical_frame";  // 使用更通用的坐标系
-            // 修改这个子坐标系为detected_object
-            obg_msg.child_frame_id = "detected_object";
+            obg_msg.header.frame_id = tf_frame_id_;
+            obg_msg.child_frame_id = tf_child_frame_id_;
             obg_msg.transform.rotation.x = 0.0;
             obg_msg.transform.rotation.y = 0.0;
             obg_msg.transform.rotation.z = 0.0;
             obg_msg.transform.rotation.w = 1.0;
-            
-            
+
             tf_pub->sendTransform(obg_msg);
-            RCLCPP_INFO(this->get_logger(), "Dis: %f, X: %f, Y: %f", dis, x, y);
-            
+            RCLCPP_INFO(this->get_logger(), "Dis: %.3f, X: %.3f, Y: %.3f", dis, x, y);
+
             // 更新调试信息
             updateDebugInfo(x, y, dis, newpos, x_offset, y_offset, z_offset);
+          }
+          else if (dis > 0)
+          {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+              "Depth value %.3f out of valid range (0.15-5.0m)", dis);
           }
         }
       }
@@ -260,18 +335,30 @@ private:
   cv::Mat camera_dis;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub;
 
+  // HSV 默认值 - 设置为检测红色物体的范围（可通过滑动条调整）
+  // 注意: OpenCV 中 H 范围是 0-179，S 和 V 是 0-255
   int hue_min_ = 0;
-  int hue_max_ = 255;
-  int saturation_min_ = 0;
+  int hue_max_ = 10;  // 红色在 HSV 中 H 值接近 0 或 180
+  int saturation_min_ = 100;  // 过滤掉低饱和度的颜色
   int saturation_max_ = 255;
-  int value_min_ = 0;
+  int value_min_ = 100;  // 过滤掉太暗的区域
   int value_max_ = 255;
   int x_offset_cm_ = 0;  // x方向偏差调整（厘米）
   int y_offset_cm_ = 0;  // y方向偏差调整（厘米）
   int z_offset_cm_ = 0;  // z方向偏差调整（厘米）
   bool camera_info = false;
   cv::Mat debug_info_;
-  
+
+  // TF 坐标系名称（可通过参数配置）
+  std::string tf_frame_id_;
+  std::string tf_child_frame_id_;
+
+  // 图像分辨率（用于检查对齐）
+  int rgb_width_ = 0;
+  int rgb_height_ = 0;
+  int depth_width_ = 0;
+  int depth_height_ = 0;
+
   std::shared_ptr<tf2_ros::TransformBroadcaster> tf_pub;
 };
 
