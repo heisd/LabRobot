@@ -86,7 +86,8 @@ void obj_grab::start_grab(const std::shared_ptr<grab_demo::srv::GrabObject::Requ
 
     target_pose.position.x=tfs.transform.translation.x;
     target_pose.position.y=tfs.transform.translation.y;
-    target_pose.position.z=tfs.transform.translation.z;
+    // 在服务端加Z轴补偿
+    target_pose.position.z=tfs.transform.translation.z+0.02;
     
     // 设置目标姿态
     // 默认使用当前位置的姿态（保持当前方向）

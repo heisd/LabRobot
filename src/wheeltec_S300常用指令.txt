@@ -30,7 +30,7 @@ rqt_graph
 7. 颜色识别夹取
    ros2 launch grab_demo color_grab.launch.py
    # 没有从camera_arm
-   ros2 run grab_demo start_grab 
+   ros2 run grab_demo start_grab target_frame
 
 
 指定功能包编译：

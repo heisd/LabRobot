@@ -93,8 +93,8 @@ private:
   {
     if(camera_info)
     {
-            // 转换ROS图像消息为OpenCV格式
-          cv_bridge::CvImagePtr cv_rgb_ptr;
+        // 转换ROS图像消息为OpenCV格式
+        cv_bridge::CvImagePtr cv_rgb_ptr;
         try
         {
           cv_rgb_ptr = cv_bridge::toCvCopy(rgb_msg, sensor_msgs::image_encodings::BGR8);
@@ -145,6 +145,30 @@ private:
           std::vector<cv::Point> contour=contours[0];
           cv::Moments moments=cv::moments(contour);
           cv::Point newpos(moments.m10/moments.m00,moments.m01/moments.m00);
+          // 在RGB图像上对识别到的物体做标记
+          // 让我们方便知道我们定位抓取的物体
+          cv::Mat display_image = cv_rgb_ptr->image.clone();
+          int cross_size = 20;  // 十字大小
+          int thickness = 2;    // 线条粗细
+          cv::Scalar blue(255, 0, 0);  // BGR格式的蓝色
+          
+          // 画水平线
+          cv::line(display_image, 
+                  cv::Point(newpos.x - cross_size, newpos.y),
+                  cv::Point(newpos.x + cross_size, newpos.y),
+                  blue, thickness);
+          // 画垂直线
+          cv::line(display_image,
+                  cv::Point(newpos.x, newpos.y - cross_size),
+                  cv::Point(newpos.x, newpos.y + cross_size),
+                  blue, thickness);
+          
+          // 可选：画轮廓边框
+          cv::drawContours(display_image, contours, 0, cv::Scalar(0, 255, 0), 2);
+          
+          // 显示带标记的图像
+          cv::imshow("Detection", display_image);
+          cv::waitKey(1);
 
           tf_pub=std::make_shared<tf2_ros::TransformBroadcaster>(this);
            dis=(cv_depth_ptr->image.at<ushort>(newpos.y,newpos.x))/1000.0;
@@ -153,13 +177,17 @@ private:
           RCLCPP_INFO(this->get_logger(),"dis = %.3f",dis);
           if(dis>0)
           {
+              // 在运行的时候添加Z轴补偿+0.07m的补偿
+              double z_offset =0.07;
               geometry_msgs::msg::TransformStamped obg_msg;
               obg_msg.transform.translation.x=x;
               obg_msg.transform.translation.y=y;
-              obg_msg.transform.translation.z=dis;
+              obg_msg.transform.translation.z=dis+z_offset;
               obg_msg.header.stamp=this->now();
-              obg_msg.header.frame_id="camera_color_optical_frame";    //设置参考坐标
-              obg_msg.child_frame_id="color_link";    //物体的tf坐标
+              // 修改为 camera_link,机器臂可以移动,但是位置不对
+              // 在返回到camera_arm_depth_optical_frame
+              obg_msg.header.frame_id="camera_arm_depth_optical_frame";    //设置参考坐标
+              obg_msg.child_frame_id="target_frame";    //物体的tf坐标
               
               tf_pub->sendTransform(obg_msg);
           }      
