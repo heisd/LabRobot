@@ -22,6 +22,7 @@ def load_file(package_name, file_path):
     try:
         with open(absolute_file_path, "r") as file:
             return file.read()
+    # 如果是环境错误返回空
     except EnvironmentError:  # parent of IOError, OSError *and* WindowsError where available
         return None
 

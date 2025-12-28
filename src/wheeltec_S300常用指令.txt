@@ -20,14 +20,15 @@ rqt_graph
    ros2 run camera_calibration cameracalibrator  --size 8x6 --square 0.0255 image:=/camera/color/image_raw
 
 
-5. 手眼标定
+5. 手眼标定 成功
     ros2 launch grab_demo hand_eye.launch.py
 
-6. aruco识别夹取
+6. aruco识别夹取 需要对准方向在进行抓取，对有方向的物体最好 未测试
    ros2 launch grab_demo aruco_grab.launch.py
    ros2 run grab_demo start_grab aruco_link
 
-7. 颜色识别夹取
+7. 颜色识别夹取 成功 
+注意Z方向补偿要根据实物来进行调节
    ros2 launch grab_demo color_grab.launch.py
    # 没有从camera_arm
    ros2 run grab_demo start_grab target_frame

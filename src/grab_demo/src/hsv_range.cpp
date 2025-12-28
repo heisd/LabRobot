@@ -169,15 +169,16 @@ private:
           // 显示带标记的图像
           cv::imshow("Detection", display_image);
           cv::waitKey(1);
-
+          // 创建TF广播器
           tf_pub=std::make_shared<tf2_ros::TransformBroadcaster>(this);
-           dis=(cv_depth_ptr->image.at<ushort>(newpos.y,newpos.x))/1000.0;
+          // 深度图像已经处理好我们的距离，我们只是找这个点的位置来判断这个点的深度值
+          dis=(cv_depth_ptr->image.at<ushort>(newpos.y,newpos.x))/1000.0;
           double x=(newpos.x-camera_matrix.at<double>(0,2))/camera_matrix.at<double>(0,0)*dis;//通过相机内参将像素坐标转换成物体相对相机的三维坐标
           double y=(newpos.y-camera_matrix.at<double>(1,2))/camera_matrix.at<double>(1,1)*dis;
           RCLCPP_INFO(this->get_logger(),"dis = %.3f",dis);
           if(dis>0)
           {
-              // 在运行的时候添加Z轴补偿+0.07m的补偿
+              // 在运行的时候添加Z轴补偿+0.07m的补偿，这个要根据实际情况进行更改
               double z_offset =0.07;
               geometry_msgs::msg::TransformStamped obg_msg;
               obg_msg.transform.translation.x=x;
@@ -188,16 +189,20 @@ private:
               // 在返回到camera_arm_depth_optical_frame
               obg_msg.header.frame_id="camera_arm_depth_optical_frame";    //设置参考坐标
               obg_msg.child_frame_id="target_frame";    //物体的tf坐标
-              
+              // 发布camera_arm_depth_optical_frame到target_frame的坐标转换，我们手动指定
               tf_pub->sendTransform(obg_msg);
           }      
         }
     }
   }
-
+// 验证相机内参和畸变系数数据是否有效，如果有效的话我们存在这两个数组里面
+// camera_martix 相机内参矩阵
+// camera_dis 畸变系数
 void rgb_info_callback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr &msg)
 {
+    // 相机内参矩阵
     bool K_valid=0;
+    // 畸变系数
     bool D_valid=0;
     if(!camera_info)
     {
@@ -238,23 +243,29 @@ void rgb_info_callback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr &msg)
     
 
 }
-
- typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::msg::Image,sensor_msgs::msg::Image> syncPolicy;
+// 系统的同步通信使用
+typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::msg::Image,sensor_msgs::msg::Image> syncPolicy;
         message_filters::Synchronizer<syncPolicy> *approxSync;
-  message_filters::Subscriber<sensor_msgs::msg::Image> rgb_sub_;
+        // 图片信息，深度和彩色图片
+        message_filters::Subscriber<sensor_msgs::msg::Image> rgb_sub_;
         message_filters::Subscriber<sensor_msgs::msg::Image> depth_sub_;
-                cv::Mat camera_matrix;
+        // 在rgb_info_callback里面初始化
+        cv::Mat camera_matrix;
         cv::Mat camera_dis;
-                rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub;
-
+        // 调用节点创建服务
+        rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub;
+  // 滑动条参数
   int hue_min_ = 0;
   int hue_max_ = 255;
   int saturation_min_ = 0;
   int saturation_max_ = 255;
   int value_min_ = 0;
   int value_max_ = 255;
+  // 获取相机
   bool camera_info=0;
+  // 获取深度的距离
   volatile double dis=0;
+  // tf 广播器
   std::shared_ptr<tf2_ros::TransformBroadcaster> tf_pub;
   };
 
