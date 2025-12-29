@@ -17,7 +17,7 @@ public:
         this->declare_parameter("point_cloud_topic", "/camera_arm/depth/points");
         this->declare_parameter("point_cloud_frame", "point_cloud_frame");
         this->declare_parameter("point_cloud_queue_size", 10);
-        // 获取参数，从launch文件中获取
+        // 获取参数，从声明中获取
         std::string point_cloud_topic = this->get_parameter("point_cloud_topic").as_string();
         std::string point_cloud_frame = this->get_parameter("point_cloud_frame").as_string();
         int point_cloud_queue_size = this->get_parameter("point_cloud_queue_size").as_int();
@@ -28,9 +28,7 @@ public:
         RCLCPP_INFO(this->get_logger(), "point_cloud_queue_size: %d", point_cloud_queue_size);
         // 订阅点云话题
        subscription_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(point_cloud_topic, point_cloud_queue_size, std::bind(&PointCloudNode::pointCloudCallback, this, std::placeholders::_1));
-        // 创建空窗口，配和cv::imshow显示点云
-        cv::namedWindow("Point Cloud", cv::WINDOW_AUTOSIZE);
-        
+
     }
 // 回调函数，将ROS消息转换为OpenCV消息
 void pointCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
@@ -49,6 +47,7 @@ void pointCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
         }
         
         // 方法2: 提取RGB信息（如果点云包含RGB字段）
+        // 发现并没有RGB字段，返回空图像
         cv::Mat rgb_image = extractRGBFromPointCloud2(msg);
         if (!rgb_image.empty()) {
             cv::imshow("Point Cloud RGB Image", rgb_image);
@@ -59,6 +58,7 @@ void pointCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
 // 从点云里面获取深度信息,并将其归一化到0-255
 cv::Mat extractDepthFromPointCloud2(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
 {
+    // 处理深度索引，找到z字段的索引
     int z_idx = -1;
     for (size_t i = 0; i < msg->fields.size(); ++i) {
         if (msg->fields[i].name == "z") {
@@ -66,18 +66,19 @@ cv::Mat extractDepthFromPointCloud2(const sensor_msgs::msg::PointCloud2::SharedP
             break;
         }
     }
-    
+    // 没有深度信息,返回空图像
     if (z_idx == -1) {
         RCLCPP_WARN(this->get_logger(), "No z field found");
         return cv::Mat();
     }
-    
+
+    // 创建深度图像，存储float类型的深度值CV_32F
     cv::Mat depth_image(msg->height, msg->width, CV_32F);
     
     // 收集有效深度值
     std::vector<float> valid_depths;
     valid_depths.reserve(msg->height * msg->width);
-    
+    // 遍历点云数据
     for (uint32_t v = 0; v < msg->height; ++v) {
         for (uint32_t u = 0; u < msg->width; ++u) {
             uint32_t index = v * msg->width + u;
@@ -125,17 +126,20 @@ cv::Mat extractDepthFromPointCloud2(const sensor_msgs::msg::PointCloud2::SharedP
             display_image.at<uint8_t>(v, u) = pixel_val;
         }
     }
-    
+    // 显示原始的灰度图像,深度数据处理之后的灰度图像，增加原始的图像的展示
+    cv::imshow("Point Cloud Depth Image", display_image);
     // 伪彩色,将灰度图像display_image 转换成伪彩色图像colored
     cv::Mat colored;
     cv::applyColorMap(display_image, colored, cv::COLORMAP_JET);
+    
+
     
     return colored;
 }
   // 从PointCloud2提取RGB信息
    cv::Mat extractRGBFromPointCloud2(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
 {
-    // 查找 rgb 或 rgba 字段
+    // 查找 rgb 或 rgba 字段，发现没有这两个字段
     int rgb_idx = -1;
     std::string field_name;
     for (size_t i = 0; i < msg->fields.size(); ++i) {
@@ -154,13 +158,14 @@ cv::Mat extractDepthFromPointCloud2(const sensor_msgs::msg::PointCloud2::SharedP
         }
         RCLCPP_WARN(this->get_logger(), 
             "No rgb/rgba field found. Available fields: %s", available_fields.c_str());
+            // 返回黑色图像
         return cv::Mat();
     }
-    
+    // 如果有彩色信息
     RCLCPP_INFO(this->get_logger(), 
         "Found '%s' field at index %d, offset %d", 
         field_name.c_str(), rgb_idx, msg->fields[rgb_idx].offset);
-    
+    // CV_8UC3 表示每个像素用 3 个字节存储，分别是 BGR 通道
     cv::Mat rgb_image(msg->height, msg->width, CV_8UC3);
     
     // 统计信息

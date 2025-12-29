@@ -37,6 +37,10 @@ ros2 run grab_demo point_cloud_node
 ## 运行结果
 如下图所示
 ![result](./result.png)
+下面放了一个盒子的点云数据
+
+![box](./box.png)
+这个还挺明显的
 
 
 
