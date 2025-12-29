@@ -19,6 +19,7 @@ private:
     rclcpp::Service<grab_demo::srv::GrabObject>::SharedPtr grab_service;
     // moveit::planning_interface::MoveGroupInterface *move_group;
     std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group;
+    // 在运动规划里，
     const std::string PLANNING_GROUP = "manipulator";
     moveit::planning_interface::MoveGroupInterface::Plan my_plan;
     geometry_msgs::msg::Pose target_pose;

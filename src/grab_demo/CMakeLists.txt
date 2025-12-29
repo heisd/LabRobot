@@ -34,7 +34,9 @@ find_package(nav2_msgs REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
-
+find_package(PCL REQUIRED)
+find_package(pcl_conversions REQUIRED)  # 添加这一行
+find_package(pcl_ros REQUIRED)          # 添加这一行
 find_package(lebai_interfaces REQUIRED)
 
 moveit_package()
@@ -187,6 +189,24 @@ install(TARGETS camera_info_node
     ${PROJECT_NAME} rosidl_typesupport_cpp)
   
   target_link_libraries(nav_grab "${cpp_typesupport_target}")
+  # 使用AI给我们提供的PCL库来进行操作
+  add_executable(point_cloud_node src/point_cloud_node.cpp)
+  # 添加依赖
+  ament_target_dependencies(point_cloud_node
+   rclcpp
+   OpenCV
+   cv_bridge
+   geometry_msgs
+   sensor_msgs
+   rclcpp_action
+   pcl_ros
+   pcl_conversions
+  )
+  # 安装
+  install(TARGETS point_cloud_node
+    DESTINATION lib/${PROJECT_NAME})
+
+
 
 
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
