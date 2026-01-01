@@ -19,6 +19,7 @@ private:
     rclcpp::Service<grab_demo::srv::GrabObject>::SharedPtr grab_service;
     // moveit::planning_interface::MoveGroupInterface *move_group;
     std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group;
+    // 在运动规划里，
     const std::string PLANNING_GROUP = "manipulator";
     moveit::planning_interface::MoveGroupInterface::Plan my_plan;
     geometry_msgs::msg::Pose target_pose;
@@ -86,7 +87,8 @@ void obj_grab::start_grab(const std::shared_ptr<grab_demo::srv::GrabObject::Requ
 
     target_pose.position.x=tfs.transform.translation.x;
     target_pose.position.y=tfs.transform.translation.y;
-    target_pose.position.z=tfs.transform.translation.z;
+    // 在服务端加Z轴补偿
+    target_pose.position.z=tfs.transform.translation.z+0.02;
     
     // 设置目标姿态
     // 默认使用当前位置的姿态（保持当前方向）
