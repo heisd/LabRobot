@@ -31,7 +31,7 @@ public:
     // 创建窗口和滑动条
     cv::namedWindow("RGB Image");
     cv::namedWindow("Debug Info");
-
+    // 为啥这里在主机上并没有启动滑动条
     cv::createTrackbar("Hue Min", "RGB Image", &hue_min_, 255);
     cv::createTrackbar("Hue Max", "RGB Image", &hue_max_, 255);
     cv::createTrackbar("Saturation Min", "RGB Image", &saturation_min_, 255);
