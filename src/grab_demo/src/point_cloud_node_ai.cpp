@@ -25,6 +25,7 @@ public:
 private:
     void pointcloud_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
     {
+        // PCL数据在Jetson上不兼容,使用这个方式我们发现我们的显示不正常
         pcl::PCLPointCloud2 pcl_pc2;
         pcl_conversions::toPCL(*msg, pcl_pc2);
         pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);

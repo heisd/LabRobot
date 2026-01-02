@@ -50,10 +50,13 @@ import time
 
 class TrajectoryActionServer(Node):
     def __init__(self):
+        # 初始话ROS2Server
         super().__init__('trajectory_action_server')
+        # 声明参数
         self.declare_parameter("controller_joint_names",
                                Parameter.Type.STRING_ARRAY)
         self.declare_parameter("robot_ip_address", "")
+        # 获取参数,进行了封装
         self.joints_name_ = get_joint_names(
             self, 'controller_joint_names', "robot_description")
         # self.loop_ = asyncio.new_event_loop()
@@ -65,13 +68,15 @@ class TrajectoryActionServer(Node):
             raise ValueError("No 'robot_ip_address' parameter.")
         self.robot_ip_ = self.get_parameter(
             'robot_ip_address').get_parameter_value().string_value
+        
         self.lebai_robot_ = LebaiRobot(self.robot_ip_, False)
-
+        # 创建动作服务器
         self._action_server = ActionServer(
             self,
             FollowJointTrajectory,
             'lebai_trajectory_controller',
             execute_callback=self.execute_callback,
+            # 是我们的回掉函数可以并发执行
             callback_group=ReentrantCallbackGroup(),
             goal_callback=self.goal_callback,
             cancel_callback=self.cancel_callback)
