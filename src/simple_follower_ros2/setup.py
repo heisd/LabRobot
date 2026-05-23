@@ -4,6 +4,7 @@ package_name = 'simple_follower_ros2'
 data_files = []
 data_files.append(('share/ament_index/resource_index/packages', ['resource/' + package_name]))
 data_files.append(('share/' + package_name, ['launch/line_follower.launch.py']))
+data_files.append(('share/' + package_name, ['launch/line_follow_random.launch.py']))
 data_files.append(('share/' + package_name, ['launch/laser_follower.launch.py']))
 data_files.append(('share/' + package_name, ['launch/visual_follower.launch.py']))
 data_files.append(('share/' + package_name, ['launch/visual_follower.launch.py']))
@@ -27,6 +28,7 @@ setup(
     entry_points={
         'console_scripts': [
             'line_follow = simple_follower_ros2.line_follow:main',
+            'line_follow_node = simple_follower_ros2.line_follow_node:main',
             'laserfollower = simple_follower_ros2.laserfollower:main',
             'visualtracker = simple_follower_ros2.visualTracker:main',
             'visualfollow = simple_follower_ros2.visualFollower:main',
