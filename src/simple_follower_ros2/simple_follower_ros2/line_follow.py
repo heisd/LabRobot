@@ -38,6 +38,9 @@ class Follower(Node):
         self.cmd_vel_pub = self.create_publisher(Twist, 'cmd_vel', qos)
         self.twist = Twist()
         self.tmp = 0
+        self.left_fork_confirm_count = 0
+        self.left_fork_confirm_need = 3
+        self.cx_filtered = None
 
     def image_callback(self, msg):
         global last_erro
@@ -108,19 +111,77 @@ class Follower(Node):
         mask[0:search_top, 0:w] = 0
         mask[search_bot:h, 0:w] = 0
         # 计算mask图像的重心，即几何中心
-        M = cv2.moments(mask)
-        if M['m00'] > 0:
-            cx = int(M['m10']/M['m00'])
-            cy = int(M['m01']/M['m00'])
+        # 分叉口策略：
+        # 1) 若检测到多个连通区域，默认选择最左侧分支
+        # 2) 为避免提前转弯，要求分叉连续检测到若干帧后再执行左转分支选择
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        valid_components = []
+        for i in range(1, num_labels):
+            area = stats[i, cv2.CC_STAT_AREA]
+            if area > 30:
+                valid_components.append((i, area, centroids[i][0], centroids[i][1], stats[i, cv2.CC_STAT_TOP], stats[i, cv2.CC_STAT_HEIGHT]))
+
+        if len(valid_components) >= 2:
+            # 是否像“真实分叉”：左右分离足够明显，且分支已进入较近底部区域
+            xs = [comp[2] for comp in valid_components]
+            min_x = min(xs)
+            max_x = max(xs)
+            horizontal_gap = max_x - min_x
+            near_bottom_components = 0
+            for comp in valid_components:
+                comp_top = comp[4]
+                comp_h = comp[5]
+                comp_bottom = comp_top + comp_h
+                if comp_bottom >= (h - 10):
+                    near_bottom_components += 1
+            is_fork_scene = horizontal_gap > (w * 0.20) and near_bottom_components >= 2
+
+            if is_fork_scene:
+                self.left_fork_confirm_count += 1
+            else:
+                self.left_fork_confirm_count = 0
+
+            if self.left_fork_confirm_count >= self.left_fork_confirm_need:
+                # 默认左转：选取最左侧分支的重心作为跟踪目标
+                target_comp = min(valid_components, key=lambda x: x[2])
+                cx = int(target_comp[2])
+                cy = int(target_comp[3])
+            else:
+                # 尚未确认到分叉，先按整体重心走，避免提前切向左支路
+                M = cv2.moments(mask)
+                if M['m00'] > 0:
+                    cx = int(M['m10']/M['m00'])
+                    cy = int(M['m01']/M['m00'])
+                else:
+                    cx = None
+                    cy = None
+        else:
+            self.left_fork_confirm_count = 0
+            M = cv2.moments(mask)
+            if M['m00'] > 0:
+                cx = int(M['m10']/M['m00'])
+                cy = int(M['m01']/M['m00'])
+            else:
+                cx = None
+                cy = None
+
+        if cx is not None and cy is not None:
             #cv2.circle(image, (cx, cy), 10, (255, 0, 255), -1)
             #cv2.circle(image, (cx-60, cy), 10, (0, 0, 255), -1)
             #cv2.circle(image, (w/2, h), 10, (0, 255, 255), -1)
             if cv2.circle:
             # 计算图像中心线和目标指示线中心的距离
-                erro = cx - w/2-60
+                if self.cx_filtered is None:
+                    self.cx_filtered = float(cx)
+                else:
+                    self.cx_filtered = 0.7 * self.cx_filtered + 0.3 * float(cx)
+
+                erro = self.cx_filtered - w/2
                 d_erro=erro-last_erro
                 self.twist.linear.x = 0.11
-                if erro<0:
+                if abs(erro) < 8:
+                    self.twist.angular.z = 0.0
+                elif erro<0:
                     self.twist.angular.z = -(float(erro)*0.0011-float(d_erro)*0.0000) #top_akm_bs
                 elif erro>0:
                     self.twist.angular.z = -(float(erro)*0.0011-float(d_erro)*0.0000) #top_akm_bs
@@ -128,6 +189,7 @@ class Follower(Node):
                     self.twist.angular.z = 0.0
                 last_erro=erro
         else:
+            self.cx_filtered = None
             self.twist.linear.x = 0.0
             self.twist.angular.z = 0.0
         self.cmd_vel_pub.publish(self.twist)
