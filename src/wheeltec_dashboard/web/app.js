@@ -532,6 +532,11 @@
   let odomPathSub = null;
   const odomPoints = [];
   const MAX_PATH_POINTS = 2000;
+  // Module-scoped so we never accumulate observers / listeners across
+  // repeated buildViewer() calls, even if someone later removes the
+  // `if (viewer) return;` short-circuit.
+  let viewerResizeObserver = null;
+  let viewerResizeFallback = null;
 
   function buildViewer() {
     if (viewer) return;
@@ -551,9 +556,14 @@
     // those, the old window.resize listener didn't.
     const resize = () => { if (viewer) viewer.resize(host.clientWidth, host.clientHeight); };
     if (window.ResizeObserver) {
-      new ResizeObserver(resize).observe(host);
-    } else {
-      window.addEventListener('resize', resize);
+      if (viewerResizeObserver) {
+        try { viewerResizeObserver.disconnect(); } catch (_) { /* ignore */ }
+      }
+      viewerResizeObserver = new ResizeObserver(resize);
+      viewerResizeObserver.observe(host);
+    } else if (!viewerResizeFallback) {
+      viewerResizeFallback = resize;
+      window.addEventListener('resize', viewerResizeFallback);
     }
   }
 
