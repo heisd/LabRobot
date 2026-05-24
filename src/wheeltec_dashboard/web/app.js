@@ -497,7 +497,118 @@
   // Build the viewer right after the connection is up.
   const _origSetup = setupTopics;
   // eslint-disable-next-line no-func-assign
-  setupTopics = function () { _origSetup(); rebuildViewer(); };
+  setupTopics = function () { _origSetup(); rebuildViewer(); subscribeRosout(); };
+
+  // ---------- Logs (/rosout) ----------
+  const logView = $('log-view');
+  const logLevel = $('log-level');
+  const logFilter = $('log-filter');
+  const logBuffer = $('log-buffer');
+  const logAutoscroll = $('log-autoscroll');
+  const logPauseBtn = $('log-pause');
+  const logClearBtn = $('log-clear');
+  const logCountEl = $('log-count');
+  const logDroppedEl = $('log-dropped');
+
+  const LEVEL_NAME = { 10: 'DEBUG', 20: 'INFO', 30: 'WARN', 40: 'ERROR', 50: 'FATAL' };
+  const LEVEL_CLASS = { 10: 'log-debug', 20: 'log-info', 30: 'log-warn', 40: 'log-error', 50: 'log-fatal' };
+
+  let logSub = null;
+  let logPaused = false;
+  let logDropped = 0;
+  const logEntries = []; // ring buffer of {level,name,msg,timeStr}
+
+  function fmtTime(stamp) {
+    // stamp: {sec, nanosec}
+    if (!stamp) return '';
+    const ms = stamp.sec * 1000 + Math.floor(stamp.nanosec / 1e6);
+    const d = new Date(ms);
+    const pad = (n, w = 2) => String(n).padStart(w, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+  }
+
+  function escapeHTML(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+
+  function renderRow(e) {
+    const cls = LEVEL_CLASS[e.level] || 'log-info';
+    const lv = LEVEL_NAME[e.level] || String(e.level);
+    return `<div class="log-row ${cls}"><span class="lt">${e.timeStr}</span>` +
+      `<span class="lv">${lv}</span>` +
+      `<span class="ln" title="${escapeHTML(e.name)}">${escapeHTML(e.name)}</span>` +
+      `<span class="lm">${escapeHTML(e.msg)}</span></div>`;
+  }
+
+  function matchesFilters(e) {
+    if (e.level < +logLevel.value) return false;
+    const f = logFilter.value.trim().toLowerCase();
+    if (f && !e.name.toLowerCase().includes(f)) return false;
+    return true;
+  }
+
+  function rerenderAll() {
+    logView.innerHTML = logEntries.filter(matchesFilters).map(renderRow).join('');
+    logCountEl.textContent = String(logEntries.length);
+    if (logAutoscroll.checked) logView.scrollTop = logView.scrollHeight;
+  }
+
+  function pushEntry(e) {
+    const cap = Math.max(50, Math.min(5000, parseInt(logBuffer.value, 10) || 500));
+    logEntries.push(e);
+    if (logEntries.length > cap) {
+      logEntries.splice(0, logEntries.length - cap);
+    }
+    logCountEl.textContent = String(logEntries.length);
+    if (!matchesFilters(e)) return;
+    // Cheap append: also trim rendered children to ~cap.
+    logView.insertAdjacentHTML('beforeend', renderRow(e));
+    while (logView.childElementCount > cap) logView.removeChild(logView.firstChild);
+    if (logAutoscroll.checked) logView.scrollTop = logView.scrollHeight;
+  }
+
+  function subscribeRosout() {
+    if (logSub) { try { logSub.unsubscribe(); } catch (_) {} }
+    logSub = new ROSLIB.Topic({
+      ros,
+      name: '/rosout',
+      messageType: 'rcl_interfaces/msg/Log',
+      throttle_rate: 0,
+      queue_length: 0,
+    });
+    logSub.subscribe((msg) => {
+      if (logPaused) { logDropped++; logDroppedEl.textContent = String(logDropped); return; }
+      pushEntry({
+        level: msg.level,
+        name: msg.name || '',
+        msg: msg.msg || '',
+        timeStr: fmtTime(msg.stamp),
+      });
+    });
+  }
+
+  logLevel.addEventListener('change', rerenderAll);
+  logFilter.addEventListener('input', rerenderAll);
+  logBuffer.addEventListener('change', () => {
+    const cap = Math.max(50, Math.min(5000, parseInt(logBuffer.value, 10) || 500));
+    if (logEntries.length > cap) logEntries.splice(0, logEntries.length - cap);
+    rerenderAll();
+  });
+  logPauseBtn.addEventListener('click', () => {
+    logPaused = !logPaused;
+    logPauseBtn.textContent = logPaused ? '继续' : '暂停';
+    logPauseBtn.classList.toggle('paused', logPaused);
+    if (!logPaused) { logDropped = 0; logDroppedEl.textContent = '0'; }
+  });
+  logClearBtn.addEventListener('click', () => {
+    logEntries.length = 0;
+    logDropped = 0;
+    logDroppedEl.textContent = '0';
+    logCountEl.textContent = '0';
+    logView.innerHTML = '';
+  });
 
   // Auto-connect on load.
   connect();

@@ -245,3 +245,80 @@ main {
   height: 28px;
 }
 .viewer-controls button:hover { filter: brightness(1.15); }
+
+.log-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  margin-bottom: 8px;
+}
+.log-toolbar label {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  color: var(--muted);
+}
+.log-toolbar label.log-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 4px;
+}
+.log-toolbar select,
+.log-toolbar input[type=text],
+.log-toolbar input[type=number] {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-top: 2px;
+  height: 28px;
+}
+.log-toolbar input[type=text] { width: 180px; }
+.log-toolbar input[type=number] { width: 90px; }
+.log-toolbar button {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  height: 28px;
+}
+.log-toolbar button:hover { filter: brightness(1.15); }
+.log-toolbar button.paused { background: var(--warn); }
+.log-stats { font-size: 11px; color: var(--muted); margin-left: auto; }
+
+.log-view {
+  background: #0b0f14;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  height: 320px;
+  overflow-y: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+.log-row {
+  display: grid;
+  grid-template-columns: 80px 60px 180px 1fr;
+  gap: 8px;
+  padding: 2px 4px;
+  border-bottom: 1px solid rgba(45, 56, 69, 0.4);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.log-row .lt { color: var(--muted); }
+.log-row .lv { font-weight: 600; }
+.log-row .ln { color: #8b98a5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-row .lm { color: var(--text); }
+.log-debug .lv { color: #8b98a5; }
+.log-info .lv { color: var(--ok); }
+.log-warn  { background: rgba(210, 153, 34, 0.08); }
+.log-warn .lv  { color: var(--warn); }
+.log-error { background: rgba(248, 81, 73, 0.10); }
+.log-error .lv { color: var(--err); }
+.log-fatal { background: rgba(248, 81, 73, 0.18); }
+.log-fatal .lv { color: var(--err); font-weight: 700; }

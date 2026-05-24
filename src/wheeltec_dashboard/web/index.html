@@ -177,6 +177,34 @@
         <div class="chart-wrap"><canvas id="chart-cmdvel"></canvas></div>
       </div>
     </section>
+
+    <section class="card card-wide">
+      <h2>日志 <span class="muted">(/rosout)</span></h2>
+      <div class="log-toolbar">
+        <label>等级
+          <select id="log-level">
+            <option value="10">DEBUG</option>
+            <option value="20" selected>INFO</option>
+            <option value="30">WARN</option>
+            <option value="40">ERROR</option>
+            <option value="50">FATAL</option>
+          </select>
+        </label>
+        <label>节点过滤
+          <input id="log-filter" type="text" placeholder="子串匹配, 留空=全部" />
+        </label>
+        <label>缓冲行数
+          <input id="log-buffer" type="number" min="50" max="5000" step="50" value="500" />
+        </label>
+        <label class="log-check">
+          <input id="log-autoscroll" type="checkbox" checked /> 自动滚动
+        </label>
+        <button id="log-pause">暂停</button>
+        <button id="log-clear">清空</button>
+        <span class="log-stats"><span id="log-count">0</span> 行 · 丢弃 <span id="log-dropped">0</span></span>
+      </div>
+      <div id="log-view" class="log-view"></div>
+    </section>
   </main>
 
   <script src="app.js"></script>

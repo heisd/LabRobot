@@ -54,6 +54,9 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 - **3D 视图（嵌入式 RViz 替代）**：基于 ros3djs，支持 Grid、TF、LaserScan
   (`/scan`)、OccupancyGrid (`/map`)、Odometry 轨迹。Fixed frame 默认
   `odom_combined`。URDF 加载在 ROS 2 + rosbridge 下为实验功能，建议留空。
+- **日志面板**：订阅 `/rosout`，按等级 (DEBUG/INFO/WARN/ERROR/FATAL)
+  与节点名子串过滤；可配置环形缓冲行数 (50–5000)、暂停/继续、清空、
+  自动滚动；按等级着色。
 
 ## 网络说明
 
