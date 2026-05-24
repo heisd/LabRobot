@@ -284,7 +284,8 @@ main {
   font-size: 11px;
   color: var(--muted);
 }
-.cam-toolbar input[type=number] {
+.cam-toolbar input[type=number],
+.cam-toolbar input[type=text] {
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--text);
@@ -294,6 +295,8 @@ main {
   width: 100px;
   height: 28px;
 }
+.cam-toolbar .cam-base-wrap { flex: 1; min-width: 220px; }
+.cam-toolbar .cam-base-wrap input { width: 100%; }
 .cam-toolbar button {
   background: var(--accent);
   border: none;
@@ -442,3 +445,32 @@ main {
 .log-error .lv { color: var(--err); }
 .log-fatal { background: rgba(248, 81, 73, 0.18); }
 .log-fatal .lv { color: var(--err); font-weight: 700; }
+
+/* --------- Mobile / narrow-screen tweaks --------- */
+@media (max-width: 640px) {
+  header {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  header h1 { font-size: 16px; }
+  .conn { flex-wrap: wrap; width: 100%; }
+  .conn input { flex: 1; width: auto; min-width: 140px; }
+
+  main { padding: 10px; gap: 12px; }
+
+  /* Bigger teleop buttons so fingers can hit them. */
+  .teleop-grid {
+    grid-template-columns: repeat(3, 72px);
+    grid-template-rows: repeat(3, 72px);
+  }
+  .teleop-grid .tk { font-size: 22px; }
+
+  .e-stop { font-size: 16px; padding: 14px; }
+
+  /* Log grid: drop the node column on phones so messages get room. */
+  .log-row {
+    grid-template-columns: 70px 50px 1fr;
+  }
+  .log-row .ln { display: none; }
+}

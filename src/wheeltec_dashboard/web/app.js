@@ -166,6 +166,7 @@
     // Build viewer + log subscription as part of the connection lifecycle.
     rebuildViewer();
     subscribeRosout();
+    refreshNodeList();
   }
 
   // ---------- Math helpers ----------
@@ -327,6 +328,11 @@
   }
 
   // ---------- Parameters ----------
+  // rcl_interfaces/msg/ParameterType constants.
+  const PT_BOOL = 1, PT_INTEGER = 2, PT_DOUBLE = 3, PT_STRING = 4;
+  const TYPE_NAME = { 1: 'bool', 2: 'int', 3: 'double', 4: 'string' };
+  const NAME_TYPE = { bool: PT_BOOL, int: PT_INTEGER, double: PT_DOUBLE, string: PT_STRING };
+
   function paramService(nodeName, kind) {
     return new ROSLIB.Service({
       ros,
@@ -335,6 +341,48 @@
         ? 'rcl_interfaces/srv/GetParameters'
         : 'rcl_interfaces/srv/SetParameters',
     });
+  }
+
+  // Build a fully-populated rcl_interfaces/ParameterValue for one of the
+  // four scalar types we support, leaving the unused variants at their
+  // zero values so rosbridge accepts the message.
+  function buildParameterValue(typeName, rawString) {
+    const t = NAME_TYPE[typeName] || PT_DOUBLE;
+    const base = {
+      type: t,
+      bool_value: false,
+      integer_value: 0,
+      double_value: 0,
+      string_value: '',
+      byte_array_value: [],
+      bool_array_value: [],
+      integer_array_value: [],
+      double_array_value: [],
+      string_array_value: [],
+    };
+    switch (t) {
+      case PT_BOOL: {
+        const s = String(rawString).trim().toLowerCase();
+        base.bool_value = (s === 'true' || s === '1' || s === 'yes' || s === 'on');
+        return base;
+      }
+      case PT_INTEGER: {
+        const n = parseInt(rawString, 10);
+        if (Number.isNaN(n)) return null;
+        base.integer_value = n;
+        return base;
+      }
+      case PT_DOUBLE: {
+        const n = parseFloat(rawString);
+        if (Number.isNaN(n)) return null;
+        base.double_value = n;
+        return base;
+      }
+      case PT_STRING:
+        base.string_value = String(rawString);
+        return base;
+    }
+    return null;
   }
 
   function refreshParams() {
@@ -349,13 +397,20 @@
         if (!row) return;
         let v = null;
         switch (val.type) {
-          case 2: v = val.integer_value; break;
-          case 3: v = val.double_value; break;
-          case 1: v = val.bool_value; break;
-          case 4: v = val.string_value; break;
+          case PT_INTEGER: v = val.integer_value; break;
+          case PT_DOUBLE:  v = val.double_value; break;
+          case PT_BOOL:    v = val.bool_value; break;
+          case PT_STRING:  v = val.string_value; break;
           default: v = null;
         }
-        row.querySelector('.param-current').textContent = v === null ? '(未设置)' : String(v);
+        // Auto-update data-type from the server's real type, so subsequent
+        // apply uses the right ParameterValue variant even if the HTML
+        // declared something else.
+        if (val.type && TYPE_NAME[val.type]) {
+          row.dataset.type = TYPE_NAME[val.type];
+        }
+        row.querySelector('.param-current').textContent =
+          v === null ? '(未设置)' : `${String(v)}  [${TYPE_NAME[val.type] || '?'}]`;
         if (v !== null) row.querySelector('input').value = v;
       });
     }, (err) => {
@@ -371,25 +426,37 @@
       if (!ros) { alert('未连接 rosbridge'); return; }
       const row = btn.closest('.param-row');
       const name = row.dataset.param;
-      const value = parseFloat(row.querySelector('input').value);
-      if (Number.isNaN(value)) { alert('无效数字'); return; }
+      const typeName = row.dataset.type || 'double';
+      const raw = row.querySelector('input').value;
+      const value = buildParameterValue(typeName, raw);
+      if (!value) { alert(`无效 ${typeName} 值: "${raw}"`); return; }
       const node = $('param-node').value.trim();
-      const req = new ROSLIB.ServiceRequest({
-        parameters: [{
-          name,
-          value: { type: 3, double_value: value, bool_value: false, integer_value: 0, string_value: '', byte_array_value: [], bool_array_value: [], integer_array_value: [], double_array_value: [], string_array_value: [] },
-        }],
-      });
+      const req = new ROSLIB.ServiceRequest({ parameters: [{ name, value }] });
       paramService(node, 'set_parameters').callService(req, (res) => {
         const ok = res.results && res.results[0] && res.results[0].successful;
         if (ok) {
-          row.querySelector('.param-current').textContent = String(value);
+          row.querySelector('.param-current').textContent = `${String(raw)}  [${typeName}]`;
         } else {
           alert('设置失败：' + (res.results && res.results[0] && res.results[0].reason || '未知'));
         }
       }, (err) => alert('设置失败：' + err));
     });
   });
+
+  // Populate the node datalist from ros.getNodes() each time we connect.
+  function refreshNodeList() {
+    if (!ros || !ros.getNodes) return;
+    const dl = $('node-list');
+    if (!dl) return;
+    ros.getNodes((nodes) => {
+      dl.innerHTML = '';
+      (nodes || []).slice().sort().forEach((n) => {
+        const opt = document.createElement('option');
+        opt.value = n;
+        dl.appendChild(opt);
+      });
+    }, (err) => console.warn('getNodes failed', err));
+  }
 
   // ---------- Charts ----------
   function makeChart(canvasId, label, color) {
@@ -643,15 +710,25 @@
   // ---------- Cameras (web_video_server) ----------
   const camPort = $('cam-port');
   const camQuality = $('cam-quality');
+  const camBase = $('cam-base');
   const camReload = $('cam-reload');
 
   function videoHost() {
     return location.hostname || 'localhost';
   }
 
+  function videoBase() {
+    // Allow the user to override the entire base URL — handy when the
+    // dashboard is served behind an HTTPS reverse proxy and the bare
+    // http://host:8081 stream would be blocked as mixed content.
+    const override = (camBase && camBase.value || '').trim();
+    if (override) return override.replace(/\/+$/, '');
+    const port = (camPort && camPort.value) || '8081';
+    return `${location.protocol}//${videoHost()}:${port}`;
+  }
+
   function buildStreamUrl(topic) {
     if (!topic) return '';
-    const port = camPort.value || '8081';
     const q = Math.max(1, Math.min(100, parseInt(camQuality.value, 10) || 60));
     const params = new URLSearchParams({
       topic,
@@ -660,7 +737,7 @@
     });
     // Bust cache so reload actually re-fetches the stream.
     params.set('_', String(Date.now()));
-    return `http://${videoHost()}:${port}/stream?${params.toString()}`;
+    return `${videoBase()}/stream?${params.toString()}`;
   }
 
   const CAM_PLACEHOLDER = 'placeholder.svg';
@@ -716,6 +793,7 @@
   });
   camPort.addEventListener('change', applyAllCams);
   camQuality.addEventListener('change', applyAllCams);
+  if (camBase) camBase.addEventListener('change', applyAllCams);
 
   // Start streams once on load (they're independent of rosbridge).
   applyAllCams();
