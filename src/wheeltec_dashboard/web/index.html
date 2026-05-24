@@ -45,6 +45,7 @@
         <button id="vw-clear-path">清空轨迹</button>
       </div>
       <div id="viewer" class="viewer"></div>
+      <div id="viewer-status" class="viewer-status"></div>
       <p class="hint">支持的图层：Grid / TF / LaserScan / OccupancyGrid (Map) / Odom 轨迹。URDF 在 ROS 2 + rosbridge 下加载实验性，留空即可。</p>
     </section>
 
@@ -95,8 +96,6 @@
         <div class="sonar"><span class="sl">D</span><span id="s-d" class="sv">—</span></div>
         <div class="sonar"><span class="sl">E</span><span id="s-e" class="sv">—</span></div>
         <div class="sonar"><span class="sl">F</span><span id="s-f" class="sv">—</span></div>
-        <div class="sonar"><span class="sl">G</span><span id="s-g" class="sv">—</span></div>
-        <div class="sonar"><span class="sl">H</span><span id="s-h" class="sv">—</span></div>
       </div>
     </section>
 
@@ -128,6 +127,7 @@
           <div class="cmd-readout">
             当前指令: <span id="cmd-current">vx=0.00, wz=0.00</span>
           </div>
+          <button id="e-stop" class="e-stop" type="button" title="立即发送 (0,0) 到 /cmd_vel">急停 STOP</button>
         </div>
       </div>
     </section>

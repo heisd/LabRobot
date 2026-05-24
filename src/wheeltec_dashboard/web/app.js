@@ -21,32 +21,63 @@
     statusEl.textContent = text;
   }
 
+  // Track whether the current `ros` is the user's "intended" connection,
+  // so that an explicit Disconnect doesn't auto-reconnect on 'close'.
+  let userWantsConnected = false;
+
+  function setButtonForState(connected) {
+    connectBtn.textContent = connected ? '断开' : '连接';
+  }
+
   function connect() {
     if (ros) {
       try { ros.close(); } catch (_) { /* ignore */ }
     }
+    userWantsConnected = true;
+    setButtonForState(true);
     setStatus('conn', '连接中…');
-    ros = new ROSLIB.Ros({ url: urlInput.value });
+    const r = new ROSLIB.Ros({ url: urlInput.value });
+    ros = r;
 
-    ros.on('connection', () => {
+    r.on('connection', () => {
+      if (ros !== r) return;
       setStatus('on', '已连接');
       setupTopics();
     });
-    ros.on('close', () => {
+    r.on('close', () => {
+      // Stale close from a previously discarded ros instance — ignore.
+      if (ros !== r) return;
       setStatus('off', '已断开');
       teardownTopics();
+      setButtonForState(false);
+      ros = null;
     });
-    ros.on('error', (err) => {
+    r.on('error', (err) => {
+      if (ros !== r) return;
       console.error('rosbridge error', err);
       setStatus('off', '连接错误');
     });
   }
 
-  connectBtn.addEventListener('click', connect);
+  function disconnect() {
+    userWantsConnected = false;
+    if (ros) {
+      try { ros.close(); } catch (_) { /* ignore */ }
+    }
+    teardownTopics();
+    setStatus('off', '已断开');
+    setButtonForState(false);
+    ros = null;
+  }
+
+  connectBtn.addEventListener('click', () => {
+    if (userWantsConnected) disconnect();
+    else connect();
+  });
 
   // ---------- Topic wiring ----------
-  function sub(name, type, cb) {
-    const t = new ROSLIB.Topic({ ros, name, messageType: type });
+  function sub(name, type, cb, opts) {
+    const t = new ROSLIB.Topic(Object.assign({ ros, name, messageType: type }, opts || {}));
     t.subscribe(cb);
     subs.push(t);
     return t;
@@ -55,7 +86,10 @@
   function teardownTopics() {
     subs.forEach((t) => { try { t.unsubscribe(); } catch (_) { /* ignore */ } });
     subs.length = 0;
-    cmdVelPub = null;
+    if (cmdVelPub) {
+      try { cmdVelPub.unadvertise(); } catch (_) { /* ignore */ }
+      cmdVelPub = null;
+    }
   }
 
   function setupTopics() {
@@ -96,26 +130,31 @@
       const q = msg.pose.pose.orientation;
       $('m-odom-xy').textContent = `${p.x.toFixed(2)}, ${p.y.toFixed(2)} m`;
       $('m-odom-yaw').textContent = (yawFromQuat(q) * 180 / Math.PI).toFixed(1) + '°';
-    });
+    }, { throttle_rate: 100 });
 
     sub('/imu/data_raw', 'sensor_msgs/msg/Imu', (msg) => {
       const q = msg.orientation;
       const r = rpyFromQuat(q);
       $('m-imu-rpy').textContent =
         `${(r.roll * 180 / Math.PI).toFixed(1)}, ${(r.pitch * 180 / Math.PI).toFixed(1)}, ${(r.yaw * 180 / Math.PI).toFixed(1)}°`;
-    });
+    }, { throttle_rate: 100 });
 
+    // Only A–F carry real ultrasonic data; bytes for G/H are reused by the
+    // self-check payload in the firmware, so they would always read 0.
     sub('/Distance', 'robot_interfaces/msg/Supersonic', (msg) => {
-      const keys = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+      const keys = ['a', 'b', 'c', 'd', 'e', 'f'];
       keys.forEach((k) => {
         const v = msg['distance_' + k];
         const el = $('s-' + k);
+        if (!el) return;
         el.textContent = (typeof v === 'number') ? v.toFixed(2) : '—';
         el.classList.remove('near', 'mid');
-        if (v < 0.3) el.classList.add('near');
-        else if (v < 0.6) el.classList.add('mid');
+        if (typeof v === 'number') {
+          if (v < 0.3) el.classList.add('near');
+          else if (v < 0.6) el.classList.add('mid');
+        }
       });
-    });
+    }, { throttle_rate: 100 });
 
     cmdVelPub = new ROSLIB.Topic({
       ros,
@@ -123,6 +162,10 @@
       messageType: 'geometry_msgs/msg/Twist',
     });
     cmdVelPub.advertise();
+
+    // Build viewer + log subscription as part of the connection lifecycle.
+    rebuildViewer();
+    subscribeRosout();
   }
 
   // ---------- Math helpers ----------
@@ -204,22 +247,84 @@
     btn.addEventListener('touchend', stopBtn);
   });
 
-  // Keyboard: WASD + space (stop)
+  // Keyboard: WASD + space (stop). Held keys publish at 10 Hz so a single
+  // dropped message can't strand the chassis. Ignore key events that come
+  // from form inputs so typing in the URL / topic boxes never moves the
+  // robot.
+  function isTypingTarget(t) {
+    if (!t || !t.tagName) return false;
+    const tag = t.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable;
+  }
+
+  const heldKeys = new Set();
+  let keyRepeatTimer = null;
+
+  function computeKeyboardCmd() {
+    let vxs = 0, wzs = 0;
+    if (heldKeys.has('w')) vxs += 1;
+    if (heldKeys.has('s')) vxs -= 1;
+    if (heldKeys.has('a')) wzs += 1;
+    if (heldKeys.has('d')) wzs -= 1;
+    return { vx: vxs * (+linMax.value), wz: wzs * (+angMax.value) };
+  }
+
+  function stopKeyboardLoop(publishZero) {
+    if (keyRepeatTimer) { clearInterval(keyRepeatTimer); keyRepeatTimer = null; }
+    if (publishZero) publishCmd(0, 0);
+  }
+
   document.addEventListener('keydown', (e) => {
-    if (e.repeat) return;
-    const map = { w: [1, 0], s: [-1, 0], a: [0, 1], d: [0, -1] };
+    if (isTypingTarget(e.target)) return;
     const k = e.key.toLowerCase();
-    if (map[k]) {
-      const [vxs, wzs] = map[k];
-      publishCmd(vxs * (+linMax.value), wzs * (+angMax.value));
-    } else if (k === ' ') {
-      publishCmd(0, 0);
+    if (k === ' ') {
+      e.preventDefault();
+      heldKeys.clear();
+      stopKeyboardLoop(true);
+      return;
     }
+    if (!'wasd'.includes(k)) return;
+    if (e.repeat) return;
+    heldKeys.add(k);
+    // Re-arm the repeat immediately with the new key combination.
+    if (keyRepeatTimer) { clearInterval(keyRepeatTimer); keyRepeatTimer = null; }
+    const c = computeKeyboardCmd();
+    publishCmd(c.vx, c.wz);
+    keyRepeatTimer = setInterval(() => {
+      const cc = computeKeyboardCmd();
+      publishCmd(cc.vx, cc.wz);
+    }, 100);
   });
   document.addEventListener('keyup', (e) => {
+    if (isTypingTarget(e.target)) return;
     const k = e.key.toLowerCase();
-    if ('wasd'.includes(k)) publishCmd(0, 0);
+    if (!'wasd'.includes(k)) return;
+    heldKeys.delete(k);
+    if (heldKeys.size === 0) {
+      stopKeyboardLoop(true);
+    }
   });
+  // Browser/tab lost focus — release any held keys so the robot doesn't
+  // keep going on a key we'll never see released.
+  window.addEventListener('blur', () => {
+    if (heldKeys.size > 0 || keyRepeatTimer) {
+      heldKeys.clear();
+      stopKeyboardLoop(true);
+    }
+  });
+
+  // Emergency stop button: always publish (0,0), regardless of held inputs.
+  const eStopBtn = $('e-stop');
+  if (eStopBtn) {
+    eStopBtn.addEventListener('click', () => {
+      heldKeys.clear();
+      stopKeyboardLoop(false);
+      // Send the stop a few times in case rosbridge / WiFi drops one.
+      publishCmd(0, 0);
+      setTimeout(() => publishCmd(0, 0), 50);
+      setTimeout(() => publishCmd(0, 0), 150);
+    });
+  }
 
   // ---------- Parameters ----------
   function paramService(nodeName, kind) {
@@ -374,10 +479,20 @@
     });
     viewer.addObject(new ROS3D.Grid({ color: 0x2d3845, cellSize: 0.5, num_cells: 20 }));
 
-    window.addEventListener('resize', () => {
-      if (!viewer) return;
-      viewer.resize(host.clientWidth, host.clientHeight);
-    });
+    // The host element resizes whenever cards above it expand/collapse,
+    // even when the window itself didn't change — ResizeObserver catches
+    // those, the old window.resize listener didn't.
+    const resize = () => { if (viewer) viewer.resize(host.clientWidth, host.clientHeight); };
+    if (window.ResizeObserver) {
+      new ResizeObserver(resize).observe(host);
+    } else {
+      window.addEventListener('resize', resize);
+    }
+  }
+
+  function setViewerStatus(text) {
+    const el = $('viewer-status');
+    if (el) el.textContent = text || '';
   }
 
   function disposeLayers() {
@@ -413,6 +528,37 @@
       transThres: 0.01,
       rate: 10.0,
     });
+
+    // Warn the user if the chosen fixed frame never shows up — without
+    // it, scans / maps / odom layers stay invisible with no feedback.
+    setViewerStatus(`等待 frame "${fixedFrame}" …`);
+    let frameSeen = false;
+    const tfProbe = new ROSLIB.Topic({
+      ros, name: '/tf', messageType: 'tf2_msgs/msg/TFMessage', throttle_rate: 200,
+    });
+    const tfProbeStaticSub = new ROSLIB.Topic({
+      ros, name: '/tf_static', messageType: 'tf2_msgs/msg/TFMessage',
+    });
+    const onTf = (msg) => {
+      if (frameSeen || !msg || !msg.transforms) return;
+      for (const tr of msg.transforms) {
+        if (tr.header && (tr.header.frame_id === fixedFrame || tr.child_frame_id === fixedFrame)) {
+          frameSeen = true;
+          setViewerStatus('');
+          try { tfProbe.unsubscribe(); } catch (_) {}
+          try { tfProbeStaticSub.unsubscribe(); } catch (_) {}
+          break;
+        }
+      }
+    };
+    tfProbe.subscribe(onTf);
+    tfProbeStaticSub.subscribe(onTf);
+    viewerLayers.push(tfProbe, tfProbeStaticSub);
+    setTimeout(() => {
+      if (!frameSeen) {
+        setViewerStatus(`未收到 frame "${fixedFrame}" 的 TF — 检查 robot_state_publisher / EKF 是否启动`);
+      }
+    }, 4000);
 
     if (scanTopic) {
       const scan = new ROS3D.LaserScan({
@@ -493,11 +639,6 @@
       odomPath.geometry.setDrawRange(0, 0);
     }
   });
-
-  // Build the viewer right after the connection is up.
-  const _origSetup = setupTopics;
-  // eslint-disable-next-line no-func-assign
-  setupTopics = function () { _origSetup(); rebuildViewer(); subscribeRosout(); };
 
   // ---------- Cameras (web_video_server) ----------
   const camPort = $('cam-port');

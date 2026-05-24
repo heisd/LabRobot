@@ -123,7 +123,7 @@ main {
 
 .sonar-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
 .sonar {
@@ -175,6 +175,22 @@ main {
 .teleop-sliders input[type=range] { margin-top: 4px; }
 .cmd-readout { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 
+.e-stop {
+  background: var(--err);
+  border: none;
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  padding: 10px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 4px;
+  align-self: stretch;
+}
+.e-stop:hover { filter: brightness(1.1); }
+.e-stop:active { filter: brightness(0.9); }
+
 .params { display: flex; flex-direction: column; gap: 8px; }
 .param-row { display: grid; grid-template-columns: 160px 1fr 80px 90px; gap: 8px; align-items: center; }
 .param-row label { font-size: 12px; color: var(--muted); }
@@ -212,6 +228,15 @@ main {
   position: relative;
 }
 .viewer canvas { display: block; width: 100% !important; height: 100% !important; }
+
+.viewer-status {
+  font-size: 11px;
+  color: var(--warn);
+  margin-top: 6px;
+  min-height: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.viewer-status:empty { display: none; }
 
 .viewer-controls {
   display: flex;
