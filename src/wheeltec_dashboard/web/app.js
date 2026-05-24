@@ -522,6 +522,21 @@
     return `http://${videoHost()}:${port}/stream?${params.toString()}`;
   }
 
+  const CAM_PLACEHOLDER = 'placeholder.svg';
+
+  function showPlaceholder(slot, message) {
+    const img = document.querySelector(`.cam-img[data-slot="${slot}"]`);
+    const errEl = document.querySelector(`.cam-err[data-slot="${slot}"]`);
+    img.onerror = null;
+    img.src = CAM_PLACEHOLDER;
+    if (message) {
+      errEl.hidden = false;
+      errEl.textContent = message;
+    } else {
+      errEl.hidden = true;
+    }
+  }
+
   function applyCam(slot) {
     const img = document.querySelector(`.cam-img[data-slot="${slot}"]`);
     const topicInput = document.querySelector(`.cam-topic[data-slot="${slot}"]`);
@@ -530,19 +545,17 @@
     if (!img || !topicInput || !enable) return;
     errEl.hidden = true;
     if (!enable.checked) {
-      img.removeAttribute('src');
-      errEl.hidden = false;
-      errEl.textContent = '已禁用';
+      showPlaceholder(slot, '已禁用');
       return;
     }
     const topic = topicInput.value.trim();
     if (!topic) {
-      img.removeAttribute('src');
+      showPlaceholder(slot, '未设置 topic');
       return;
     }
     img.onerror = () => {
-      errEl.hidden = false;
-      errEl.textContent = '无法加载流，检查 web_video_server 与相机话题';
+      // Swap to landscape placeholder so the tile stays presentable.
+      showPlaceholder(slot, '无法加载流，检查 web_video_server 与相机话题');
     };
     img.onload = () => { errEl.hidden = true; };
     img.src = buildStreamUrl(topic);
