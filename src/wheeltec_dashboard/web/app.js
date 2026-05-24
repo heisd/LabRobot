@@ -21,32 +21,76 @@
     statusEl.textContent = text;
   }
 
+  // Track whether the current `ros` is the user's "intended" connection,
+  // so that an explicit Disconnect doesn't auto-reconnect on 'close'.
+  let userWantsConnected = false;
+
+  function setButtonForState(connected) {
+    connectBtn.textContent = connected ? '断开' : '连接';
+  }
+
   function connect() {
     if (ros) {
       try { ros.close(); } catch (_) { /* ignore */ }
     }
+    userWantsConnected = true;
+    setButtonForState(true);
     setStatus('conn', '连接中…');
-    ros = new ROSLIB.Ros({ url: urlInput.value });
+    const r = new ROSLIB.Ros({ url: urlInput.value });
+    ros = r;
 
-    ros.on('connection', () => {
+    r.on('connection', () => {
+      if (ros !== r) return;
       setStatus('on', '已连接');
       setupTopics();
     });
-    ros.on('close', () => {
+    r.on('close', () => {
+      // Stale close from a previously discarded ros instance — ignore.
+      if (ros !== r) return;
       setStatus('off', '已断开');
       teardownTopics();
+      setButtonForState(false);
+      // Keep intent in sync with the visible label: after an unexpected
+      // close, the button now says 连接, so the next click must take the
+      // connect path — otherwise users have to click twice to reconnect.
+      userWantsConnected = false;
+      ros = null;
     });
-    ros.on('error', (err) => {
+    r.on('error', (err) => {
+      if (ros !== r) return;
       console.error('rosbridge error', err);
       setStatus('off', '连接错误');
+      // WebSocket usually fires 'close' right after 'error', but not
+      // always (e.g. immediate handshake failure on some browsers).
+      // Reset the same state here so the button label and intent stay
+      // consistent regardless. The 'ros !== r' guard above plus setting
+      // ros = null below makes a follow-up 'close' a no-op.
+      teardownTopics();
+      setButtonForState(false);
+      userWantsConnected = false;
+      ros = null;
     });
   }
 
-  connectBtn.addEventListener('click', connect);
+  function disconnect() {
+    userWantsConnected = false;
+    if (ros) {
+      try { ros.close(); } catch (_) { /* ignore */ }
+    }
+    teardownTopics();
+    setStatus('off', '已断开');
+    setButtonForState(false);
+    ros = null;
+  }
+
+  connectBtn.addEventListener('click', () => {
+    if (userWantsConnected) disconnect();
+    else connect();
+  });
 
   // ---------- Topic wiring ----------
-  function sub(name, type, cb) {
-    const t = new ROSLIB.Topic({ ros, name, messageType: type });
+  function sub(name, type, cb, opts) {
+    const t = new ROSLIB.Topic(Object.assign({ ros, name, messageType: type }, opts || {}));
     t.subscribe(cb);
     subs.push(t);
     return t;
@@ -55,7 +99,10 @@
   function teardownTopics() {
     subs.forEach((t) => { try { t.unsubscribe(); } catch (_) { /* ignore */ } });
     subs.length = 0;
-    cmdVelPub = null;
+    if (cmdVelPub) {
+      try { cmdVelPub.unadvertise(); } catch (_) { /* ignore */ }
+      cmdVelPub = null;
+    }
   }
 
   function setupTopics() {
@@ -96,26 +143,31 @@
       const q = msg.pose.pose.orientation;
       $('m-odom-xy').textContent = `${p.x.toFixed(2)}, ${p.y.toFixed(2)} m`;
       $('m-odom-yaw').textContent = (yawFromQuat(q) * 180 / Math.PI).toFixed(1) + '°';
-    });
+    }, { throttle_rate: 100 });
 
     sub('/imu/data_raw', 'sensor_msgs/msg/Imu', (msg) => {
       const q = msg.orientation;
       const r = rpyFromQuat(q);
       $('m-imu-rpy').textContent =
         `${(r.roll * 180 / Math.PI).toFixed(1)}, ${(r.pitch * 180 / Math.PI).toFixed(1)}, ${(r.yaw * 180 / Math.PI).toFixed(1)}°`;
-    });
+    }, { throttle_rate: 100 });
 
+    // Only A–F carry real ultrasonic data; bytes for G/H are reused by the
+    // self-check payload in the firmware, so they would always read 0.
     sub('/Distance', 'robot_interfaces/msg/Supersonic', (msg) => {
-      const keys = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+      const keys = ['a', 'b', 'c', 'd', 'e', 'f'];
       keys.forEach((k) => {
         const v = msg['distance_' + k];
         const el = $('s-' + k);
+        if (!el) return;
         el.textContent = (typeof v === 'number') ? v.toFixed(2) : '—';
         el.classList.remove('near', 'mid');
-        if (v < 0.3) el.classList.add('near');
-        else if (v < 0.6) el.classList.add('mid');
+        if (typeof v === 'number') {
+          if (v < 0.3) el.classList.add('near');
+          else if (v < 0.6) el.classList.add('mid');
+        }
       });
-    });
+    }, { throttle_rate: 100 });
 
     cmdVelPub = new ROSLIB.Topic({
       ros,
@@ -123,6 +175,11 @@
       messageType: 'geometry_msgs/msg/Twist',
     });
     cmdVelPub.advertise();
+
+    // Build viewer + log subscription as part of the connection lifecycle.
+    rebuildViewer();
+    subscribeRosout();
+    refreshNodeList();
   }
 
   // ---------- Math helpers ----------
@@ -204,24 +261,96 @@
     btn.addEventListener('touchend', stopBtn);
   });
 
-  // Keyboard: WASD + space (stop)
+  // Keyboard: WASD + space (stop). Held keys publish at 10 Hz so a single
+  // dropped message can't strand the chassis. Ignore key events that come
+  // from form inputs so typing in the URL / topic boxes never moves the
+  // robot.
+  function isTypingTarget(t) {
+    if (!t || !t.tagName) return false;
+    const tag = t.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable;
+  }
+
+  const heldKeys = new Set();
+  let keyRepeatTimer = null;
+
+  function computeKeyboardCmd() {
+    let vxs = 0, wzs = 0;
+    if (heldKeys.has('w')) vxs += 1;
+    if (heldKeys.has('s')) vxs -= 1;
+    if (heldKeys.has('a')) wzs += 1;
+    if (heldKeys.has('d')) wzs -= 1;
+    return { vx: vxs * (+linMax.value), wz: wzs * (+angMax.value) };
+  }
+
+  function stopKeyboardLoop(publishZero) {
+    if (keyRepeatTimer) { clearInterval(keyRepeatTimer); keyRepeatTimer = null; }
+    if (publishZero) publishCmd(0, 0);
+  }
+
   document.addEventListener('keydown', (e) => {
-    if (e.repeat) return;
-    const map = { w: [1, 0], s: [-1, 0], a: [0, 1], d: [0, -1] };
+    if (isTypingTarget(e.target)) return;
     const k = e.key.toLowerCase();
-    if (map[k]) {
-      const [vxs, wzs] = map[k];
-      publishCmd(vxs * (+linMax.value), wzs * (+angMax.value));
-    } else if (k === ' ') {
-      publishCmd(0, 0);
+    if (k === ' ') {
+      e.preventDefault();
+      heldKeys.clear();
+      stopKeyboardLoop(true);
+      return;
     }
+    if (!'wasd'.includes(k)) return;
+    if (e.repeat) return;
+    heldKeys.add(k);
+    // Re-arm the repeat immediately with the new key combination.
+    if (keyRepeatTimer) { clearInterval(keyRepeatTimer); keyRepeatTimer = null; }
+    const c = computeKeyboardCmd();
+    publishCmd(c.vx, c.wz);
+    keyRepeatTimer = setInterval(() => {
+      const cc = computeKeyboardCmd();
+      publishCmd(cc.vx, cc.wz);
+    }, 100);
   });
+  // Important: keyup must NOT skip on isTypingTarget. If a user holds W,
+  // then clicks into a text input and releases, the keyup fires with the
+  // input as target — skipping it would leave 'w' stuck in heldKeys and
+  // the 10 Hz loop driving the robot forever. Releasing a key that was
+  // never added (e.g. typed inside an input) is a harmless no-op.
   document.addEventListener('keyup', (e) => {
     const k = e.key.toLowerCase();
-    if ('wasd'.includes(k)) publishCmd(0, 0);
+    if (!'wasd'.includes(k)) return;
+    if (!heldKeys.has(k)) return;
+    heldKeys.delete(k);
+    if (heldKeys.size === 0) {
+      stopKeyboardLoop(true);
+    }
+  });
+  // Browser/tab lost focus — release any held keys so the robot doesn't
+  // keep going on a key we'll never see released.
+  window.addEventListener('blur', () => {
+    if (heldKeys.size > 0 || keyRepeatTimer) {
+      heldKeys.clear();
+      stopKeyboardLoop(true);
+    }
   });
 
+  // Emergency stop button: always publish (0,0), regardless of held inputs.
+  const eStopBtn = $('e-stop');
+  if (eStopBtn) {
+    eStopBtn.addEventListener('click', () => {
+      heldKeys.clear();
+      stopKeyboardLoop(false);
+      // Send the stop a few times in case rosbridge / WiFi drops one.
+      publishCmd(0, 0);
+      setTimeout(() => publishCmd(0, 0), 50);
+      setTimeout(() => publishCmd(0, 0), 150);
+    });
+  }
+
   // ---------- Parameters ----------
+  // rcl_interfaces/msg/ParameterType constants.
+  const PT_BOOL = 1, PT_INTEGER = 2, PT_DOUBLE = 3, PT_STRING = 4;
+  const TYPE_NAME = { 1: 'bool', 2: 'int', 3: 'double', 4: 'string' };
+  const NAME_TYPE = { bool: PT_BOOL, int: PT_INTEGER, double: PT_DOUBLE, string: PT_STRING };
+
   function paramService(nodeName, kind) {
     return new ROSLIB.Service({
       ros,
@@ -230,6 +359,48 @@
         ? 'rcl_interfaces/srv/GetParameters'
         : 'rcl_interfaces/srv/SetParameters',
     });
+  }
+
+  // Build a fully-populated rcl_interfaces/ParameterValue for one of the
+  // four scalar types we support, leaving the unused variants at their
+  // zero values so rosbridge accepts the message.
+  function buildParameterValue(typeName, rawString) {
+    const t = NAME_TYPE[typeName] || PT_DOUBLE;
+    const base = {
+      type: t,
+      bool_value: false,
+      integer_value: 0,
+      double_value: 0,
+      string_value: '',
+      byte_array_value: [],
+      bool_array_value: [],
+      integer_array_value: [],
+      double_array_value: [],
+      string_array_value: [],
+    };
+    switch (t) {
+      case PT_BOOL: {
+        const s = String(rawString).trim().toLowerCase();
+        base.bool_value = (s === 'true' || s === '1' || s === 'yes' || s === 'on');
+        return base;
+      }
+      case PT_INTEGER: {
+        const n = parseInt(rawString, 10);
+        if (Number.isNaN(n)) return null;
+        base.integer_value = n;
+        return base;
+      }
+      case PT_DOUBLE: {
+        const n = parseFloat(rawString);
+        if (Number.isNaN(n)) return null;
+        base.double_value = n;
+        return base;
+      }
+      case PT_STRING:
+        base.string_value = String(rawString);
+        return base;
+    }
+    return null;
   }
 
   function refreshParams() {
@@ -244,13 +415,20 @@
         if (!row) return;
         let v = null;
         switch (val.type) {
-          case 2: v = val.integer_value; break;
-          case 3: v = val.double_value; break;
-          case 1: v = val.bool_value; break;
-          case 4: v = val.string_value; break;
+          case PT_INTEGER: v = val.integer_value; break;
+          case PT_DOUBLE:  v = val.double_value; break;
+          case PT_BOOL:    v = val.bool_value; break;
+          case PT_STRING:  v = val.string_value; break;
           default: v = null;
         }
-        row.querySelector('.param-current').textContent = v === null ? '(未设置)' : String(v);
+        // Auto-update data-type from the server's real type, so subsequent
+        // apply uses the right ParameterValue variant even if the HTML
+        // declared something else.
+        if (val.type && TYPE_NAME[val.type]) {
+          row.dataset.type = TYPE_NAME[val.type];
+        }
+        row.querySelector('.param-current').textContent =
+          v === null ? '(未设置)' : `${String(v)}  [${TYPE_NAME[val.type] || '?'}]`;
         if (v !== null) row.querySelector('input').value = v;
       });
     }, (err) => {
@@ -266,25 +444,37 @@
       if (!ros) { alert('未连接 rosbridge'); return; }
       const row = btn.closest('.param-row');
       const name = row.dataset.param;
-      const value = parseFloat(row.querySelector('input').value);
-      if (Number.isNaN(value)) { alert('无效数字'); return; }
+      const typeName = row.dataset.type || 'double';
+      const raw = row.querySelector('input').value;
+      const value = buildParameterValue(typeName, raw);
+      if (!value) { alert(`无效 ${typeName} 值: "${raw}"`); return; }
       const node = $('param-node').value.trim();
-      const req = new ROSLIB.ServiceRequest({
-        parameters: [{
-          name,
-          value: { type: 3, double_value: value, bool_value: false, integer_value: 0, string_value: '', byte_array_value: [], bool_array_value: [], integer_array_value: [], double_array_value: [], string_array_value: [] },
-        }],
-      });
+      const req = new ROSLIB.ServiceRequest({ parameters: [{ name, value }] });
       paramService(node, 'set_parameters').callService(req, (res) => {
         const ok = res.results && res.results[0] && res.results[0].successful;
         if (ok) {
-          row.querySelector('.param-current').textContent = String(value);
+          row.querySelector('.param-current').textContent = `${String(raw)}  [${typeName}]`;
         } else {
           alert('设置失败：' + (res.results && res.results[0] && res.results[0].reason || '未知'));
         }
       }, (err) => alert('设置失败：' + err));
     });
   });
+
+  // Populate the node datalist from ros.getNodes() each time we connect.
+  function refreshNodeList() {
+    if (!ros || !ros.getNodes) return;
+    const dl = $('node-list');
+    if (!dl) return;
+    ros.getNodes((nodes) => {
+      dl.innerHTML = '';
+      (nodes || []).slice().sort().forEach((n) => {
+        const opt = document.createElement('option');
+        opt.value = n;
+        dl.appendChild(opt);
+      });
+    }, (err) => console.warn('getNodes failed', err));
+  }
 
   // ---------- Charts ----------
   function makeChart(canvasId, label, color) {
@@ -360,6 +550,11 @@
   let odomPathSub = null;
   const odomPoints = [];
   const MAX_PATH_POINTS = 2000;
+  // Module-scoped so we never accumulate observers / listeners across
+  // repeated buildViewer() calls, even if someone later removes the
+  // `if (viewer) return;` short-circuit.
+  let viewerResizeObserver = null;
+  let viewerResizeFallback = null;
 
   function buildViewer() {
     if (viewer) return;
@@ -374,10 +569,25 @@
     });
     viewer.addObject(new ROS3D.Grid({ color: 0x2d3845, cellSize: 0.5, num_cells: 20 }));
 
-    window.addEventListener('resize', () => {
-      if (!viewer) return;
-      viewer.resize(host.clientWidth, host.clientHeight);
-    });
+    // The host element resizes whenever cards above it expand/collapse,
+    // even when the window itself didn't change — ResizeObserver catches
+    // those, the old window.resize listener didn't.
+    const resize = () => { if (viewer) viewer.resize(host.clientWidth, host.clientHeight); };
+    if (window.ResizeObserver) {
+      if (viewerResizeObserver) {
+        try { viewerResizeObserver.disconnect(); } catch (_) { /* ignore */ }
+      }
+      viewerResizeObserver = new ResizeObserver(resize);
+      viewerResizeObserver.observe(host);
+    } else if (!viewerResizeFallback) {
+      viewerResizeFallback = resize;
+      window.addEventListener('resize', viewerResizeFallback);
+    }
+  }
+
+  function setViewerStatus(text) {
+    const el = $('viewer-status');
+    if (el) el.textContent = text || '';
   }
 
   function disposeLayers() {
@@ -413,6 +623,37 @@
       transThres: 0.01,
       rate: 10.0,
     });
+
+    // Warn the user if the chosen fixed frame never shows up — without
+    // it, scans / maps / odom layers stay invisible with no feedback.
+    setViewerStatus(`等待 frame "${fixedFrame}" …`);
+    let frameSeen = false;
+    const tfProbe = new ROSLIB.Topic({
+      ros, name: '/tf', messageType: 'tf2_msgs/msg/TFMessage', throttle_rate: 200,
+    });
+    const tfProbeStaticSub = new ROSLIB.Topic({
+      ros, name: '/tf_static', messageType: 'tf2_msgs/msg/TFMessage',
+    });
+    const onTf = (msg) => {
+      if (frameSeen || !msg || !msg.transforms) return;
+      for (const tr of msg.transforms) {
+        if (tr.header && (tr.header.frame_id === fixedFrame || tr.child_frame_id === fixedFrame)) {
+          frameSeen = true;
+          setViewerStatus('');
+          try { tfProbe.unsubscribe(); } catch (_) {}
+          try { tfProbeStaticSub.unsubscribe(); } catch (_) {}
+          break;
+        }
+      }
+    };
+    tfProbe.subscribe(onTf);
+    tfProbeStaticSub.subscribe(onTf);
+    viewerLayers.push(tfProbe, tfProbeStaticSub);
+    setTimeout(() => {
+      if (!frameSeen) {
+        setViewerStatus(`未收到 frame "${fixedFrame}" 的 TF — 检查 robot_state_publisher / EKF 是否启动`);
+      }
+    }, 4000);
 
     if (scanTopic) {
       const scan = new ROS3D.LaserScan({
@@ -494,23 +735,28 @@
     }
   });
 
-  // Build the viewer right after the connection is up.
-  const _origSetup = setupTopics;
-  // eslint-disable-next-line no-func-assign
-  setupTopics = function () { _origSetup(); rebuildViewer(); subscribeRosout(); };
-
   // ---------- Cameras (web_video_server) ----------
   const camPort = $('cam-port');
   const camQuality = $('cam-quality');
+  const camBase = $('cam-base');
   const camReload = $('cam-reload');
 
   function videoHost() {
     return location.hostname || 'localhost';
   }
 
+  function videoBase() {
+    // Allow the user to override the entire base URL — handy when the
+    // dashboard is served behind an HTTPS reverse proxy and the bare
+    // http://host:8081 stream would be blocked as mixed content.
+    const override = (camBase && camBase.value || '').trim();
+    if (override) return override.replace(/\/+$/, '');
+    const port = (camPort && camPort.value) || '8081';
+    return `${location.protocol}//${videoHost()}:${port}`;
+  }
+
   function buildStreamUrl(topic) {
     if (!topic) return '';
-    const port = camPort.value || '8081';
     const q = Math.max(1, Math.min(100, parseInt(camQuality.value, 10) || 60));
     const params = new URLSearchParams({
       topic,
@@ -519,7 +765,7 @@
     });
     // Bust cache so reload actually re-fetches the stream.
     params.set('_', String(Date.now()));
-    return `http://${videoHost()}:${port}/stream?${params.toString()}`;
+    return `${videoBase()}/stream?${params.toString()}`;
   }
 
   const CAM_PLACEHOLDER = 'placeholder.svg';
@@ -575,6 +821,7 @@
   });
   camPort.addEventListener('change', applyAllCams);
   camQuality.addEventListener('change', applyAllCams);
+  if (camBase) camBase.addEventListener('change', applyAllCams);
 
   // Start streams once on load (they're independent of rosbridge).
   applyAllCams();

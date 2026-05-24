@@ -123,7 +123,7 @@ main {
 
 .sonar-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
 .sonar {
@@ -175,6 +175,22 @@ main {
 .teleop-sliders input[type=range] { margin-top: 4px; }
 .cmd-readout { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 
+.e-stop {
+  background: var(--err);
+  border: none;
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  padding: 10px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 4px;
+  align-self: stretch;
+}
+.e-stop:hover { filter: brightness(1.1); }
+.e-stop:active { filter: brightness(0.9); }
+
 .params { display: flex; flex-direction: column; gap: 8px; }
 .param-row { display: grid; grid-template-columns: 160px 1fr 80px 90px; gap: 8px; align-items: center; }
 .param-row label { font-size: 12px; color: var(--muted); }
@@ -212,6 +228,15 @@ main {
   position: relative;
 }
 .viewer canvas { display: block; width: 100% !important; height: 100% !important; }
+
+.viewer-status {
+  font-size: 11px;
+  color: var(--warn);
+  margin-top: 6px;
+  min-height: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.viewer-status:empty { display: none; }
 
 .viewer-controls {
   display: flex;
@@ -259,7 +284,8 @@ main {
   font-size: 11px;
   color: var(--muted);
 }
-.cam-toolbar input[type=number] {
+.cam-toolbar input[type=number],
+.cam-toolbar input[type=text] {
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--text);
@@ -269,6 +295,8 @@ main {
   width: 100px;
   height: 28px;
 }
+.cam-toolbar .cam-base-wrap { flex: 1; min-width: 220px; }
+.cam-toolbar .cam-base-wrap input { width: 100%; }
 .cam-toolbar button {
   background: var(--accent);
   border: none;
@@ -417,3 +445,32 @@ main {
 .log-error .lv { color: var(--err); }
 .log-fatal { background: rgba(248, 81, 73, 0.18); }
 .log-fatal .lv { color: var(--err); font-weight: 700; }
+
+/* --------- Mobile / narrow-screen tweaks --------- */
+@media (max-width: 640px) {
+  header {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  header h1 { font-size: 16px; }
+  .conn { flex-wrap: wrap; width: 100%; }
+  .conn input { flex: 1; width: auto; min-width: 140px; }
+
+  main { padding: 10px; gap: 12px; }
+
+  /* Bigger teleop buttons so fingers can hit them. */
+  .teleop-grid {
+    grid-template-columns: repeat(3, 72px);
+    grid-template-rows: repeat(3, 72px);
+  }
+  .teleop-grid .tk { font-size: 22px; }
+
+  .e-stop { font-size: 16px; padding: 14px; }
+
+  /* Log grid: drop the node column on phones so messages get room. */
+  .log-row {
+    grid-template-columns: 70px 50px 1fr;
+  }
+  .log-row .ln { display: none; }
+}
