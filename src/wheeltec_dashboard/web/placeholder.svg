@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Landscape placeholder">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1a2740"/>
+      <stop offset="55%" stop-color="#3b4a6b"/>
+      <stop offset="78%" stop-color="#a05a5a"/>
+      <stop offset="100%" stop-color="#f0b070"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffd58a" stop-opacity="1"/>
+      <stop offset="60%" stop-color="#f0a060" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#f0a060" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="m1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2c3247"/>
+      <stop offset="100%" stop-color="#1a1f2e"/>
+    </linearGradient>
+    <linearGradient id="m2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3a3f55"/>
+      <stop offset="100%" stop-color="#23283a"/>
+    </linearGradient>
+    <linearGradient id="m3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4f4660"/>
+      <stop offset="100%" stop-color="#2f2a3f"/>
+    </linearGradient>
+    <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5a4a55"/>
+      <stop offset="40%" stop-color="#2f3850"/>
+      <stop offset="100%" stop-color="#1a2030"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Sky -->
+  <rect width="800" height="600" fill="url(#sky)"/>
+
+  <!-- Sun glow + sun -->
+  <circle cx="560" cy="380" r="220" fill="url(#sun)"/>
+  <circle cx="560" cy="380" r="58" fill="#ffe2a8"/>
+
+  <!-- Stars -->
+  <g fill="#ffffff" opacity="0.6">
+    <circle cx="60" cy="55" r="1.2"/>
+    <circle cx="140" cy="30" r="0.9"/>
+    <circle cx="210" cy="80" r="1.1"/>
+    <circle cx="320" cy="40" r="0.8"/>
+    <circle cx="430" cy="70" r="1"/>
+    <circle cx="700" cy="50" r="1"/>
+    <circle cx="760" cy="110" r="0.9"/>
+  </g>
+
+  <!-- Distant mountains -->
+  <path d="M0,420 L70,360 L150,395 L230,330 L320,385 L400,340 L490,395 L580,355 L680,390 L800,355 L800,600 L0,600 Z" fill="url(#m3)"/>
+
+  <!-- Mid mountains -->
+  <path d="M0,470 L90,400 L180,455 L280,395 L370,460 L470,410 L580,475 L690,420 L800,460 L800,600 L0,600 Z" fill="url(#m2)" opacity="0.95"/>
+
+  <!-- Foreground mountains -->
+  <path d="M0,520 L110,440 L210,510 L320,460 L420,520 L520,475 L640,525 L760,480 L800,505 L800,600 L0,600 Z" fill="url(#m1)"/>
+
+  <!-- Water reflection -->
+  <rect x="0" y="540" width="800" height="60" fill="url(#water)"/>
+  <g opacity="0.18" fill="#ffd58a">
+    <rect x="540" y="548" width="42" height="2"/>
+    <rect x="535" y="555" width="52" height="2"/>
+    <rect x="545" y="562" width="34" height="2"/>
+    <rect x="538" y="569" width="46" height="2"/>
+    <rect x="548" y="576" width="28" height="2"/>
+    <rect x="542" y="583" width="38" height="2"/>
+    <rect x="552" y="590" width="20" height="2"/>
+  </g>
+
+  <!-- Caption -->
+  <g font-family="-apple-system, 'Segoe UI', 'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" text-anchor="middle">
+    <rect x="240" y="250" width="320" height="64" rx="8" fill="rgba(11,15,20,0.55)"/>
+    <text x="400" y="278" fill="#e6edf3" font-size="18" font-weight="600">暂无视频流</text>
+    <text x="400" y="302" fill="#8b98a5" font-size="12">等待 web_video_server 与相机话题…</text>
+  </g>
+</svg>
