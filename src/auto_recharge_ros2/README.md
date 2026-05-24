@@ -31,7 +31,7 @@ auto_recharge_ros2/
 
 ## 节点说明
 
-### `auto_recharger`(可执行文件:`auto_recharger`)
+### `auto_recharger`(可执行文件:`auto_recharge`)
 
 订阅:
 - `PowerVoltage` (std_msgs/Float32) — 电池电压
@@ -78,8 +78,13 @@ auto_recharge_ros2/
 ```bash
 colcon build --packages-select auto_recharge_ros2
 source install/setup.bash
-ros2 run auto_recharge_ros2 auto_recharger
+ros2 run auto_recharge_ros2 auto_recharge
 ```
+
+> 注:`setup.py` 中的 `console_scripts` 入口为
+> `auto_recharge = auto_recharge_ros2.auto_recharger:main`,因此
+> 命令行可执行名为 **`auto_recharge`**(而不是模块文件名
+> `auto_recharger`)。
 
 ## 使用示例
 
@@ -91,7 +96,7 @@ ros2 launch wheeltec_nav2 wheeltec_nav2.launch.py
 # (或运行时通过 /charger_position_update 发布)
 
 # 3. 启动自动回充
-ros2 run auto_recharge_ros2 auto_recharger
+ros2 run auto_recharge_ros2 auto_recharge
 
 # 电压低于阈值后,节点会自动:
 # - 调用 Nav2 导航到充电桩附近
