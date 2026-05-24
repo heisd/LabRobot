@@ -50,6 +50,10 @@
       setStatus('off', '已断开');
       teardownTopics();
       setButtonForState(false);
+      // Keep intent in sync with the visible label: after an unexpected
+      // close, the button now says 连接, so the next click must take the
+      // connect path — otherwise users have to click twice to reconnect.
+      userWantsConnected = false;
       ros = null;
     });
     r.on('error', (err) => {
