@@ -296,10 +296,15 @@
       publishCmd(cc.vx, cc.wz);
     }, 100);
   });
+  // Important: keyup must NOT skip on isTypingTarget. If a user holds W,
+  // then clicks into a text input and releases, the keyup fires with the
+  // input as target — skipping it would leave 'w' stuck in heldKeys and
+  // the 10 Hz loop driving the robot forever. Releasing a key that was
+  // never added (e.g. typed inside an input) is a harmless no-op.
   document.addEventListener('keyup', (e) => {
-    if (isTypingTarget(e.target)) return;
     const k = e.key.toLowerCase();
     if (!'wasd'.includes(k)) return;
+    if (!heldKeys.has(k)) return;
     heldKeys.delete(k);
     if (heldKeys.size === 0) {
       stopKeyboardLoop(true);
