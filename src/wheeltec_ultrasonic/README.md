@@ -31,9 +31,16 @@ wheeltec_ultrasonic/
 订阅:
 - `<input_topic>` (robot_interfaces/Supersonic) — 默认 `Distance`,由 `turn_on_wheeltec_robot` 发布
 
-发布:
-- 多个 `sensor_msgs/Range` 话题,按各路传感器名称分别发布(如 `ultrasonic_a`、`ultrasonic_b` ...)
-- `/ultrasonic/points` (sensor_msgs/PointCloud2) — 把所有有效距离投影为点云,可被 voxel_layer 使用
+发布(**话题名严格按下面这样**,大写字母,位于 `/ultrasonic/` 命名空间下):
+- `/ultrasonic/A` (sensor_msgs/Range) — frame `ultrasonic_A`
+- `/ultrasonic/B` (sensor_msgs/Range) — frame `ultrasonic_B`
+- `/ultrasonic/C` (sensor_msgs/Range) — frame `ultrasonic_C`
+- `/ultrasonic/D` (sensor_msgs/Range) — frame `ultrasonic_D`
+- `/ultrasonic/E` (sensor_msgs/Range) — frame `ultrasonic_E`
+- `/ultrasonic/F` (sensor_msgs/Range) — frame `ultrasonic_F`,**仅在 `robot_type != s300_mini` 时发布**
+- `/ultrasonic/points` (sensor_msgs/PointCloud2) — 把所有有效 Range 通过 `base_frame <- ultrasonic_X` 的 TF 投影成点云,可直接被 Nav2 `voxel_layer` / `obstacle_layer` 消费
+
+> 注:话题里的字母是大写(`A`/`B`/…/`F`),不是 `ultrasonic_a` 这种带下划线的小写;`ultrasonic_a` 等只是各路超声波的 **TF frame** 名(带下划线 + 大写字母),不要把它当成话题名订阅。
 
 参数:
 | 参数 | 默认值 | 含义 |
@@ -71,12 +78,27 @@ ros2 launch wheeltec_ultrasonic supersonic+converter.launch.py
 
 # 3. 验证
 ros2 topic list | grep ultrasonic
-ros2 topic echo /ultrasonic/points
+# 应该能看到:
+#   /ultrasonic/A
+#   /ultrasonic/B
+#   /ultrasonic/C
+#   /ultrasonic/D
+#   /ultrasonic/E
+#   /ultrasonic/F          (s300_mini 没有)
+#   /ultrasonic/points
+
+ros2 topic echo /ultrasonic/A         # 查看单路 Range
+ros2 topic echo /ultrasonic/points    # 查看融合点云
+
+# 在 RViz 中:
+#   - 添加 Range 显示,Topic 填 /ultrasonic/A 等(全大写)
+#   - 添加 PointCloud2 显示,Topic 填 /ultrasonic/points
+#   - 固定坐标系设为 base_footprint,各路 Range 会以对应 ultrasonic_X frame 显示
 ```
 
 ## 注意事项
 
 1. 必须先编译 `robot_interfaces` 包,否则无法识别 `Supersonic` 消息。
 2. 不同机型的传感器安装位置不同,务必正确设置 `robot_type`。
-3. 与 Nav2 联用时需要在 costmap 配置中加入 `range_sensor_layer` 或 `voxel_layer`。
+3. 与 Nav2 联用时需要在 costmap 配置中加入 `range_sensor_layer` 或 `voxel_layer`。`range_sensor_layer` 的 `topics` 列表需要写完整的 `/ultrasonic/A` ~ `/ultrasonic/F`(注意大写),`voxel_layer` / `obstacle_layer` 订阅 `/ultrasonic/points`。
 4. 超声波回波易受干扰,建议根据实际测试结果调整 `min_range`、`max_range`。
