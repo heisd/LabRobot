@@ -170,6 +170,44 @@
       </div>
     </section>
 
+    <section class="card card-wide">
+      <h2>相机 <span class="muted">(web_video_server MJPEG)</span></h2>
+      <div class="cam-toolbar">
+        <label>video_server 端口
+          <input id="cam-port" type="number" value="8081" min="1" max="65535" />
+        </label>
+        <label>画质 (1-100)
+          <input id="cam-quality" type="number" value="60" min="1" max="100" />
+        </label>
+        <button id="cam-reload">刷新</button>
+      </div>
+      <div class="cam-grid">
+        <div class="cam-tile">
+          <div class="cam-head">
+            <span>车上相机</span>
+            <input class="cam-topic" data-slot="car" type="text" value="/camera/color/image_raw" />
+            <label class="cam-check"><input type="checkbox" class="cam-enable" data-slot="car" checked /> 启用</label>
+          </div>
+          <div class="cam-frame">
+            <img class="cam-img" data-slot="car" alt="car camera" />
+            <div class="cam-err" data-slot="car" hidden>无法加载流</div>
+          </div>
+        </div>
+        <div class="cam-tile">
+          <div class="cam-head">
+            <span>机械臂相机</span>
+            <input class="cam-topic" data-slot="arm" type="text" value="/camera_arm/color/image_raw" />
+            <label class="cam-check"><input type="checkbox" class="cam-enable" data-slot="arm" checked /> 启用</label>
+          </div>
+          <div class="cam-frame">
+            <img class="cam-img" data-slot="arm" alt="arm camera" />
+            <div class="cam-err" data-slot="arm" hidden>无法加载流</div>
+          </div>
+        </div>
+      </div>
+      <p class="hint">流从 <code>http://&lt;host&gt;:&lt;port&gt;/stream?topic=...</code> 拉取。若没启动 <code>astra_camera</code> 节点，画面会显示加载失败。深度流也支持，把 topic 换成 <code>/camera/depth/image_raw</code> 即可。</p>
+    </section>
+
     <section class="card">
       <h2>图表</h2>
       <div class="charts">

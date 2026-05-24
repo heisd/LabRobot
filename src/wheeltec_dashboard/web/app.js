@@ -499,6 +499,73 @@
   // eslint-disable-next-line no-func-assign
   setupTopics = function () { _origSetup(); rebuildViewer(); subscribeRosout(); };
 
+  // ---------- Cameras (web_video_server) ----------
+  const camPort = $('cam-port');
+  const camQuality = $('cam-quality');
+  const camReload = $('cam-reload');
+
+  function videoHost() {
+    return location.hostname || 'localhost';
+  }
+
+  function buildStreamUrl(topic) {
+    if (!topic) return '';
+    const port = camPort.value || '8081';
+    const q = Math.max(1, Math.min(100, parseInt(camQuality.value, 10) || 60));
+    const params = new URLSearchParams({
+      topic,
+      type: 'mjpeg',
+      quality: String(q),
+    });
+    // Bust cache so reload actually re-fetches the stream.
+    params.set('_', String(Date.now()));
+    return `http://${videoHost()}:${port}/stream?${params.toString()}`;
+  }
+
+  function applyCam(slot) {
+    const img = document.querySelector(`.cam-img[data-slot="${slot}"]`);
+    const topicInput = document.querySelector(`.cam-topic[data-slot="${slot}"]`);
+    const enable = document.querySelector(`.cam-enable[data-slot="${slot}"]`);
+    const errEl = document.querySelector(`.cam-err[data-slot="${slot}"]`);
+    if (!img || !topicInput || !enable) return;
+    errEl.hidden = true;
+    if (!enable.checked) {
+      img.removeAttribute('src');
+      errEl.hidden = false;
+      errEl.textContent = '已禁用';
+      return;
+    }
+    const topic = topicInput.value.trim();
+    if (!topic) {
+      img.removeAttribute('src');
+      return;
+    }
+    img.onerror = () => {
+      errEl.hidden = false;
+      errEl.textContent = '无法加载流，检查 web_video_server 与相机话题';
+    };
+    img.onload = () => { errEl.hidden = true; };
+    img.src = buildStreamUrl(topic);
+  }
+
+  function applyAllCams() {
+    applyCam('car');
+    applyCam('arm');
+  }
+
+  camReload.addEventListener('click', applyAllCams);
+  document.querySelectorAll('.cam-topic').forEach((el) => {
+    el.addEventListener('change', () => applyCam(el.dataset.slot));
+  });
+  document.querySelectorAll('.cam-enable').forEach((el) => {
+    el.addEventListener('change', () => applyCam(el.dataset.slot));
+  });
+  camPort.addEventListener('change', applyAllCams);
+  camQuality.addEventListener('change', applyAllCams);
+
+  // Start streams once on load (they're independent of rosbridge).
+  applyAllCams();
+
   // ---------- Logs (/rosout) ----------
   const logView = $('log-view');
   const logLevel = $('log-level');

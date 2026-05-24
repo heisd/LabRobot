@@ -14,6 +14,7 @@ telemetry from `turn_on_wheeltec_robot`, drives the chassis through
 
 ```bash
 sudo apt install ros-humble-rosbridge-suite
+# web_video_server 由本 repo 内的 web_video_server-ros2 包提供，随 colcon 一起构建
 ```
 
 构建：
@@ -38,6 +39,8 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 | --- | --- | --- |
 | `http_port` | `8080` | dashboard HTTP 端口 |
 | `ws_port` | `9090` | rosbridge_websocket 端口 |
+| `video_port` | `8081` | web_video_server (MJPEG) 端口 |
+| `enable_video` | `true` | 是否随 dashboard 拉起 web_video_server |
 | `address` | `0.0.0.0` | HTTP 监听地址 |
 
 例：`ros2 launch wheeltec_dashboard dashboard.launch.py http_port:=8000`
@@ -54,6 +57,10 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 - **3D 视图（嵌入式 RViz 替代）**：基于 ros3djs，支持 Grid、TF、LaserScan
   (`/scan`)、OccupancyGrid (`/map`)、Odometry 轨迹。Fixed frame 默认
   `odom_combined`。URDF 加载在 ROS 2 + rosbridge 下为实验功能，建议留空。
+- **相机预览**：launch 同时拉起 `web_video_server`，dashboard 通过
+  MJPEG 同时显示两路相机——默认车上 `/camera/color/image_raw` 与机械臂
+  `/camera_arm/color/image_raw`，话题/画质/端口可编辑。深度流把 topic
+  改成 `/camera/depth/image_raw` 即可。
 - **日志面板**：订阅 `/rosout`，按等级 (DEBUG/INFO/WARN/ERROR/FATAL)
   与节点名子串过滤；可配置环形缓冲行数 (50–5000)、暂停/继续、清空、
   自动滚动；按等级着色。
