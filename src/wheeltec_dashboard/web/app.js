@@ -60,6 +60,15 @@
       if (ros !== r) return;
       console.error('rosbridge error', err);
       setStatus('off', '连接错误');
+      // WebSocket usually fires 'close' right after 'error', but not
+      // always (e.g. immediate handshake failure on some browsers).
+      // Reset the same state here so the button label and intent stay
+      // consistent regardless. The 'ros !== r' guard above plus setting
+      // ros = null below makes a follow-up 'close' a no-op.
+      teardownTopics();
+      setButtonForState(false);
+      userWantsConnected = false;
+      ros = null;
     });
   }
 
