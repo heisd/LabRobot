@@ -352,6 +352,153 @@
     chartCmdvel.update('none');
   }, 500);
 
+  // ---------- 3D Viewer (ros3djs) ----------
+  let viewer = null;
+  let tfClient = null;
+  const viewerLayers = []; // disposable client objects per rebuild
+  let odomPath = null;
+  let odomPathSub = null;
+  const odomPoints = [];
+  const MAX_PATH_POINTS = 2000;
+
+  function buildViewer() {
+    if (viewer) return;
+    const host = $('viewer');
+    viewer = new ROS3D.Viewer({
+      divID: 'viewer',
+      width: host.clientWidth,
+      height: host.clientHeight,
+      antialias: true,
+      background: '#0d1117',
+      cameraPose: { x: 3, y: 3, z: 3 },
+    });
+    viewer.addObject(new ROS3D.Grid({ color: 0x2d3845, cellSize: 0.5, num_cells: 20 }));
+
+    window.addEventListener('resize', () => {
+      if (!viewer) return;
+      viewer.resize(host.clientWidth, host.clientHeight);
+    });
+  }
+
+  function disposeLayers() {
+    viewerLayers.forEach((layer) => {
+      try {
+        if (layer.unsubscribe) layer.unsubscribe();
+        if (layer.sn && viewer && viewer.scene) viewer.scene.remove(layer.sn);
+        if (layer.dispose) layer.dispose();
+      } catch (_) { /* ignore */ }
+    });
+    viewerLayers.length = 0;
+    if (odomPathSub) { try { odomPathSub.unsubscribe(); } catch (_) {} odomPathSub = null; }
+    if (odomPath && viewer) { try { viewer.scene.remove(odomPath); } catch (_) {} }
+    odomPath = null;
+    odomPoints.length = 0;
+  }
+
+  function rebuildViewer() {
+    if (!ros) return;
+    buildViewer();
+    disposeLayers();
+
+    const fixedFrame = $('vw-fixed').value.trim() || 'odom_combined';
+    const scanTopic = $('vw-scan').value.trim();
+    const mapTopic = $('vw-map').value.trim();
+    const odomTopic = $('vw-odom').value.trim();
+    const urdfSpec = $('vw-urdf-param').value.trim();
+
+    tfClient = new ROSLIB.TFClient({
+      ros,
+      fixedFrame,
+      angularThres: 0.01,
+      transThres: 0.01,
+      rate: 10.0,
+    });
+
+    if (scanTopic) {
+      const scan = new ROS3D.LaserScan({
+        ros, tfClient,
+        topic: scanTopic,
+        rootObject: viewer.scene,
+        material: { size: 0.05, color: 0xff5555 },
+      });
+      viewerLayers.push(scan);
+    }
+
+    if (mapTopic) {
+      const map = new ROS3D.OccupancyGridClient({
+        ros, tfClient,
+        topic: mapTopic,
+        rootObject: viewer.scene,
+        continuous: true,
+      });
+      viewerLayers.push(map);
+    }
+
+    if (urdfSpec) {
+      // ros3djs UrdfClient pulls from a parameter on a node.
+      // Format accepts "node:param" or just a topic name -> fallback to subscribe.
+      try {
+        let nodeName = '/robot_state_publisher';
+        let paramName = 'robot_description';
+        if (urdfSpec.includes(':')) {
+          const parts = urdfSpec.split(':');
+          nodeName = parts[0];
+          paramName = parts[1];
+        }
+        const urdfClient = new ROS3D.UrdfClient({
+          ros, tfClient,
+          path: 'https://cdn.jsdelivr.net/gh/ros/urdf_tutorial@master/',
+          rootObject: viewer.scene,
+          parameter: paramName,
+          parameterNode: nodeName,
+          loader: ROS3D.COLLADA_LOADER,
+        });
+        viewerLayers.push(urdfClient);
+      } catch (e) {
+        console.warn('UrdfClient failed:', e);
+      }
+    }
+
+    if (odomTopic) {
+      const lineMat = new THREE.LineBasicMaterial({ color: 0x58a6ff });
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
+      odomPath = new THREE.Line(geom, lineMat);
+      viewer.scene.add(odomPath);
+
+      odomPathSub = new ROSLIB.Topic({
+        ros, name: odomTopic, messageType: 'nav_msgs/msg/Odometry',
+        throttle_rate: 50,
+      });
+      odomPathSub.subscribe((msg) => {
+        const p = msg.pose.pose.position;
+        odomPoints.push(p.x, p.y, p.z);
+        if (odomPoints.length / 3 > MAX_PATH_POINTS) {
+          odomPoints.splice(0, 3);
+        }
+        const arr = new Float32Array(odomPoints);
+        odomPath.geometry.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+        odomPath.geometry.attributes.position.needsUpdate = true;
+        odomPath.geometry.setDrawRange(0, odomPoints.length / 3);
+        odomPath.geometry.computeBoundingSphere();
+      });
+    }
+  }
+
+  $('vw-apply').addEventListener('click', rebuildViewer);
+  $('vw-clear-path').addEventListener('click', () => {
+    odomPoints.length = 0;
+    if (odomPath) {
+      odomPath.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
+      odomPath.geometry.setDrawRange(0, 0);
+    }
+  });
+
+  // Build the viewer right after the connection is up.
+  const _origSetup = setupTopics;
+  // eslint-disable-next-line no-func-assign
+  setupTopics = function () { _origSetup(); rebuildViewer(); };
+
   // Auto-connect on load.
   connect();
 })();

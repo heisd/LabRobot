@@ -8,7 +8,7 @@ telemetry from `turn_on_wheeltec_robot`, drives the chassis through
 
 - `rosbridge_websocket` — 浏览器 ↔ ROS 2 桥接 (默认 `ws://<host>:9090`)
 - 一个 Python 节点 `web_server` — 用 `http.server` 静态托管前端 (默认 `http://<host>:8080`)
-- 前端：原生 HTML/CSS/JS + [`roslibjs`](https://github.com/RobotWebTools/roslibjs) + [`Chart.js`](https://www.chartjs.org/) (走 CDN)
+- 前端：原生 HTML/CSS/JS + [`roslibjs`](https://github.com/RobotWebTools/roslibjs) + [`Chart.js`](https://www.chartjs.org/) + [`ros3djs`](https://github.com/RobotWebTools/ros3djs) / [`three.js`](https://threejs.org/) (走 CDN)
 
 ## 依赖
 
@@ -51,6 +51,9 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
   `/wheeltec_robot` 上的 `odom_x_scale`、`odom_y_scale`、
   `odom_z_scale_positive`、`odom_z_scale_negative`
 - 折线图：电压、cmd_vel (vx / wz)
+- **3D 视图（嵌入式 RViz 替代）**：基于 ros3djs，支持 Grid、TF、LaserScan
+  (`/scan`)、OccupancyGrid (`/map`)、Odometry 轨迹。Fixed frame 默认
+  `odom_combined`。URDF 加载在 ROS 2 + rosbridge 下为实验功能，建议留空。
 
 ## 网络说明
 
