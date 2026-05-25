@@ -5,6 +5,67 @@
 
 ---
 
+## 第 3 轮 — 3D 视图重写（去掉 ros3djs / tf2_web_republisher）
+
+### 背景
+
+实车联调时 3D 视图全黑、激光不显示。浏览器控制台报：
+
+```
+Uncaught TypeError: Cannot read properties of undefined (reading 'getUniforms')   ros3d.min.js:1
+THREE.WebGLRenderer 89
+```
+
+根因是 **ros3djs 1.1.0 与页面加载的 three.js 版本冲突**：ros3djs 自带/期望的是
+旧版 THREE(r89)，而 index.html 显式加载了 three 0.118，两个 THREE 实例混用，
+导致 ros3djs 的 `LaserScan` 自定义着色器材质在渲染时崩溃（`getUniforms`
+读到 undefined），整个渲染循环挂掉。
+
+同时 ros3djs 的 `TFClient` 依赖 `tf2_web_republisher`，而 roslibjs 在 ROS 2
+下无法和它对接（节点跑着却收不到请求），就算渲染不崩，激光也没有坐标变换可用。
+
+### 改动
+
+**彻底放弃 ros3djs，3D 视图改用原生 three.js 重写：**
+
+- `index.html`：移除 `ros3d.min.js`，改为加载 `three@0.118.3` +
+  `examples/js/controls/OrbitControls.js`（单一 THREE 实例，消除版本冲突）。
+- `buildViewer()`：自建 `THREE.Scene` / `PerspectiveCamera`（Z-up，匹配 ROS）
+  / `WebGLRenderer` / `OrbitControls` / `GridHelper`(XY 平面) / `AxesHelper`，
+  自己跑 `requestAnimationFrame` 渲染循环。
+- **客户端 TF**：新增 `makeTfClient()`，直接订阅 `/tf` + `/tf_static`
+  （rosbridge 原生转发，已验证可用），用四元数自己做变换合成
+  （`quatMul`/`quatRotateVec`/`tfCompose`/`tfInverse`），提供
+  `lookup(frame)` 返回该 frame 在 fixed frame 下的位姿。**不再需要
+  tf2_web_republisher。**
+- **激光层**：新增 `makeScanLayer()`，订阅 `/scan`，把 ranges 转成点、
+  用 TF 变换到 fixed frame，用普通 `THREE.Points` + `THREE.PointsMaterial`
+  渲染（避开 ros3djs 那个会崩的自定义着色器）。
+- fixed frame 缺失提示改为基于 `makeTfClient` 的 `knows()`，5 秒内没出现就提示。
+- `/map`(OccupancyGrid) 与 URDF 两个图层依赖 ros3djs，一并移除；对应的 UI
+  输入框也从 `index.html` 删掉。Odom 轨迹本来就是原生 THREE 画的，保留。
+
+### 实车排障记录（导致本轮的过程）
+
+1. 远程连不上、报 `Can "Upgrade" only to "WebSocket"` → 是在浏览器直接开了
+   rosbridge 端口 9090，应开面板的 **8080**。
+2. 相机无画面 → `web_video_server` 因 `libboost_thread.so.1.75.0` 缺失启动即崩，
+   系统实为 boost 1.74，**重新 `colcon build web_video_server`** 链接到 1.74 解决。
+3. 激光无数据 → 双雷达融合 `double_lidar_fusion` 用 `ApproximateTime` 同步器，
+   **必须两台雷达都有数据才输出 `/scan`**；雷达1(`/scan1`)故障 → `/scan` 一直空。
+   临时方案：面板 `/scan` 改成 `/scan2` 看正常的雷达2。
+4. 即便指向 `/scan2` 仍全黑 → 即本轮根因（ros3djs/THREE 版本冲突），故重写。
+
+### 验证清单
+
+- [ ] 面板 3D 视图能看到网格 + 坐标轴，可鼠标拖拽旋转/缩放（OrbitControls）。
+- [ ] `/scan` 填 `/scan2`（或修好雷达1后填 `/scan`）点应用，能看到红色激光点云。
+- [ ] 控制台不再有 `getUniforms` / ros3d 报错。
+- [ ] 不启动 `tf2_web_republisher` 也能显示激光。
+- [ ] fixed frame 填一个不存在的名字，5 秒后出现 TF 缺失提示。
+
+---
+
 ## 第 2 轮 — 参数/相机/移动端改进
 
 ### 参数面板：类型感知 + 节点自动发现

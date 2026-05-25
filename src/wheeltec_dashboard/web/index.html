@@ -9,7 +9,7 @@
   <script src="https://cdn.jsdelivr.net/npm/roslib@1.4.1/build/roslib.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.118.3/build/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/ros3d@1.1.0/build/ros3d.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.118.3/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body>
   <header>
@@ -24,7 +24,7 @@
 
   <main>
     <section class="card card-wide">
-      <h2>3D 视图 <span class="muted">(ros3djs)</span></h2>
+      <h2>3D 视图 <span class="muted">(three.js)</span></h2>
       <div class="viewer-controls">
         <label>Fixed frame
           <input id="vw-fixed" type="text" value="odom_combined" />
@@ -32,21 +32,15 @@
         <label>/scan
           <input id="vw-scan" type="text" value="/scan" />
         </label>
-        <label>/map
-          <input id="vw-map" type="text" value="/map" />
-        </label>
         <label>/odom
           <input id="vw-odom" type="text" value="/odom" />
-        </label>
-        <label>URDF
-          <input id="vw-urdf-param" type="text" value="" placeholder="留空 / node:param" />
         </label>
         <button id="vw-apply">应用</button>
         <button id="vw-clear-path">清空轨迹</button>
       </div>
       <div id="viewer" class="viewer"></div>
       <div id="viewer-status" class="viewer-status"></div>
-      <p class="hint">支持的图层：Grid / TF / LaserScan / OccupancyGrid (Map) / Odom 轨迹。URDF 在 ROS 2 + rosbridge 下加载实验性，留空即可。</p>
+      <p class="hint">图层：Grid / 坐标轴 / LaserScan(<code>/scan</code>) / Odom 轨迹。TF 直接订阅 <code>/tf</code>+<code>/tf_static</code>，无需 tf2_web_republisher。双雷达单台故障时可把 <code>/scan</code> 改成 <code>/scan2</code> 看单雷达。</p>
     </section>
 
     <section class="card">

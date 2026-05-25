@@ -542,37 +542,213 @@
     chartCmdvel.update('none');
   }, 500);
 
-  // ---------- 3D Viewer (ros3djs) ----------
-  let viewer = null;
-  let tfClient = null;
-  const viewerLayers = []; // disposable client objects per rebuild
+  // ---------- 3D Viewer (plain three.js; ros3djs + tf2_web_republisher dropped) ----------
+  // ros3djs 1.1.0's LaserScan shader crashes against the loaded three.js
+  // ("Cannot read properties of undefined (reading 'getUniforms')"), and its
+  // TFClient can't talk to the ROS 2 tf2_web_republisher. So we build the
+  // scene with plain three.js and do TF composition client-side from /tf.
+  let viewer = null;          // { scene, camera, renderer, controls, host }
+  let tfClient = null;        // makeTfClient(...) instance
+  const viewerLayers = [];    // disposable layer objects per rebuild
   let odomPath = null;
   let odomPathSub = null;
   const odomPoints = [];
   const MAX_PATH_POINTS = 2000;
+  let viewerRaf = null;
   // Module-scoped so we never accumulate observers / listeners across
   // repeated buildViewer() calls, even if someone later removes the
   // `if (viewer) return;` short-circuit.
   let viewerResizeObserver = null;
   let viewerResizeFallback = null;
 
+  // --- minimal quaternion / transform math for client-side TF ---
+  const TF_IDENTITY = { translation: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 } };
+  function quatMul(a, b) {
+    return {
+      x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+      y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+      z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+      w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+    };
+  }
+  function quatConj(q) { return { x: -q.x, y: -q.y, z: -q.z, w: q.w }; }
+  function quatRotateVec(q, v) {
+    const t = quatMul(quatMul(q, { x: v.x, y: v.y, z: v.z, w: 0 }), quatConj(q));
+    return { x: t.x, y: t.y, z: t.z };
+  }
+  // compose: A = pose of X in Y, B = pose of Z in X  =>  pose of Z in Y
+  function tfCompose(A, B) {
+    const r = quatRotateVec(A.rotation, B.translation);
+    return {
+      translation: { x: r.x + A.translation.x, y: r.y + A.translation.y, z: r.z + A.translation.z },
+      rotation: quatMul(A.rotation, B.rotation),
+    };
+  }
+  function tfInverse(T) {
+    const qi = quatConj(T.rotation);
+    const ti = quatRotateVec(qi, { x: -T.translation.x, y: -T.translation.y, z: -T.translation.z });
+    return { translation: ti, rotation: qi };
+  }
+
+  // Subscribe /tf + /tf_static via rosbridge and compose transforms ourselves,
+  // replacing ROSLIB.TFClient (which needs tf2_web_republisher).
+  function makeTfClient(rosConn, fixedFrameRaw) {
+    const fixedFrame = (fixedFrameRaw || '').replace(/^\//, '');
+    const edges = {};   // child -> { parent, translation, rotation }
+    const subsList = [];
+    const norm = (f) => (f || '').replace(/^\//, '');
+
+    function ingest(msg) {
+      if (!msg || !msg.transforms) return;
+      msg.transforms.forEach((tr) => {
+        edges[norm(tr.child_frame_id)] = {
+          parent: norm(tr.header.frame_id),
+          translation: tr.transform.translation,
+          rotation: tr.transform.rotation,
+        };
+      });
+    }
+    function toRoot(frame) {
+      let pose = TF_IDENTITY;
+      let cur = frame;
+      let guard = 0;
+      while (edges[cur] && guard++ < 200) {
+        const e = edges[cur];
+        pose = tfCompose({ translation: e.translation, rotation: e.rotation }, pose);
+        cur = e.parent;
+      }
+      return { root: cur, pose };
+    }
+
+    const tfDyn = new ROSLIB.Topic({ ros: rosConn, name: '/tf', messageType: 'tf2_msgs/msg/TFMessage', throttle_rate: 50 });
+    const tfStat = new ROSLIB.Topic({ ros: rosConn, name: '/tf_static', messageType: 'tf2_msgs/msg/TFMessage' });
+    tfDyn.subscribe(ingest);
+    tfStat.subscribe(ingest);
+    subsList.push(tfDyn, tfStat);
+
+    return {
+      fixedFrame,
+      knows(frame) {
+        const f = norm(frame);
+        if (edges[f]) return true;
+        for (const k in edges) { if (edges[k].parent === f) return true; }
+        return false;
+      },
+      // transform of `frame` expressed in fixedFrame, or null if disconnected
+      lookup(frame) {
+        const f = norm(frame);
+        if (f === fixedFrame) return TF_IDENTITY;
+        const a = toRoot(f);
+        const b = toRoot(fixedFrame);
+        if (a.root !== b.root) return null;
+        return tfCompose(tfInverse(b.pose), a.pose);
+      },
+      dispose() {
+        subsList.forEach((t) => { try { t.unsubscribe(); } catch (_) { /* ignore */ } });
+        subsList.length = 0;
+      },
+    };
+  }
+
+  // Render a LaserScan as plain THREE.Points, transformed into the fixed
+  // frame via makeTfClient.
+  function makeScanLayer(scanTopic) {
+    const MAX_SCAN_POINTS = 6000;
+    const positions = new Float32Array(MAX_SCAN_POINTS * 3);
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geom.setDrawRange(0, 0);
+    const mat = new THREE.PointsMaterial({ color: 0xff5555, size: 0.05 });
+    const points = new THREE.Points(geom, mat);
+    points.frustumCulled = false;
+    if (viewer) viewer.scene.add(points);
+
+    const sub = new ROSLIB.Topic({
+      ros, name: scanTopic, messageType: 'sensor_msgs/msg/LaserScan', throttle_rate: 100,
+    });
+    sub.subscribe((msg) => {
+      const frame = (msg.header && msg.header.frame_id) || '';
+      const tf = tfClient ? tfClient.lookup(frame) : null;
+      const ranges = msg.ranges || [];
+      let n = 0;
+      for (let i = 0; i < ranges.length && n < MAX_SCAN_POINTS; i++) {
+        const r = ranges[i];
+        if (!isFinite(r) || r < msg.range_min || r > msg.range_max) continue;
+        const a = msg.angle_min + msg.angle_increment * i;
+        let x = r * Math.cos(a), y = r * Math.sin(a), z = 0;
+        if (tf) {
+          const p = quatRotateVec(tf.rotation, { x, y, z });
+          x = p.x + tf.translation.x; y = p.y + tf.translation.y; z = p.z + tf.translation.z;
+        }
+        positions[n * 3] = x; positions[n * 3 + 1] = y; positions[n * 3 + 2] = z;
+        n++;
+      }
+      geom.attributes.position.needsUpdate = true;
+      geom.setDrawRange(0, n);
+      geom.computeBoundingSphere();
+    });
+
+    return {
+      unsubscribe() { try { sub.unsubscribe(); } catch (_) { /* ignore */ } },
+      dispose() {
+        try { if (viewer) viewer.scene.remove(points); } catch (_) { /* ignore */ }
+        try { geom.dispose(); mat.dispose(); } catch (_) { /* ignore */ }
+      },
+    };
+  }
+
   function buildViewer() {
     if (viewer) return;
     const host = $('viewer');
-    viewer = new ROS3D.Viewer({
-      divID: 'viewer',
-      width: host.clientWidth,
-      height: host.clientHeight,
-      antialias: true,
-      background: '#0d1117',
-      cameraPose: { x: 3, y: 3, z: 3 },
-    });
-    viewer.addObject(new ROS3D.Grid({ color: 0x2d3845, cellSize: 0.5, num_cells: 20 }));
+    const w = host.clientWidth || 640;
+    const h = host.clientHeight || 480;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0d1117);
+
+    const camera = new THREE.PerspectiveCamera(50, w / h, 0.05, 1000);
+    camera.up.set(0, 0, 1);              // ROS is Z-up
+    camera.position.set(3, -3, 3);
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+    renderer.setSize(w, h);
+    host.innerHTML = '';
+    host.appendChild(renderer.domElement);
+
+    let controls = null;
+    if (THREE.OrbitControls) {
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.1;
+    }
+
+    // Ground grid in the XY plane (GridHelper is XZ by default) + axes.
+    const grid = new THREE.GridHelper(20, 40, 0x2d3845, 0x2d3845);
+    grid.rotation.x = Math.PI / 2;
+    scene.add(grid);
+    scene.add(new THREE.AxesHelper(0.5));
+
+    viewer = { scene, camera, renderer, controls, host };
+
+    const animate = () => {
+      viewerRaf = requestAnimationFrame(animate);
+      if (controls) controls.update();
+      renderer.render(scene, camera);
+    };
+    animate();
 
     // The host element resizes whenever cards above it expand/collapse,
     // even when the window itself didn't change — ResizeObserver catches
     // those, the old window.resize listener didn't.
-    const resize = () => { if (viewer) viewer.resize(host.clientWidth, host.clientHeight); };
+    const resize = () => {
+      if (!viewer) return;
+      const ww = host.clientWidth || w, hh = host.clientHeight || h;
+      camera.aspect = ww / hh;
+      camera.updateProjectionMatrix();
+      renderer.setSize(ww, hh);
+    };
     if (window.ResizeObserver) {
       if (viewerResizeObserver) {
         try { viewerResizeObserver.disconnect(); } catch (_) { /* ignore */ }
@@ -612,93 +788,35 @@
 
     const fixedFrame = $('vw-fixed').value.trim() || 'odom_combined';
     const scanTopic = $('vw-scan').value.trim();
-    const mapTopic = $('vw-map').value.trim();
     const odomTopic = $('vw-odom').value.trim();
-    const urdfSpec = $('vw-urdf-param').value.trim();
 
-    tfClient = new ROSLIB.TFClient({
-      ros,
-      fixedFrame,
-      angularThres: 0.01,
-      transThres: 0.01,
-      rate: 10.0,
-    });
+    if (tfClient && tfClient.dispose) { try { tfClient.dispose(); } catch (_) { /* ignore */ } }
+    tfClient = makeTfClient(ros, fixedFrame);
 
-    // Warn the user if the chosen fixed frame never shows up — without
-    // it, scans / maps / odom layers stay invisible with no feedback.
+    // Warn if the chosen fixed frame never shows up in /tf — without it the
+    // scan / odom layers can't be placed and the view stays empty.
     setViewerStatus(`等待 frame "${fixedFrame}" …`);
-    let frameSeen = false;
-    const tfProbe = new ROSLIB.Topic({
-      ros, name: '/tf', messageType: 'tf2_msgs/msg/TFMessage', throttle_rate: 200,
-    });
-    const tfProbeStaticSub = new ROSLIB.Topic({
-      ros, name: '/tf_static', messageType: 'tf2_msgs/msg/TFMessage',
-    });
-    const onTf = (msg) => {
-      if (frameSeen || !msg || !msg.transforms) return;
-      for (const tr of msg.transforms) {
-        if (tr.header && (tr.header.frame_id === fixedFrame || tr.child_frame_id === fixedFrame)) {
-          frameSeen = true;
-          setViewerStatus('');
-          try { tfProbe.unsubscribe(); } catch (_) {}
-          try { tfProbeStaticSub.unsubscribe(); } catch (_) {}
-          break;
-        }
-      }
-    };
-    tfProbe.subscribe(onTf);
-    tfProbeStaticSub.subscribe(onTf);
-    viewerLayers.push(tfProbe, tfProbeStaticSub);
-    setTimeout(() => {
-      if (!frameSeen) {
+    let waited = 0;
+    const statusTimer = setInterval(() => {
+      waited += 500;
+      if (tfClient && tfClient.knows(fixedFrame)) {
+        setViewerStatus('');
+        clearInterval(statusTimer);
+      } else if (waited >= 5000) {
         setViewerStatus(`未收到 frame "${fixedFrame}" 的 TF — 检查 robot_state_publisher / EKF 是否启动`);
+        clearInterval(statusTimer);
       }
-    }, 4000);
+    }, 500);
+    viewerLayers.push({ dispose() { clearInterval(statusTimer); } });
 
     if (scanTopic) {
-      const scan = new ROS3D.LaserScan({
-        ros, tfClient,
-        topic: scanTopic,
-        rootObject: viewer.scene,
-        material: { size: 0.05, color: 0xff5555 },
-      });
-      viewerLayers.push(scan);
+      viewerLayers.push(makeScanLayer(scanTopic));
     }
 
-    if (mapTopic) {
-      const map = new ROS3D.OccupancyGridClient({
-        ros, tfClient,
-        topic: mapTopic,
-        rootObject: viewer.scene,
-        continuous: true,
-      });
-      viewerLayers.push(map);
-    }
-
-    if (urdfSpec) {
-      // ros3djs UrdfClient pulls from a parameter on a node.
-      // Format accepts "node:param" or just a topic name -> fallback to subscribe.
-      try {
-        let nodeName = '/robot_state_publisher';
-        let paramName = 'robot_description';
-        if (urdfSpec.includes(':')) {
-          const parts = urdfSpec.split(':');
-          nodeName = parts[0];
-          paramName = parts[1];
-        }
-        const urdfClient = new ROS3D.UrdfClient({
-          ros, tfClient,
-          path: 'https://cdn.jsdelivr.net/gh/ros/urdf_tutorial@master/',
-          rootObject: viewer.scene,
-          parameter: paramName,
-          parameterNode: nodeName,
-          loader: ROS3D.COLLADA_LOADER,
-        });
-        viewerLayers.push(urdfClient);
-      } catch (e) {
-        console.warn('UrdfClient failed:', e);
-      }
-    }
+    // NOTE: the /map (OccupancyGrid) and URDF layers used ros3djs, which is
+    // incompatible with the three.js version loaded here, so they are not
+    // rendered. Scan + odom trajectory cover the common case. The /map and
+    // URDF input fields are currently inert.
 
     if (odomTopic) {
       const lineMat = new THREE.LineBasicMaterial({ color: 0x58a6ff });

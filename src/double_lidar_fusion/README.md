@@ -29,12 +29,20 @@ double_lidar_fusion/
 
 ### `lidar_fusion`(可执行文件:`lidar_fusion`)
 
-订阅(通过 message_filters 进行近似时间同步):
+订阅(两路**各自独立订阅**并缓存最新帧,QoS 为 `SensorDataQoS`/best-effort,
+兼容 reliable 与 best-effort 的雷达驱动):
 - `scan1_topic`(默认 `/scan1`)— 雷达 1 `sensor_msgs/LaserScan`
 - `scan2_topic`(默认 `/scan2`)— 雷达 2 `sensor_msgs/LaserScan`
 
 发布:
 - `fused_topic`(默认 `scan`,launch 中重命名为 `scan`)— 融合后的 `sensor_msgs/LaserScan`
+
+**故障降级(单雷达容错)**:由定时器按 `publish_rate_hz` 输出,根据各路最近一帧
+是否在 `scan_timeout_sec` 内判断"存活":
+- 两台都在线 → 融合两台(原有行为);
+- 只有一台在线 → **仅输出存活的那一台**(仍按其外参投影到基坐标系),不再整路停掉;
+- 两台都掉线 → 暂停发布,不发空帧。
+状态切换时会打一条日志(`两台均在线 / 降级为只输出雷达X / 两台均无数据`)。
 
 参数:
 | 参数 | 默认值 | 含义 |
@@ -49,6 +57,8 @@ double_lidar_fusion/
 | `lidar2_angle_deg` | `-135.0` | 雷达 2 安装角度(度) |
 | `lidar2_x_offset_m` | `-0.3` | 雷达 2 在车体的 X 偏移(m) |
 | `lidar2_y_offset_m` | `-0.235` | 雷达 2 在车体的 Y 偏移(m) |
+| `scan_timeout_sec` | `0.5` | 超过此时长没收到帧即判定该雷达掉线(秒) |
+| `publish_rate_hz` | `12.0` | 融合结果发布频率(Hz),建议设为雷达扫描频率 |
 
 ## 启动文件
 
