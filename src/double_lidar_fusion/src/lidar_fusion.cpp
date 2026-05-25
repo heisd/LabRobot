@@ -104,26 +104,20 @@ void LidarFusion::integrateOneLidar(const LaserScan::ConstSharedPtr & scan,
 
   for (size_t i = 0; i < scan->ranges.size(); ++i) {
     const float raw_range = scan->ranges[i];
-
     if (!std::isfinite(raw_range)) continue;
     if (raw_range < MIN_VALID_RANGE) continue;
     if (raw_range < scan->range_min || raw_range > scan->range_max) continue;
-
     const double local_angle = scan->angle_min + scan->angle_increment * static_cast<double>(i);
     const double local_x     = raw_range * std::cos(local_angle);
     const double local_y     = raw_range * std::sin(local_angle);
-
     /* --- 局部坐标 -> 机器人基坐标 --- */
     const double base_x = local_x * cos_theta - local_y * sin_theta + x_offset;
     const double base_y = local_x * sin_theta + local_y * cos_theta + y_offset;
-
     const float  fused_range = static_cast<float>(std::hypot(base_x, base_y));
     const float  fused_angle = static_cast<float>(std::atan2(base_y, base_x));
-
     int bucket_index = static_cast<int>(std::floor((fused_angle - ANGLE_MIN) /
                                                    angle_increment_rad_));
     if (bucket_index < 0 || static_cast<size_t>(bucket_index) >= TOTAL_BUCKETS) continue;
-
     float & current_value = fused_scan.ranges[static_cast<size_t>(bucket_index)];
     if (std::isinf(current_value)) {
       current_value = fused_range;
