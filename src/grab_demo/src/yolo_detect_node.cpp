@@ -24,8 +24,8 @@
 #include <std_msgs/msg/header.hpp>
 #include <message_filters/subscriber.h>
 #include <message_filters/sync_policies/approximate_time.h>
-#include <geometry_msgs/msg/transform_stamped.hpp>
-#include <tf2_ros/transform_broadcaster.h>
+
+#include "grab_demo/target_tf_publisher.hpp"  // 统一接口: 像素中心 -> target_frame TF
 
 #include <NvInfer.h>
 #if defined(HAVE_ONNX_PARSER)
@@ -511,7 +511,8 @@ public:
     sync_->registerCallback(std::bind(&YoloDetectNode::imageCallback, this,
                                       std::placeholders::_1, std::placeholders::_2));
 
-    tf_pub_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
+    // 统一接口: 深度读取 + 针孔反投影 + 广播 camera_frame->target_frame
+    tf_publisher_.setup(this, camera_frame_, target_frame_, z_offset_);
 
     if (publish_debug_image_) {
       debug_pub_ = create_publisher<sensor_msgs::msg::Image>("~/detection_image", 1);
@@ -526,29 +527,21 @@ private:
   using SyncPolicy = message_filters::sync_policies::ApproximateTime<
       sensor_msgs::msg::Image, sensor_msgs::msg::Image>;
 
-  // 接收相机内参矩阵(与 HSV 节点同样的校验逻辑)
+  // 接收相机内参, 交给统一接口(校验逻辑在 TargetTFPublisher 内, 与 HSV 一致)
   void infoCallback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr &msg)
   {
-    if (camera_info_ready_) return;
-    bool k_valid = false;
-    for (size_t i = 0; i < msg->k.size(); ++i) {
-      if (msg->k[i] != 0) { k_valid = true; break; }
+    if (tf_publisher_.intrinsicsReady()) return;
+    tf_publisher_.setIntrinsics(*msg);
+    if (tf_publisher_.intrinsicsReady()) {
+      RCLCPP_INFO(get_logger(), "已获取相机内参: fx=%.2f fy=%.2f cx=%.2f cy=%.2f",
+                  msg->k[0], msg->k[4], msg->k[2], msg->k[5]);
     }
-    if (!k_valid) return;
-
-    fx_ = msg->k[0];
-    cx_ = msg->k[2];
-    fy_ = msg->k[4];
-    cy_ = msg->k[5];
-    camera_info_ready_ = true;
-    RCLCPP_INFO(get_logger(), "已获取相机内参: fx=%.2f fy=%.2f cx=%.2f cy=%.2f",
-                fx_, fy_, cx_, cy_);
   }
 
   void imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &rgb_msg,
                      const sensor_msgs::msg::Image::ConstSharedPtr &depth_msg)
   {
-    if (!camera_info_ready_) {
+    if (!tf_publisher_.intrinsicsReady()) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "等待相机内参 %s ...",
                            info_topic_.c_str());
       return;
@@ -638,66 +631,29 @@ private:
       return;
     }
 
-    // ---- 取检测框中心像素, 读取深度 ----
+    // ---- 取检测框中心像素 -> 统一接口(TargetTFPublisher)发布 target_frame ----
     int px = target->box.x + target->box.width / 2;
     int py = target->box.y + target->box.height / 2;
-    px = std::clamp(px, 0, depth_ptr->image.cols - 1);
-    py = std::clamp(py, 0, depth_ptr->image.rows - 1);
-
-    // 中心点附近做中值滤波, 避免单点深度为 0 / 噪声(比 HSV 单点取值更稳)
-    double dis = medianDepth(depth_ptr->image, px, py, 5);
+    double dis = tf_publisher_.publish(px, py, depth_ptr->image, this->now());
     if (dis <= 0.0) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
                            "目标 [%s] 中心深度无效, 跳过本帧",
                            className(target->class_id).c_str());
       return;
     }
-
-    // ---- 针孔模型反投影到相机坐标系 (与 HSV 完全一致) ----
-    double x = (px - cx_) / fx_ * dis;
-    double y = (py - cy_) / fy_ * dis;
-    double z = dis + z_offset_;
-
-    RCLCPP_INFO(get_logger(), "检测到 [%s] conf=%.2f  dis=%.3f  -> (%.3f, %.3f, %.3f)",
-                className(target->class_id).c_str(), target->confidence, dis, x, y, z);
-
-    // ---- 发布 TF: camera_frame -> target_frame ----
-    geometry_msgs::msg::TransformStamped tf;
-    tf.header.stamp = this->now();
-    tf.header.frame_id = camera_frame_;
-    tf.child_frame_id = target_frame_;
-    tf.transform.translation.x = x;
-    tf.transform.translation.y = y;
-    tf.transform.translation.z = z;
-    tf.transform.rotation.w = 1.0;  // 仅给位置, 姿态由抓取服务决定
-    tf_pub_->sendTransform(tf);
-  }
-
-  // 中心 (2r+1)x(2r+1) 窗口内非零深度的中值, 单位米
-  double medianDepth(const cv::Mat &depth, int px, int py, int r)
-  {
-    std::vector<ushort> vals;
-    for (int dy = -r; dy <= r; ++dy) {
-      for (int dx = -r; dx <= r; ++dx) {
-        int x = px + dx, y = py + dy;
-        if (x < 0 || y < 0 || x >= depth.cols || y >= depth.rows) continue;
-        ushort v = depth.at<ushort>(y, x);
-        if (v > 0) vals.push_back(v);
-      }
-    }
-    if (vals.empty()) return 0.0;
-    std::nth_element(vals.begin(), vals.begin() + vals.size() / 2, vals.end());
-    return vals[vals.size() / 2] / 1000.0;  // mm -> m
+    RCLCPP_INFO(get_logger(), "检测到 [%s] conf=%.2f  dis=%.3f",
+                className(target->class_id).c_str(), target->confidence, dis);
   }
 
   // 某个检测框中心的距离(米); 无有效深度返回 <=0。用于 nearest 选择模式
+  // 复用统一接口的深度中值算法, 保证与最终发布的距离一致
   double detectionDistance(const Detection &d, const cv::Mat &depth)
   {
     int px = d.box.x + d.box.width / 2;
     int py = d.box.y + d.box.height / 2;
     px = std::clamp(px, 0, depth.cols - 1);
     py = std::clamp(py, 0, depth.rows - 1);
-    return medianDepth(depth, px, py, 5);
+    return grab_demo::TargetTFPublisher::medianDepth(depth, px, py, 5);
   }
 
   std::string className(int id) const
@@ -742,7 +698,9 @@ private:
   std::shared_ptr<message_filters::Synchronizer<SyncPolicy>> sync_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_pub_;
-  std::shared_ptr<tf2_ros::TransformBroadcaster> tf_pub_;
+
+  // 统一接口: 像素中心 -> 深度 -> 3D -> target_frame TF (与 HSV/KCF 共用同一实现)
+  grab_demo::TargetTFPublisher tf_publisher_;
 
   // 参数
   std::string engine_path_, onnx_path_, rgb_topic_, depth_topic_, info_topic_;
@@ -751,10 +709,6 @@ private:
   double conf_thr_, nms_thr_, z_offset_;
   int target_class_;
   bool show_image_, publish_debug_image_;
-
-  // 相机内参
-  bool camera_info_ready_ = false;
-  double fx_ = 0, fy_ = 0, cx_ = 0, cy_ = 0;
 };
 
 int main(int argc, char **argv)
