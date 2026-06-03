@@ -93,7 +93,9 @@ def generate_launch_description():
             # 检测参数: target_class=-1 表示任意类别取最高分;
             # 想只抓某一类(例如瓶子)就设成对应 COCO id, 瓶子=39
             "target_class": -1,
-            # 多物体选择策略: "confidence"=选置信度最高; "nearest"=选离相机最近
+            # 多物体选择策略:
+            #   "confidence"=置信度最高  "nearest"=离相机最近
+            #   "center"=最靠近画面中心  "largest"=检测框最大
             "select_mode": "confidence",
             "conf_threshold": 0.25,
             "nms_threshold": 0.45,

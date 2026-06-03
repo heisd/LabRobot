@@ -475,14 +475,18 @@ public:
     nms_thr_ = declare_parameter<double>("nms_threshold", 0.45);
     target_class_ = declare_parameter<int>("target_class", -1);  // -1 表示不限类别, 取置信度最高
     z_offset_ = declare_parameter<double>("z_offset", 0.07);     // 与 HSV 保持一致
-    // 选择模式转换器: "confidence"=选置信度最高(默认); "nearest"=选离相机最近
+    // 选择模式转换器:
+    //   "confidence" = 选置信度最高(默认)
+    //   "nearest"    = 选离相机最近
+    //   "center"     = 选最靠近画面中心
+    //   "largest"    = 选检测框最大
     select_mode_ = declare_parameter<std::string>("select_mode", "confidence");
-    if (select_mode_ != "confidence" && select_mode_ != "nearest") {
+    if (select_mode_ != "confidence" && select_mode_ != "nearest" &&
+        select_mode_ != "center" && select_mode_ != "largest") {
       RCLCPP_WARN(get_logger(), "未知的 select_mode='%s', 回退为 confidence",
                   select_mode_.c_str());
       select_mode_ = "confidence";
     }
-    select_nearest_ = (select_mode_ == "nearest");
     show_image_ = declare_parameter<bool>("show_image", false);  // 默认不弹窗
     publish_debug_image_ = declare_parameter<bool>("publish_debug_image", true);
 
@@ -564,37 +568,63 @@ private:
     std::vector<Detection> dets = yolo_->infer(rgb_ptr->image);
 
     // ---- 选择目标 ----
-    // 画面中出现多个物体时, 按 select_mode 选择其中一个进行抓取:
-    //   confidence -> 选置信度最高的
-    //   nearest    -> 选离相机最近的(检测框中心深度最小)
+    // 画面中出现多个物体时, 按 select_mode 选择其中一个进行抓取。
+    // 统一成"算一个评分 metric, 取最大者"的写法(越大越优):
+    //   confidence -> metric = 置信度
+    //   nearest    -> metric = -距离        (越近越大; 无有效深度的候选跳过)
+    //   center     -> metric = -到画面中心距离平方 (越靠中心越大)
+    //   largest    -> metric = 检测框面积    (越大越优)
     // (若设置了 target_class>=0, 则只在该类别内部比较; 默认 -1 表示不限类别)
+    const double img_cx = rgb_ptr->image.cols / 2.0;
+    const double img_cy = rgb_ptr->image.rows / 2.0;
+
     const Detection *target = nullptr;
     int candidate_count = 0;
-    double target_dis = 0.0;  // nearest 模式下记录被选中目标的距离
+    double best_metric = 0.0;
+    double target_dis = 0.0;  // nearest 模式下记录被选中目标的距离(供日志使用)
+
     for (const auto &d : dets) {
       if (target_class_ >= 0 && d.class_id != target_class_) continue;
       ++candidate_count;
-      if (select_nearest_) {
-        // 计算该候选框中心的距离, 无有效深度则跳过
-        double dd = detectionDistance(d, depth_ptr->image);
-        if (dd <= 0.0) continue;
-        if (!target || dd < target_dis) { target = &d; target_dis = dd; }
-      } else {
-        if (!target || d.confidence > target->confidence) target = &d;
+
+      double metric;
+      double dd = 0.0;
+      if (select_mode_ == "nearest") {
+        dd = detectionDistance(d, depth_ptr->image);
+        if (dd <= 0.0) continue;             // 无有效深度的候选跳过
+        metric = -dd;                        // 越近越优
+      } else if (select_mode_ == "center") {
+        double bx = d.box.x + d.box.width / 2.0;
+        double by = d.box.y + d.box.height / 2.0;
+        metric = -((bx - img_cx) * (bx - img_cx) + (by - img_cy) * (by - img_cy));
+      } else if (select_mode_ == "largest") {
+        metric = static_cast<double>(d.box.area());
+      } else {                               // confidence
+        metric = d.confidence;
+      }
+
+      if (!target || metric > best_metric) {
+        target = &d;
+        best_metric = metric;
+        target_dis = dd;
       }
     }
 
     // 多物体时打印一下, 方便确认选择结果
     if (candidate_count > 1 && target) {
-      if (select_nearest_) {
-        RCLCPP_INFO(get_logger(),
-                    "画面中检测到 %d 个候选物体, 选择最近的 [%s] dis=%.3fm",
-                    candidate_count, className(target->class_id).c_str(), target_dis);
+      const std::string name = className(target->class_id);
+      if (select_mode_ == "nearest") {
+        RCLCPP_INFO(get_logger(), "检测到 %d 个候选, 选择最近的 [%s] dis=%.3fm",
+                    candidate_count, name.c_str(), target_dis);
+      } else if (select_mode_ == "center") {
+        RCLCPP_INFO(get_logger(), "检测到 %d 个候选, 选择最靠近画面中心的 [%s] conf=%.2f",
+                    candidate_count, name.c_str(), target->confidence);
+      } else if (select_mode_ == "largest") {
+        RCLCPP_INFO(get_logger(), "检测到 %d 个候选, 选择检测框最大的 [%s] area=%d",
+                    candidate_count, name.c_str(), target->box.area());
       } else {
-        RCLCPP_INFO(get_logger(),
-                    "画面中检测到 %d 个候选物体, 选择置信度最高的 [%s] conf=%.2f",
-                    candidate_count, className(target->class_id).c_str(),
-                    target->confidence);
+        RCLCPP_INFO(get_logger(), "检测到 %d 个候选, 选择置信度最高的 [%s] conf=%.2f",
+                    candidate_count, name.c_str(), target->confidence);
       }
     }
 
@@ -720,7 +750,6 @@ private:
   std::string select_mode_;
   double conf_thr_, nms_thr_, z_offset_;
   int target_class_;
-  bool select_nearest_;
   bool show_image_, publish_debug_image_;
 
   // 相机内参
