@@ -554,11 +554,24 @@ private:
     // ---- YOLO 推理 ----
     std::vector<Detection> dets = yolo_->infer(rgb_ptr->image);
 
-    // ---- 选择目标: 指定类别则只在该类中选, 否则在全部检测中选, 取置信度最高 ----
+    // ---- 选择目标 ----
+    // 画面中出现多个物体时, 选择"置信度最高"的那一个进行抓取。
+    // (若设置了 target_class>=0, 则只在该类别内部比较置信度; 默认 -1 表示不限类别,
+    //  在所有检测到的物体里取置信度最高的)
     const Detection *target = nullptr;
+    int candidate_count = 0;
     for (const auto &d : dets) {
       if (target_class_ >= 0 && d.class_id != target_class_) continue;
-      if (!target || d.confidence > target->confidence) target = &d;
+      ++candidate_count;
+      if (!target || d.confidence > target->confidence) target = &d;  // 取最高置信度
+    }
+
+    // 多物体时打印一下, 方便确认选择结果
+    if (candidate_count > 1 && target) {
+      RCLCPP_INFO(get_logger(),
+                  "画面中检测到 %d 个候选物体, 选择置信度最高的 [%s] conf=%.2f",
+                  candidate_count, className(target->class_id).c_str(),
+                  target->confidence);
     }
 
     // ---- 可视化(可选, 默认关闭) ----
