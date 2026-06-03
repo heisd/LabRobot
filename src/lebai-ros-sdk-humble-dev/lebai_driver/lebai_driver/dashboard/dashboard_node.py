@@ -118,6 +118,10 @@ LAUNCH_TASKS = [
     {"id": "moveit_lm3", "label": "MoveIt (lm3)", "group": "运动规划",
      "cmd": ["ros2", "launch", "lebai_lm3_moveit_config", "lm3.launch.py"],
      "resources": ["robot_state", "motion", "io_service", "system_service", "moveit"]},
+    # ---- 仿真(Gazebo, 与真机任务资源不冲突, 仿真任务之间互斥) ----
+    {"id": "sim_gazebo", "label": "Gazebo 仿真场景 + 机械臂", "group": "仿真",
+     "cmd": ["ros2", "launch", "lebai_gazebo", "gazebo.launch.py"],
+     "resources": ["sim"]},
 ]
 
 TASKS_BY_ID = {t["id"]: t for t in LAUNCH_TASKS}
@@ -643,6 +647,7 @@ INDEX_HTML = """<!DOCTYPE html>
   <nav>
     <button id="nav-monitor" class="navbtn active" onclick="showView('monitor')">监控与控制</button>
     <button id="nav-launch" class="navbtn" onclick="showView('launch')">功能启动</button>
+    <button id="nav-sim" class="navbtn" onclick="showView('sim')">仿真</button>
   </nav>
   <span id="conn" style="margin-left:auto;"></span>
 </header>
@@ -734,9 +739,25 @@ INDEX_HTML = """<!DOCTYPE html>
 <div id="view-launch" class="view" style="display:none">
   <div class="wrap" id="tasklist"><div class="card">加载中 ...</div></div>
   <div style="padding:0 16px 16px;"><small>
-    提示: 视觉抓取(YOLO/HSV/ArUco)各自已包含相机 + 机械臂 + MoveIt + 抓取服务, 选一个启动即可,
+    提示: 视觉抓取(YOLO/HSV/ArUco/KCF/VLM)各自已包含相机 + 机械臂 + MoveIt + 抓取服务, 选一个启动即可,
     不要和"机器人驱动""MoveIt"重复启动以免节点冲突。点"日志"可查看该任务输出。
   </small></div>
+</div>
+
+<div id="view-sim" class="view" style="display:none">
+  <div class="wrap" id="tasklist-sim"><div class="card">加载中 ...</div></div>
+  <div style="padding:0 16px 16px;">
+    <div class="card">
+      <h2>Gazebo 仿真说明</h2>
+      <small>
+        1. 启动上面的【Gazebo 仿真场景 + 机械臂】, 会打开 Gazebo GUI, 自动加载场景(地面/桌子/可乐罐/木块/啤酒)和机械臂模型。<br/>
+        2. 用 Gazebo GUI 左侧 <b>Insert</b> 面板可继续拖入更多标准物体(Fuel 模型库)或你自己的模型。<br/>
+        3. 仿真任务与真机任务资源不冲突, 但请勿同时连真机, 以免混淆。<br/>
+        4. 仿真相机发布 <code>/camera_arm/color/image_raw</code> 等话题, 可在仿真里跑视觉/VLM(相机安装位与内参需按手眼标定微调)。<br/>
+        5. 依赖: gazebo_ros / gazebo_ros2_control / controller_manager(详见 lebai_gazebo/GAZEBO_GUIDE.md)。
+      </small>
+    </div>
+  </div>
 </div>
 
 <div id="toast"></div>
@@ -896,11 +917,11 @@ function row(k, v){ return '<tr><td class="k">'+k+'</td><td>'+v+'</td></tr>'; }
 
 // ---------------- 导航 / 视图切换 ----------------
 function showView(name){
-  document.getElementById('view-monitor').style.display = (name==='monitor')?'block':'none';
-  document.getElementById('view-launch').style.display  = (name==='launch') ?'block':'none';
-  document.getElementById('nav-monitor').classList.toggle('active', name==='monitor');
-  document.getElementById('nav-launch').classList.toggle('active', name==='launch');
-  if (name==='launch') refreshTasks();
+  ['monitor','launch','sim'].forEach(v => {
+    document.getElementById('view-'+v).style.display = (name===v) ? 'block' : 'none';
+    document.getElementById('nav-'+v).classList.toggle('active', name===v);
+  });
+  if (name==='launch' || name==='sim') refreshTasks();
 }
 
 // ---------------- 功能启动页 ----------------
@@ -950,38 +971,43 @@ async function refreshTasks(){
     }
   });
 }
+function taskRowHtml(t){
+  return '<div class="taskrow">'+
+    '<span class="taskbtns">'+
+      '<button data-id="'+t.id+'" data-act="start">启动</button>'+
+      '<button class="danger" data-id="'+t.id+'" data-act="stop">停止</button>'+
+      '<button data-id="'+t.id+'" data-act="log">日志</button>'+
+    '</span>'+
+    '<span class="dot bad" id="dot-'+t.id+'"></span>'+
+    '<b>'+t.label+'</b> &nbsp;<span id="st-'+t.id+'"></span> '+
+    '<span id="hint-'+t.id+'"></span>'+
+    '<div class="cmd">'+t.cmd+'</div>'+
+    '<pre id="log-'+t.id+'" class="log" style="display:none"></pre>'+
+  '</div>';
+}
 function buildTaskList(tasks){
   const groups = {};
   tasks.forEach(t => { (groups[t.group] = groups[t.group] || []).push(t); });
-  let html = '';
+  let mainHtml = '', simHtml = '';
   for (const g in groups){
-    html += '<div class="card"><h2>'+g+'</h2>';
-    groups[g].forEach(t => {
-      html += '<div class="taskrow">'+
-        '<span class="taskbtns">'+
-          '<button data-id="'+t.id+'" data-act="start">启动</button>'+
-          '<button class="danger" data-id="'+t.id+'" data-act="stop">停止</button>'+
-          '<button data-id="'+t.id+'" data-act="log">日志</button>'+
-        '</span>'+
-        '<span class="dot bad" id="dot-'+t.id+'"></span>'+
-        '<b>'+t.label+'</b> &nbsp;<span id="st-'+t.id+'"></span> '+
-        '<span id="hint-'+t.id+'"></span>'+
-        '<div class="cmd">'+t.cmd+'</div>'+
-        '<pre id="log-'+t.id+'" class="log" style="display:none"></pre>'+
-      '</div>';
-    });
+    let html = '<div class="card"><h2>'+g+'</h2>';
+    groups[g].forEach(t => { html += taskRowHtml(t); });
     html += '</div>';
+    if (g === '仿真') simHtml += html; else mainHtml += html;
   }
-  document.getElementById('tasklist').innerHTML = html;
+  document.getElementById('tasklist').innerHTML = mainHtml || '<div class="card">无任务</div>';
+  document.getElementById('tasklist-sim').innerHTML = simHtml || '<div class="card">无仿真任务</div>';
 }
-// 事件委托(按钮在重建后仍有效)
-document.getElementById('tasklist').addEventListener('click', (e) => {
+// 事件委托(两个任务容器共用)
+function taskClickHandler(e){
   const b = e.target.closest('button'); if (!b) return;
   const id = b.dataset.id, act = b.dataset.act;
   if (!id) return;
   if (act === 'log') toggleLog(id);
   else taskCmd(id, act);
-});
+}
+document.getElementById('tasklist').addEventListener('click', taskClickHandler);
+document.getElementById('tasklist-sim').addEventListener('click', taskClickHandler);
 async function taskCmd(id, action){
   // 启动前再做一次冲突拦截(双保险, 防止禁用态被绕过)
   if (action === 'start'){

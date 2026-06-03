@@ -1,0 +1,133 @@
+<?xml version="1.0"?>
+<!-- =========================================================================
+  lm3_gazebo.xacro — Gazebo(Classic 11) 仿真用的 LM3 机械臂描述。
+
+  在原有 lm3_macro.xacro 基础上补充 Gazebo 仿真所需:
+    - 把机械臂底座固定到 world(桌面臂);
+    - ros2_control(GazeboSystem) + gazebo_ros2_control 插件, 让臂在仿真里可被控制
+      (控制器名 lebai_trajectory_controller, 与 MoveIt 的 lm3_controllers.yaml 一致);
+    - 末端 eye-in-hand 深度相机, 发布 /camera_arm/* 与 camera_arm_depth_optical_frame,
+      让 HSV/YOLO/KCF/VLM 等视觉节点能在仿真里运行。
+
+  注意: 相机安装位置(tool0->camera 的 origin)和内参需按实际手眼标定微调;
+        这是仿真脚手架, 真机上的精确数值请以标定为准。
+========================================================================= -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="lebai_lm3">
+
+  <!-- 世界根 -->
+  <link name="world"/>
+
+  <!-- 复用已有机械臂宏(前缀 lebai_, 与 SRDF/MoveIt 命名一致) -->
+  <xacro:include filename="$(find lebai_lm3_support)/urdf/lm3_macro.xacro"/>
+  <xacro:lebai_lm3 prefix="lebai_"/>
+
+  <!-- 底座固定到世界, 抬到桌面高度(与 world 文件里的桌子一致) -->
+  <joint name="world_to_base" type="fixed">
+    <parent link="world"/>
+    <child link="lebai_base_link"/>
+    <origin xyz="0 0 1.015" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ===================== eye-in-hand 相机 ===================== -->
+  <link name="camera_arm_link">
+    <visual>
+      <geometry><box size="0.03 0.09 0.025"/></geometry>
+    </visual>
+    <collision>
+      <geometry><box size="0.03 0.09 0.025"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.05"/>
+      <inertia ixx="1e-4" ixy="0" ixz="0" iyy="1e-4" iyz="0" izz="1e-4"/>
+    </inertial>
+  </link>
+  <!-- 相机安装在末端 tool0 上(位置按手眼标定调整) -->
+  <joint name="tool0_to_camera" type="fixed">
+    <parent link="lebai_tool0"/>
+    <child link="camera_arm_link"/>
+    <origin xyz="0.05 0.0 0.03" rpy="0 0 0"/>
+  </joint>
+  <!-- 光学坐标系(z 向前, x 向右, y 向下), 视觉节点的 camera_frame -->
+  <link name="camera_arm_depth_optical_frame"/>
+  <joint name="camera_to_optical" type="fixed">
+    <parent link="camera_arm_link"/>
+    <child link="camera_arm_depth_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+
+  <!-- ===================== ros2_control(Gazebo) ===================== -->
+  <xacro:macro name="lebai_joint_control" params="jname">
+    <joint name="${jname}">
+      <command_interface name="position">
+        <param name="min">-6.28</param>
+        <param name="max">6.28</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+  </xacro:macro>
+
+  <ros2_control name="GazeboSystem" type="system">
+    <hardware>
+      <plugin>gazebo_ros2_control/GazeboSystem</plugin>
+    </hardware>
+    <xacro:lebai_joint_control jname="lebai_joint_1"/>
+    <xacro:lebai_joint_control jname="lebai_joint_2"/>
+    <xacro:lebai_joint_control jname="lebai_joint_3"/>
+    <xacro:lebai_joint_control jname="lebai_joint_4"/>
+    <xacro:lebai_joint_control jname="lebai_joint_5"/>
+    <xacro:lebai_joint_control jname="lebai_joint_6"/>
+  </ros2_control>
+
+  <gazebo>
+    <plugin filename="libgazebo_ros2_control.so" name="gazebo_ros2_control">
+      <parameters>$(find lebai_gazebo)/config/gazebo_controllers.yaml</parameters>
+    </plugin>
+  </gazebo>
+
+  <!-- ===================== 深度相机传感器 ===================== -->
+  <gazebo reference="camera_arm_link">
+    <sensor type="depth" name="camera_arm_sensor">
+      <always_on>true</always_on>
+      <update_rate>15.0</update_rate>
+      <camera name="camera_arm">
+        <horizontal_fov>1.211</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.05</near>
+          <far>3.0</far>
+        </clip>
+      </camera>
+      <plugin name="camera_arm_controller" filename="libgazebo_ros_camera.so">
+        <ros>
+          <namespace>/camera_arm</namespace>
+          <!-- 重映射到视觉节点期望的话题名 -->
+          <remapping>camera_arm/image_raw:=color/image_raw</remapping>
+          <remapping>camera_arm/camera_info:=color/camera_info</remapping>
+          <remapping>camera_arm/image_depth:=depth/image_raw</remapping>
+          <remapping>camera_arm/depth/image_raw:=depth/image_raw</remapping>
+          <remapping>camera_arm/points:=depth/points</remapping>
+        </ros>
+        <camera_name>camera_arm</camera_name>
+        <frame_name>camera_arm_depth_optical_frame</frame_name>
+        <min_depth>0.05</min_depth>
+        <max_depth>3.0</max_depth>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+  <!-- 让各连杆在 Gazebo 里有合适的材质/自碰撞 -->
+  <gazebo reference="lebai_base_link"><material>Gazebo/Grey</material></gazebo>
+  <gazebo reference="lebai_link_1"><material>Gazebo/White</material></gazebo>
+  <gazebo reference="lebai_link_2"><material>Gazebo/White</material></gazebo>
+  <gazebo reference="lebai_link_3"><material>Gazebo/White</material></gazebo>
+  <gazebo reference="lebai_link_4"><material>Gazebo/White</material></gazebo>
+  <gazebo reference="lebai_link_5"><material>Gazebo/White</material></gazebo>
+  <gazebo reference="lebai_link_6"><material>Gazebo/Grey</material></gazebo>
+
+</robot>
