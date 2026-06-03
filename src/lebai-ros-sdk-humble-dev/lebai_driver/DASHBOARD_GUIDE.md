@@ -83,6 +83,7 @@ http://<Jetson-IP>:8080/
 |------|------|----------|
 | 视觉抓取 | YOLO 抓取 | `ros2 launch grab_demo yolo_grab.launch.py` |
 | 视觉抓取 | HSV/颜色 抓取 | `ros2 launch grab_demo color_grab.launch.py` |
+| 视觉抓取 | KCF 跟踪抓取 | `ros2 launch grab_demo kcf_grab.launch.py` |
 | 视觉抓取 | ArUco 抓取 | `ros2 launch grab_demo aruco_grab.launch.py` |
 | 视觉抓取 | 手眼标定 | `ros2 launch grab_demo hand_eye.launch.py` |
 | 机器人驱动 | robot_state / io_service / system_service / motion | `ros2 launch lebai_driver *.launch.py` |

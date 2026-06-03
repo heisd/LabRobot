@@ -38,6 +38,7 @@ find_package(PCL REQUIRED)
 find_package(pcl_conversions REQUIRED)  # 添加这一行
 find_package(pcl_ros REQUIRED)          # 添加这一行
 find_package(lebai_interfaces REQUIRED)
+find_package(std_srvs REQUIRED)
 
 moveit_package()
 find_package(moveit_ros_planning_interface REQUIRED)
@@ -254,6 +255,34 @@ if(CUDA_FOUND AND TENSORRT_INCLUDE_DIR AND TENSORRT_NVINFER)
     DESTINATION lib/${PROJECT_NAME})
 else()
   message(WARNING "未找到 CUDA 或 TensorRT, 跳过 yolo_detect_node 的编译 (仅 Jetson/带GPU环境需要)")
+endif()
+
+# ---------------------------------------------------------------------------
+# KCF 跟踪节点 (可选)
+# 需要 opencv_contrib 的 tracking 模块(提供 cv::TrackerKCF, opencv2/tracking.hpp)。
+# 找不到该模块时自动跳过编译, 不影响其它节点。
+# ---------------------------------------------------------------------------
+find_path(OPENCV_TRACKING_HEADER opencv2/tracking.hpp
+  HINTS ${OpenCV_INCLUDE_DIRS} /usr/include/opencv4 /usr/local/include/opencv4
+        /usr/include /usr/local/include)
+if(OPENCV_TRACKING_HEADER)
+  message(STATUS "找到 OpenCV tracking 模块, 编译 kcf_track_node")
+  add_executable(kcf_track_node src/kcf_track_node.cpp)
+  ament_target_dependencies(kcf_track_node
+    rclcpp
+    sensor_msgs
+    std_srvs
+    cv_bridge
+    OpenCV
+    message_filters
+    geometry_msgs
+    tf2_ros
+    tf2_geometry_msgs
+  )
+  install(TARGETS kcf_track_node
+    DESTINATION lib/${PROJECT_NAME})
+else()
+  message(WARNING "未找到 OpenCV tracking 模块(opencv_contrib), 跳过 kcf_track_node 的编译")
 endif()
 
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
