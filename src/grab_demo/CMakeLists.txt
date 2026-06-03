@@ -209,6 +209,53 @@ install(TARGETS camera_info_node
 
 
 
+# ---------------------------------------------------------------------------
+# YOLO TensorRT 检测节点 (可选)
+# 仅在能找到 CUDA + TensorRT 的环境(通常是 Jetson)上编译, 否则自动跳过,
+# 不会影响其它节点的正常构建。
+# ---------------------------------------------------------------------------
+find_package(CUDA QUIET)
+find_path(TENSORRT_INCLUDE_DIR NvInfer.h
+  HINTS /usr/include/aarch64-linux-gnu /usr/include/x86_64-linux-gnu
+        /usr/include /usr/local/tensorrt/include /usr/local/TensorRT/include)
+find_library(TENSORRT_NVINFER nvinfer
+  HINTS /usr/lib/aarch64-linux-gnu /usr/lib/x86_64-linux-gnu
+        /usr/local/tensorrt/lib /usr/local/TensorRT/lib)
+find_library(TENSORRT_ONNXPARSER nvonnxparser
+  HINTS /usr/lib/aarch64-linux-gnu /usr/lib/x86_64-linux-gnu
+        /usr/local/tensorrt/lib /usr/local/TensorRT/lib)
+
+if(CUDA_FOUND AND TENSORRT_INCLUDE_DIR AND TENSORRT_NVINFER)
+  message(STATUS "找到 CUDA 与 TensorRT, 编译 yolo_detect_node")
+  add_executable(yolo_detect_node src/yolo_detect_node.cpp)
+  ament_target_dependencies(yolo_detect_node
+    rclcpp
+    sensor_msgs
+    cv_bridge
+    OpenCV
+    message_filters
+    geometry_msgs
+    tf2_ros
+    tf2_geometry_msgs
+  )
+  target_include_directories(yolo_detect_node PRIVATE
+    ${TENSORRT_INCLUDE_DIR} ${CUDA_INCLUDE_DIRS})
+  target_link_libraries(yolo_detect_node
+    ${TENSORRT_NVINFER} ${CUDA_LIBRARIES})
+  # 本节点使用 std::clamp 等 C++17 特性, 单独为该 target 指定 C++17
+  # (不影响包内其它使用 C++11 的目标)
+  target_compile_features(yolo_detect_node PRIVATE cxx_std_17)
+  # 找到 onnx 解析器时, 允许节点在运行时直接从 .onnx 构建 engine
+  if(TENSORRT_ONNXPARSER)
+    target_link_libraries(yolo_detect_node ${TENSORRT_ONNXPARSER})
+    target_compile_definitions(yolo_detect_node PRIVATE HAVE_ONNX_PARSER=1)
+  endif()
+  install(TARGETS yolo_detect_node
+    DESTINATION lib/${PROJECT_NAME})
+else()
+  message(WARNING "未找到 CUDA 或 TensorRT, 跳过 yolo_detect_node 的编译 (仅 Jetson/带GPU环境需要)")
+endif()
+
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
