@@ -71,28 +71,46 @@ DANGEROUS_COMMANDS = {"power_off", "emergency_stop", "turn_off_robot", "disable"
 
 # 功能启动页可一键启动/停止的任务(固定白名单, 不接受网页传入任意命令)。
 # 每项通过 ros2 launch 启动一整套功能, 由 Dashboard 以子进程方式管理。
+#
+# "resources" 声明该任务会占用哪些资源, 两个任务只要资源有交集即视为冲突,
+# 前端据此禁用"启动"并提示。资源对应实际会拉起的东西:
+#   camera                = 机械臂相机 (gemini_arm)
+#   robot_state/motion/io_service/system_service = 对应驱动节点
+#   moveit                = MoveIt move_group
+#   grab                  = camera_info + 抓取服务等抓取专用节点
+# 视觉抓取 launch 内部包含 lm3.launch.py(= robot_interface 全部驱动 + MoveIt) + 相机,
+# 所以它们占用上述几乎所有资源, 互相之间以及与驱动/MoveIt 单独启动都会冲突。
 LAUNCH_TASKS = [
-    # ---- 视觉抓取(各自包含相机 + 机械臂 + MoveIt + 抓取服务) ----
+    # ---- 视觉抓取(各自包含相机 + 机械臂驱动 + MoveIt + 抓取服务) ----
     {"id": "yolo_grab", "label": "YOLO 抓取", "group": "视觉抓取",
-     "cmd": ["ros2", "launch", "grab_demo", "yolo_grab.launch.py"]},
+     "cmd": ["ros2", "launch", "grab_demo", "yolo_grab.launch.py"],
+     "resources": ["camera", "robot_state", "motion", "io_service", "system_service", "moveit", "grab"]},
     {"id": "color_grab", "label": "HSV/颜色 抓取", "group": "视觉抓取",
-     "cmd": ["ros2", "launch", "grab_demo", "color_grab.launch.py"]},
+     "cmd": ["ros2", "launch", "grab_demo", "color_grab.launch.py"],
+     "resources": ["camera", "robot_state", "motion", "io_service", "system_service", "moveit", "grab"]},
     {"id": "aruco_grab", "label": "ArUco 抓取", "group": "视觉抓取",
-     "cmd": ["ros2", "launch", "grab_demo", "aruco_grab.launch.py"]},
+     "cmd": ["ros2", "launch", "grab_demo", "aruco_grab.launch.py"],
+     "resources": ["camera", "robot_state", "motion", "io_service", "system_service", "moveit", "grab"]},
     {"id": "hand_eye", "label": "手眼标定", "group": "视觉抓取",
-     "cmd": ["ros2", "launch", "grab_demo", "hand_eye.launch.py"]},
-    # ---- 机器人驱动(底层节点, 可单独启动) ----
+     "cmd": ["ros2", "launch", "grab_demo", "hand_eye.launch.py"],
+     "resources": ["camera", "robot_state", "motion", "io_service", "system_service", "moveit", "grab"]},
+    # ---- 机器人驱动(底层节点, 可单独启动; 互不冲突, 但与视觉抓取/MoveIt 冲突) ----
     {"id": "robot_state", "label": "机器人状态 robot_state", "group": "机器人驱动",
-     "cmd": ["ros2", "launch", "lebai_driver", "robot_state.launch.py"]},
+     "cmd": ["ros2", "launch", "lebai_driver", "robot_state.launch.py"],
+     "resources": ["robot_state"]},
     {"id": "io_service", "label": "IO 服务 io_service", "group": "机器人驱动",
-     "cmd": ["ros2", "launch", "lebai_driver", "io_service.launch.py"]},
+     "cmd": ["ros2", "launch", "lebai_driver", "io_service.launch.py"],
+     "resources": ["io_service"]},
     {"id": "system_service", "label": "系统服务 system_service", "group": "机器人驱动",
-     "cmd": ["ros2", "launch", "lebai_driver", "system_service.launch.py"]},
+     "cmd": ["ros2", "launch", "lebai_driver", "system_service.launch.py"],
+     "resources": ["system_service"]},
     {"id": "motion", "label": "运动服务 motion", "group": "机器人驱动",
-     "cmd": ["ros2", "launch", "lebai_driver", "motion.launch.py"]},
-    # ---- 运动规划 ----
+     "cmd": ["ros2", "launch", "lebai_driver", "motion.launch.py"],
+     "resources": ["motion"]},
+    # ---- 运动规划(= robot_interface 全部驱动 + MoveIt) ----
     {"id": "moveit_lm3", "label": "MoveIt (lm3)", "group": "运动规划",
-     "cmd": ["ros2", "launch", "lebai_lm3_moveit_config", "lm3.launch.py"]},
+     "cmd": ["ros2", "launch", "lebai_lm3_moveit_config", "lm3.launch.py"],
+     "resources": ["robot_state", "motion", "io_service", "system_service", "moveit"]},
 ]
 
 TASKS_BY_ID = {t["id"]: t for t in LAUNCH_TASKS}
@@ -174,6 +192,7 @@ class TaskManager:
                     "label": task["label"],
                     "group": task["group"],
                     "cmd": " ".join(task["cmd"]),
+                    "resources": task.get("resources", []),
                     "running": running,
                     "pid": info["proc"].pid if running else None,
                     "uptime": round(now - info["started"], 1) if running else None,
@@ -566,6 +585,7 @@ INDEX_HTML = """<!DOCTYPE html>
   .log { background:#0a0e12; border:1px solid #2a3744; border-radius:6px; padding:8px;
          max-height:240px; overflow:auto; font-family:monospace; font-size:12px;
          white-space:pre-wrap; margin-top:6px; color:#b8c4d0; }
+  button:disabled { opacity:0.4; cursor:not-allowed; }
 </style>
 </head>
 <body>
@@ -788,10 +808,21 @@ function showView(name){
 
 // ---------------- 功能启动页 ----------------
 let tasksRendered = false;
+let TASKS = [];
+
+// 返回与给定任务"资源冲突"且正在运行的任务标签列表
+function conflictsFor(task){
+  const res = new Set(task.resources || []);
+  return TASKS.filter(o => o.id !== task.id && o.running &&
+            (o.resources || []).some(r => res.has(r)))
+              .map(o => o.label);
+}
+
 async function refreshTasks(){
   let tasks;
   try { tasks = await (await fetch('/api/tasks')).json(); }
   catch(e){ return; }
+  TASKS = tasks;
   if (!tasksRendered){ buildTaskList(tasks); tasksRendered = true; }
   tasks.forEach(t => {
     const dot = document.getElementById('dot-'+t.id);
@@ -800,6 +831,26 @@ async function refreshTasks(){
     if (st) st.innerHTML = t.running
       ? '<small style="color:#3fb950">运行中 pid='+t.pid+' ('+t.uptime+'s)</small>'
       : '<small>已停止</small>';
+
+    // 冲突检测: 禁用会与运行中任务冲突的"启动"按钮并提示
+    const startBtn = document.querySelector(
+      'button[data-id="'+t.id+'"][data-act="start"]');
+    const hint = document.getElementById('hint-'+t.id);
+    const conf = conflictsFor(t);
+    if (startBtn){
+      if (t.running){
+        startBtn.disabled = true; startBtn.title = '已在运行';
+      } else if (conf.length){
+        startBtn.disabled = true; startBtn.title = '与运行中的任务冲突: ' + conf.join(', ');
+      } else {
+        startBtn.disabled = false; startBtn.title = '';
+      }
+    }
+    if (hint){
+      hint.innerHTML = (!t.running && conf.length)
+        ? '<small style="color:#e3b341">⚠ 与运行中的【'+conf.join('、')+'】冲突, 已禁用启动</small>'
+        : '';
+    }
   });
 }
 function buildTaskList(tasks){
@@ -816,7 +867,8 @@ function buildTaskList(tasks){
           '<button data-id="'+t.id+'" data-act="log">日志</button>'+
         '</span>'+
         '<span class="dot bad" id="dot-'+t.id+'"></span>'+
-        '<b>'+t.label+'</b> &nbsp;<span id="st-'+t.id+'"></span>'+
+        '<b>'+t.label+'</b> &nbsp;<span id="st-'+t.id+'"></span> '+
+        '<span id="hint-'+t.id+'"></span>'+
         '<div class="cmd">'+t.cmd+'</div>'+
         '<pre id="log-'+t.id+'" class="log" style="display:none"></pre>'+
       '</div>';
@@ -834,6 +886,15 @@ document.getElementById('tasklist').addEventListener('click', (e) => {
   else taskCmd(id, act);
 });
 async function taskCmd(id, action){
+  // 启动前再做一次冲突拦截(双保险, 防止禁用态被绕过)
+  if (action === 'start'){
+    const t = TASKS.find(x => x.id === id);
+    const conf = t ? conflictsFor(t) : [];
+    if (conf.length){
+      toast('无法启动: 与运行中的【'+conf.join('、')+'】冲突, 请先停止它们', false);
+      return;
+    }
+  }
   if (action === 'stop' && !confirm('确认停止该任务?')) return;
   try {
     const r = await fetch('/api/task', {method:'POST', headers:{'Content-Type':'application/json'},

@@ -90,9 +90,19 @@ http://<Jetson-IP>:8080/
 
 每项有 **启动 / 停止 / 日志** 按钮，绿点表示运行中（显示 pid 和运行时长）。
 
+**冲突自动规避（前端 JS 实现）**：每个任务声明它占用的资源（`camera` / `robot_state` /
+`motion` / `io_service` / `system_service` / `moveit` / `grab`），两个任务只要资源有交集就算冲突。
+界面会**自动禁用**会与"运行中任务"冲突的"启动"按钮，并标注 `⚠ 与运行中的【…】冲突`。
+例如：
+
+- 视觉抓取（YOLO/HSV/ArUco/手眼）内部已包含相机 + 全套驱动 + MoveIt，所以
+  **它们互相禁用**，且一旦启动其一，"机器人驱动""MoveIt (lm3)" 也会被禁用；
+- 反过来，先启动了 `robot_state` / `motion` / `MoveIt` 等，视觉抓取也会被禁用；
+- `robot_state` / `io_service` / `system_service` / `motion` 之间资源不重叠，**可以共存**。
+
+要换一套功能时，先"停止"正在运行的，冲突按钮会自动恢复可用。
+
 > 注意：
-> - 视觉抓取（YOLO/HSV/ArUco）各自**已包含相机 + 机械臂 + MoveIt + 抓取服务**，
->   三者选一个启动即可，**不要**再重复启动"机器人驱动 / MoveIt"，以免节点冲突。
 > - 停止时 Dashboard 会对整个进程组发 `SIGINT` 优雅关闭（ros2 launch 会连带关掉它拉起的所有节点），
 >   超时未退出再强制结束。
 > - 命令是**固定白名单**（在 `dashboard_node.py` 的 `LAUNCH_TASKS` 里定义），
