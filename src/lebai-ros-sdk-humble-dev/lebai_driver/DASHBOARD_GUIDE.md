@@ -65,7 +65,9 @@ http://<Jetson-IP>:8080/
 ### 4.1 监控与控制
 
 - **当前目标距离**：顶部大字显示相机到目标的深度（米），订阅 `/grab_target/distance`
-  （`std_msgs/Float32`），由当前运行的视觉算法（HSV/YOLO/KCF）发布；无目标/数据过期时显示 `—`。
+  （`std_msgs/Float32`），由当前运行的视觉算法（HSV/YOLO/KCF/VLM）发布；无目标/数据过期时显示 `—`。
+- **VLM 自然语言抓取**：输入一句话（可间接，如"我渴了"）发给 VLM 节点，机械臂理解后抓取；
+  卡片显示理解结果。需先在"功能启动"页启动【VLM 语言抓取】。详见 `grab_demo/VLM_GUIDE.md`。
 - **机器人状态**：急停 / 上电 / 可运动 / 运动中 / 错误 / 错误码 / 模式（每 0.5s 刷新）。
 - **夹爪状态**：当前位置、力度。
 - **IO 状态**：机器人 DI/DO、AI、法兰 DI、扩展 DI。
@@ -86,6 +88,7 @@ http://<Jetson-IP>:8080/
 | 视觉抓取 | YOLO 抓取 | `ros2 launch grab_demo yolo_grab.launch.py` |
 | 视觉抓取 | HSV/颜色 抓取 | `ros2 launch grab_demo color_grab.launch.py` |
 | 视觉抓取 | KCF 跟踪抓取 | `ros2 launch grab_demo kcf_grab.launch.py` |
+| 视觉抓取 | VLM 语言抓取 | `ros2 launch grab_demo vlm_grab.launch.py` |
 | 视觉抓取 | ArUco 抓取 | `ros2 launch grab_demo aruco_grab.launch.py` |
 | 视觉抓取 | 手眼标定 | `ros2 launch grab_demo hand_eye.launch.py` |
 | 机器人驱动 | robot_state / io_service / system_service / motion | `ros2 launch lebai_driver *.launch.py` |

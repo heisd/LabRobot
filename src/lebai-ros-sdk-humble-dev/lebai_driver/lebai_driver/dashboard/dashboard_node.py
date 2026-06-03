@@ -45,7 +45,7 @@ import rclpy
 from rclpy.node import Node
 
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, String
 from std_srvs.srv import Empty
 from lebai_interfaces.msg import RobotStatus, IOStatus, GripperStatus
 from lebai_interfaces.srv import SetGripper, SetDO, SetAO, MoveJoint, MoveLine
@@ -91,6 +91,9 @@ LAUNCH_TASKS = [
      "resources": ["camera", "robot_state", "motion", "io_service", "system_service", "moveit", "grab"]},
     {"id": "kcf_grab", "label": "KCF 跟踪抓取", "group": "视觉抓取",
      "cmd": ["ros2", "launch", "grab_demo", "kcf_grab.launch.py"],
+     "resources": ["camera", "robot_state", "motion", "io_service", "system_service", "moveit", "grab"]},
+    {"id": "vlm_grab", "label": "VLM 语言抓取", "group": "视觉抓取",
+     "cmd": ["ros2", "launch", "grab_demo", "vlm_grab.launch.py"],
      "resources": ["camera", "robot_state", "motion", "io_service", "system_service", "moveit", "grab"]},
     {"id": "aruco_grab", "label": "ArUco 抓取", "group": "视觉抓取",
      "cmd": ["ros2", "launch", "grab_demo", "aruco_grab.launch.py"],
@@ -248,6 +251,7 @@ class DashboardNode(Node):
             "io_status": (None, 0.0),
             "gripper_status": (None, 0.0),
             "target_distance": (None, 0.0),
+            "vlm_result": (None, 0.0),
         }
 
         # ---- 订阅状态话题 ----
@@ -262,6 +266,10 @@ class DashboardNode(Node):
         # 目标距离(米), 由当前视觉算法(HSV/YOLO/KCF)经 TargetTFPublisher 发布
         self.create_subscription(Float32, "/grab_target/distance",
                                  lambda m: self._store("target_distance", m), 10)
+        # VLM 自然语言抓取: 发送指令 + 接收结果
+        self._vlm_pub = self.create_publisher(String, "/vlm/instruction", 10)
+        self.create_subscription(String, "/vlm/result",
+                                 lambda m: self._store("vlm_result", m), 10)
 
         # ---- 服务客户端 ----
         self._sys_clients = {
@@ -372,6 +380,11 @@ class DashboardNode(Node):
         if td is not None:
             out["target_distance"] = round(float(td.data), 3)
 
+        # VLM 最近一次结果(常驻显示, 不按 1.5s 过期)
+        vr, _, vr_age = fresh("vlm_result", max_age=1e12)
+        if vr is not None:
+            out["vlm_result"] = {"text": vr.data, "age": vr_age}
+
         out["stamp"] = round(now, 3)
         return out
 
@@ -394,6 +407,8 @@ class DashboardNode(Node):
                 return self._call_set_ao(payload)
             if cmd == "move_joint":
                 return self._call_move_joint(payload)
+            if cmd == "vlm":
+                return self._send_vlm(payload)
             return False, f"未知命令类型: {cmd}"
         except Exception as e:  # noqa: BLE001 - 网页错误需返回给前端
             self.get_logger().error(f"命令执行异常: {e}")
@@ -456,6 +471,15 @@ class DashboardNode(Node):
         req.value = float(payload.get("value", 0.0))
         self._cli_set_ao.call_async(req)
         return True, f"已发送: AO[{req.pin}] = {req.value}"
+
+    def _send_vlm(self, payload):
+        text = str(payload.get("text", "")).strip()
+        if not text:
+            return False, "指令为空"
+        msg = String()
+        msg.data = text
+        self._vlm_pub.publish(msg)
+        return True, f"已发送 VLM 指令: {text}"
 
     def _call_move_joint(self, payload):
         if not self._ready(self._cli_move_joint, "move_joint"):
@@ -620,6 +644,21 @@ INDEX_HTML = """<!DOCTYPE html>
     <div id="distance" style="font-size:34px; font-weight:700; color:#8b9bb0;">—</div>
     <small>相机到目标的深度(米), 由当前运行的视觉算法(HSV/YOLO/KCF)发布; 无目标时显示 —</small>
   </div>
+
+  <div class="card" style="grid-column:1 / span 2;">
+    <h2>VLM 自然语言抓取</h2>
+    <div class="row">
+      <input id="vlmtext" type="text" style="width:60%;"
+             placeholder="例如: 把红色的瓶子递给我 / 我渴了 / 拿起最大的物体"
+             onkeydown="if(event.key==='Enter')sendVlm()"/>
+      <button onclick="sendVlm()">发送指令</button>
+    </div>
+    <div id="vlmresult" style="margin-top:6px; min-height:20px; color:#cfe3ff;">
+      <small>等待指令... (需先在"功能启动"页启动【VLM 抓取】)</small>
+    </div>
+    <small>指令发到 /vlm/instruction, 结果来自 /vlm/result; 理解到目标后机械臂会按 auto_grab 设置抓取。</small>
+  </div>
+
   <div class="card">
     <h2>机器人状态</h2>
     <table id="robot"><tr><td class="k">等待 /robot_status ...</td></tr></table>
@@ -740,6 +779,11 @@ function gripper(type, inputId){
 function setdo(v){
   post({type:'set_do', pin: parseInt(document.getElementById('dopin').value), value: v});
 }
+function sendVlm(){
+  const t = document.getElementById('vlmtext').value.trim();
+  if (!t){ toast('请输入指令', false); return; }
+  post({type:'vlm', text:t});
+}
 function movej(){
   if (!confirm('确认执行关节运动? 机械臂会真实移动!')) return;
   const jp = [];
@@ -769,6 +813,12 @@ async function refresh(){
   document.getElementById('conn').innerHTML =
     '<span class="dot '+(allok?'ok':'bad')+'"></span>' +
     (allok ? '驱动在线' : '等待 robot_state 节点...');
+
+  // VLM 结果(用 textContent 防注入)
+  const vr = document.getElementById('vlmresult');
+  if (vr && s.vlm_result){
+    vr.textContent = s.vlm_result.text + '  (' + s.vlm_result.age + 's前)';
+  }
 
   // 目标距离(大字显示, 无目标/数据过期则显示 —)
   const distEl = document.getElementById('distance');

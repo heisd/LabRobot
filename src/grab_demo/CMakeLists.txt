@@ -288,6 +288,9 @@ else()
   message(WARNING "未找到 OpenCV tracking 模块(opencv_contrib), 跳过 kcf_track_node 的编译")
 endif()
 
+# VLM(视觉语言模型)抓取节点 —— 纯 Python, 用 ros2 run grab_demo vlm_grab_node.py 运行
+install(PROGRAMS scripts/vlm_grab_node.py DESTINATION lib/${PROJECT_NAME})
+
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
