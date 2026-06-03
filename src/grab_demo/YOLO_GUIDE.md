@@ -104,6 +104,7 @@ ros2 run tf2_ros tf2_echo camera_arm_depth_optical_frame target_frame
 | `camera_frame` | `camera_arm_depth_optical_frame` | TF 父坐标系 |
 | `target_frame` | `target_frame` | TF 子坐标系（抓取服务读取的就是它） |
 | `target_class` | `-1` | `-1`=任意类别取最高分；指定 COCO id 只抓该类。瓶子=39，杯子=41 |
+| `select_mode` | `confidence` | 多物体选择策略：`confidence`=选置信度最高；`nearest`=选离相机最近 |
 | `conf_threshold` | `0.25` | 置信度阈值 |
 | `nms_threshold` | `0.45` | NMS IoU 阈值 |
 | `z_offset` | `0.07` | Z 轴补偿，单位 m（与 HSV 一致，按实际标定调） |
@@ -120,3 +121,24 @@ ros2 run grab_demo yolo_detect_node --ros-args -p target_class:=39 ...
 
 常用 COCO id：person=0, bottle=39, wine glass=40, cup=41, bowl=45,
 banana=46, apple=47, orange=49, scissors=76。
+
+## 七、多物体时怎么选(选择模式转换器)
+
+画面中同时出现多个物体时，由 `select_mode` 决定抓哪一个：
+
+| `select_mode` | 行为 |
+|---------------|------|
+| `confidence`（默认） | 选**置信度最高**的物体 |
+| `nearest` | 选**离相机最近**的物体（比较每个检测框中心的深度，取最小） |
+
+切换成"选最近"：
+
+```bash
+ros2 run grab_demo yolo_detect_node --ros-args -p select_mode:=nearest ...
+```
+
+或在 `yolo_grab.launch.py` 里把 `"select_mode"` 改成 `"nearest"`。
+
+> 说明：`nearest` 模式会读取每个候选框中心的深度，没有有效深度的候选会被跳过；
+> 终端会打印 `选择最近的 [xxx] dis=0.xxxm`，方便确认。
+> 两种模式都仍受 `target_class` 约束（设了类别就只在该类里比较）。
