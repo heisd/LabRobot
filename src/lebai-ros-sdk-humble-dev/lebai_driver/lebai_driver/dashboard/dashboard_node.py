@@ -32,9 +32,14 @@
 
 import json
 import math
+import os
+import signal
+import subprocess
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse, parse_qs
 
 import rclpy
 from rclpy.node import Node
@@ -62,6 +67,141 @@ SYSTEM_COMMANDS = [
 
 # 被认为是"危险"的命令, 网页端会二次确认
 DANGEROUS_COMMANDS = {"power_off", "emergency_stop", "turn_off_robot", "disable"}
+
+
+# 功能启动页可一键启动/停止的任务(固定白名单, 不接受网页传入任意命令)。
+# 每项通过 ros2 launch 启动一整套功能, 由 Dashboard 以子进程方式管理。
+LAUNCH_TASKS = [
+    # ---- 视觉抓取(各自包含相机 + 机械臂 + MoveIt + 抓取服务) ----
+    {"id": "yolo_grab", "label": "YOLO 抓取", "group": "视觉抓取",
+     "cmd": ["ros2", "launch", "grab_demo", "yolo_grab.launch.py"]},
+    {"id": "color_grab", "label": "HSV/颜色 抓取", "group": "视觉抓取",
+     "cmd": ["ros2", "launch", "grab_demo", "color_grab.launch.py"]},
+    {"id": "aruco_grab", "label": "ArUco 抓取", "group": "视觉抓取",
+     "cmd": ["ros2", "launch", "grab_demo", "aruco_grab.launch.py"]},
+    {"id": "hand_eye", "label": "手眼标定", "group": "视觉抓取",
+     "cmd": ["ros2", "launch", "grab_demo", "hand_eye.launch.py"]},
+    # ---- 机器人驱动(底层节点, 可单独启动) ----
+    {"id": "robot_state", "label": "机器人状态 robot_state", "group": "机器人驱动",
+     "cmd": ["ros2", "launch", "lebai_driver", "robot_state.launch.py"]},
+    {"id": "io_service", "label": "IO 服务 io_service", "group": "机器人驱动",
+     "cmd": ["ros2", "launch", "lebai_driver", "io_service.launch.py"]},
+    {"id": "system_service", "label": "系统服务 system_service", "group": "机器人驱动",
+     "cmd": ["ros2", "launch", "lebai_driver", "system_service.launch.py"]},
+    {"id": "motion", "label": "运动服务 motion", "group": "机器人驱动",
+     "cmd": ["ros2", "launch", "lebai_driver", "motion.launch.py"]},
+    # ---- 运动规划 ----
+    {"id": "moveit_lm3", "label": "MoveIt (lm3)", "group": "运动规划",
+     "cmd": ["ros2", "launch", "lebai_lm3_moveit_config", "lm3.launch.py"]},
+]
+
+TASKS_BY_ID = {t["id"]: t for t in LAUNCH_TASKS}
+
+
+class TaskManager:
+    """以子进程方式启动/停止预定义的 ros2 launch 任务, 并跟踪运行状态。
+
+    - 每个任务用独立进程组启动(start_new_session=True), 停止时对整个进程组发信号,
+      以便干净地关闭 ros2 launch 拉起的所有子节点。
+    - 子进程输出重定向到日志文件, 供网页查看。
+    """
+
+    def __init__(self, logger, log_dir=None):
+        self._logger = logger
+        self._lock = threading.Lock()
+        self._procs = {}  # id -> {proc, logpath, logf, started}
+        self._log_dir = log_dir or os.path.join(
+            tempfile.gettempdir(), "lebai_dashboard_logs")
+        os.makedirs(self._log_dir, exist_ok=True)
+
+    @staticmethod
+    def _running(info):
+        return info is not None and info["proc"].poll() is None
+
+    def start(self, task):
+        tid = task["id"]
+        with self._lock:
+            if self._running(self._procs.get(tid)):
+                pid = self._procs[tid]["proc"].pid
+                return False, f"[{task['label']}] 已在运行 (pid={pid})"
+            logpath = os.path.join(self._log_dir, f"{tid}.log")
+            try:
+                logf = open(logpath, "wb")
+                proc = subprocess.Popen(
+                    task["cmd"], stdout=logf, stderr=subprocess.STDOUT,
+                    start_new_session=True, env=os.environ.copy())
+            except FileNotFoundError as e:
+                return False, f"启动失败: {e} (ros2 是否在 PATH / 工作空间是否 source?)"
+            except Exception as e:  # noqa: BLE001
+                return False, f"启动失败: {e}"
+            self._procs[tid] = {"proc": proc, "logpath": logpath,
+                                "logf": logf, "started": time.time()}
+            self._logger.info(f"启动任务 [{task['label']}] pid={proc.pid}: "
+                              f"{' '.join(task['cmd'])}")
+            return True, f"[{task['label']}] 已启动 (pid={proc.pid})"
+
+    def stop(self, task):
+        tid = task["id"]
+        with self._lock:
+            info = self._procs.get(tid)
+            if not self._running(info):
+                return False, f"[{task['label']}] 未在运行"
+            proc = info["proc"]
+            try:  # 先对进程组发 SIGINT, 让 ros2 launch 优雅关闭
+                os.killpg(os.getpgid(proc.pid), signal.SIGINT)
+            except ProcessLookupError:
+                pass
+        # 在锁外等待退出, 超时则强杀
+        try:
+            proc.wait(timeout=6)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        self._logger.info(f"停止任务 [{task['label']}]")
+        return True, f"[{task['label']}] 已停止"
+
+    def status(self):
+        now = time.time()
+        out = []
+        with self._lock:
+            for task in LAUNCH_TASKS:
+                info = self._procs.get(task["id"])
+                running = self._running(info)
+                out.append({
+                    "id": task["id"],
+                    "label": task["label"],
+                    "group": task["group"],
+                    "cmd": " ".join(task["cmd"]),
+                    "running": running,
+                    "pid": info["proc"].pid if running else None,
+                    "uptime": round(now - info["started"], 1) if running else None,
+                })
+        return out
+
+    def log(self, tid, lines=120):
+        info = self._procs.get(tid)
+        path = info["logpath"] if info else os.path.join(self._log_dir, f"{tid}.log")
+        if not os.path.exists(path):
+            return "(暂无日志)"
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError as e:
+            return f"(读取日志失败: {e})"
+        text = data.decode("utf-8", "replace")
+        return "\n".join(text.splitlines()[-lines:]) or "(日志为空)"
+
+    def shutdown_all(self):
+        with self._lock:
+            items = list(self._procs.items())
+        for tid, info in items:
+            if self._running(info):
+                try:
+                    os.killpg(os.getpgid(info["proc"].pid), signal.SIGINT)
+                except ProcessLookupError:
+                    pass
 
 
 class DashboardNode(Node):
@@ -109,6 +249,9 @@ class DashboardNode(Node):
         self._cli_set_ao = self.create_client(SetAO, f"{self.io_ns_}/set_robot_ao")
         self._cli_move_joint = self.create_client(MoveJoint, f"{self.motion_ns_}/move_joint")
         self._cli_move_line = self.create_client(MoveLine, f"{self.motion_ns_}/move_line")
+
+        # ---- 功能启动任务管理器(YOLO/HSV 抓取等一键启停) ----
+        self.tasks_ = TaskManager(self.get_logger())
 
         # ---- HTTP 服务 ----
         self._httpd = None
@@ -222,6 +365,19 @@ class DashboardNode(Node):
             self.get_logger().error(f"命令执行异常: {e}")
             return False, f"异常: {e}"
 
+    def dispatch_task(self, payload):
+        """处理功能启动页的启动/停止请求, 返回 (ok, message)。"""
+        tid = payload.get("id", "")
+        action = payload.get("action", "")
+        task = TASKS_BY_ID.get(tid)
+        if task is None:
+            return False, f"未知任务: {tid}"
+        if action == "start":
+            return self.tasks_.start(task)
+        if action == "stop":
+            return self.tasks_.stop(task)
+        return False, f"未知操作: {action}"
+
     def _ready(self, cli, label, timeout=1.0):
         # 在 HTTP 线程里用非阻塞的 service_is_ready() 轮询, 避免从非执行器线程
         # 调用 wait_for_service 带来的潜在线程问题(rclpy 在主线程 spin)。
@@ -307,21 +463,41 @@ class DashboardNode(Node):
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _send_text(self, text, code=200):
+                body = text.encode("utf-8")
+                self.send_response(code)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
             def do_GET(self):
-                if self.path in ("/", "/index.html"):
+                parsed = urlparse(self.path)
+                path = parsed.path
+                if path in ("/", "/index.html"):
                     body = node._index_html
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.send_header("Content-Length", str(len(body)))
                     self.end_headers()
                     self.wfile.write(body)
-                elif self.path == "/api/status":
+                elif path == "/api/status":
                     self._send_json(node.build_status())
+                elif path == "/api/tasks":
+                    self._send_json(node.tasks_.status())
+                elif path == "/api/task_log":
+                    qs = parse_qs(parsed.query)
+                    tid = (qs.get("id") or [""])[0]
+                    if tid not in TASKS_BY_ID:
+                        self._send_text("(未知任务)", 404)
+                    else:
+                        self._send_text(node.tasks_.log(tid))
                 else:
                     self._send_json({"error": "not found"}, 404)
 
             def do_POST(self):
-                if self.path != "/api/command":
+                path = urlparse(self.path).path
+                if path not in ("/api/command", "/api/task"):
                     self._send_json({"error": "not found"}, 404)
                     return
                 try:
@@ -330,7 +506,10 @@ class DashboardNode(Node):
                 except Exception as e:  # noqa: BLE001
                     self._send_json({"ok": False, "message": f"请求解析失败: {e}"}, 400)
                     return
-                ok, msg = node.dispatch(payload)
+                if path == "/api/command":
+                    ok, msg = node.dispatch(payload)
+                else:  # /api/task : 启动/停止功能任务
+                    ok, msg = node.dispatch_task(payload)
                 self._send_json({"ok": ok, "message": msg})
 
         self._httpd = ThreadingHTTPServer((self.http_host_, self.http_port_), Handler)
@@ -376,14 +555,30 @@ INDEX_HTML = """<!DOCTYPE html>
            padding:10px 16px; border-radius:8px; opacity:0; transition:opacity .3s; max-width:360px; }
   .row { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin:6px 0; }
   small { color:#8b9bb0; }
+  nav { display:flex; gap:6px; margin-left:18px; }
+  .navbtn { background:transparent; border:1px solid transparent; border-bottom:2px solid transparent;
+            color:#9db4cc; border-radius:4px 4px 0 0; }
+  .navbtn.active { color:#fff; border-bottom-color:#4f8cff; background:#21304a; }
+  .taskrow { border-bottom:1px solid #20303f; padding:8px 0; }
+  .taskrow b { font-size:14px; }
+  .taskbtns { float:right; }
+  .cmd { color:#6b7d92; font-family:monospace; }
+  .log { background:#0a0e12; border:1px solid #2a3744; border-radius:6px; padding:8px;
+         max-height:240px; overflow:auto; font-family:monospace; font-size:12px;
+         white-space:pre-wrap; margin-top:6px; color:#b8c4d0; }
 </style>
 </head>
 <body>
 <header>
-  乐白机械臂 Dashboard
-  <span id="conn"></span>
+  <span style="font-size:18px;">乐白机械臂 Dashboard</span>
+  <nav>
+    <button id="nav-monitor" class="navbtn active" onclick="showView('monitor')">监控与控制</button>
+    <button id="nav-launch" class="navbtn" onclick="showView('launch')">功能启动</button>
+  </nav>
+  <span id="conn" style="margin-left:auto;"></span>
 </header>
 
+<div id="view-monitor" class="view">
 <div class="wrap">
   <div class="card">
     <h2>机器人状态</h2>
@@ -442,6 +637,15 @@ INDEX_HTML = """<!DOCTYPE html>
     </div>
     <small>单位: 弧度(rad)。"填入当前关节角"会把上面的关节状态填进输入框。</small>
   </div>
+</div>
+</div><!-- /view-monitor -->
+
+<div id="view-launch" class="view" style="display:none">
+  <div class="wrap" id="tasklist"><div class="card">加载中 ...</div></div>
+  <div style="padding:0 16px 16px;"><small>
+    提示: 视觉抓取(YOLO/HSV/ArUco)各自已包含相机 + 机械臂 + MoveIt + 抓取服务, 选一个启动即可,
+    不要和"机器人驱动""MoveIt"重复启动以免节点冲突。点"日志"可查看该任务输出。
+  </small></div>
 </div>
 
 <div id="toast"></div>
@@ -573,7 +777,83 @@ async function refresh(){
 }
 function row(k, v){ return '<tr><td class="k">'+k+'</td><td>'+v+'</td></tr>'; }
 
+// ---------------- 导航 / 视图切换 ----------------
+function showView(name){
+  document.getElementById('view-monitor').style.display = (name==='monitor')?'block':'none';
+  document.getElementById('view-launch').style.display  = (name==='launch') ?'block':'none';
+  document.getElementById('nav-monitor').classList.toggle('active', name==='monitor');
+  document.getElementById('nav-launch').classList.toggle('active', name==='launch');
+  if (name==='launch') refreshTasks();
+}
+
+// ---------------- 功能启动页 ----------------
+let tasksRendered = false;
+async function refreshTasks(){
+  let tasks;
+  try { tasks = await (await fetch('/api/tasks')).json(); }
+  catch(e){ return; }
+  if (!tasksRendered){ buildTaskList(tasks); tasksRendered = true; }
+  tasks.forEach(t => {
+    const dot = document.getElementById('dot-'+t.id);
+    const st = document.getElementById('st-'+t.id);
+    if (dot) dot.className = 'dot ' + (t.running ? 'ok' : 'bad');
+    if (st) st.innerHTML = t.running
+      ? '<small style="color:#3fb950">运行中 pid='+t.pid+' ('+t.uptime+'s)</small>'
+      : '<small>已停止</small>';
+  });
+}
+function buildTaskList(tasks){
+  const groups = {};
+  tasks.forEach(t => { (groups[t.group] = groups[t.group] || []).push(t); });
+  let html = '';
+  for (const g in groups){
+    html += '<div class="card"><h2>'+g+'</h2>';
+    groups[g].forEach(t => {
+      html += '<div class="taskrow">'+
+        '<span class="taskbtns">'+
+          '<button data-id="'+t.id+'" data-act="start">启动</button>'+
+          '<button class="danger" data-id="'+t.id+'" data-act="stop">停止</button>'+
+          '<button data-id="'+t.id+'" data-act="log">日志</button>'+
+        '</span>'+
+        '<span class="dot bad" id="dot-'+t.id+'"></span>'+
+        '<b>'+t.label+'</b> &nbsp;<span id="st-'+t.id+'"></span>'+
+        '<div class="cmd">'+t.cmd+'</div>'+
+        '<pre id="log-'+t.id+'" class="log" style="display:none"></pre>'+
+      '</div>';
+    });
+    html += '</div>';
+  }
+  document.getElementById('tasklist').innerHTML = html;
+}
+// 事件委托(按钮在重建后仍有效)
+document.getElementById('tasklist').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  const id = b.dataset.id, act = b.dataset.act;
+  if (!id) return;
+  if (act === 'log') toggleLog(id);
+  else taskCmd(id, act);
+});
+async function taskCmd(id, action){
+  if (action === 'stop' && !confirm('确认停止该任务?')) return;
+  try {
+    const r = await fetch('/api/task', {method:'POST', headers:{'Content-Type':'application/json'},
+                          body: JSON.stringify({id:id, action:action})});
+    const j = await r.json(); toast(j.message, j.ok);
+  } catch(e){ toast('请求失败: '+e, false); }
+  setTimeout(refreshTasks, 400);
+}
+async function toggleLog(id){
+  const pre = document.getElementById('log-'+id);
+  if (pre.style.display === 'none'){
+    try { pre.textContent = await (await fetch('/api/task_log?id='+encodeURIComponent(id))).text(); }
+    catch(e){ pre.textContent = '读取日志失败: '+e; }
+    pre.style.display = 'block';
+    pre.scrollTop = pre.scrollHeight;
+  } else { pre.style.display = 'none'; }
+}
+
 setInterval(refresh, 500);
+setInterval(() => { if (document.getElementById('view-launch').style.display !== 'none') refreshTasks(); }, 1500);
 refresh();
 </script>
 </body>
@@ -589,6 +869,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        node.tasks_.shutdown_all()
         node.stop_http_server()
         node.destroy_node()
         if rclpy.ok():

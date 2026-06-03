@@ -60,6 +60,10 @@ http://<Jetson-IP>:8080/
 
 ## 四、界面功能
 
+顶部导航栏有两个页面：**监控与控制** 和 **功能启动**。
+
+### 4.1 监控与控制
+
 - **机器人状态**：急停 / 上电 / 可运动 / 运动中 / 错误 / 错误码 / 模式（每 0.5s 刷新）。
 - **夹爪状态**：当前位置、力度。
 - **IO 状态**：机器人 DI/DO、AI、法兰 DI、扩展 DI。
@@ -70,6 +74,31 @@ http://<Jetson-IP>:8080/
 - **数字输出 DO**：指定引脚置 ON/OFF。
 - **关节运动**：填 6 个关节角（rad）+ acc/vel，点"执行"做 move_joint；
   "填入当前关节角"会把实时关节角填进输入框。**此操作会真实移动机械臂，有二次确认。**
+
+### 4.2 功能启动
+
+一键启动/停止预定义的功能（Dashboard 以子进程方式 `ros2 launch`，并跟踪运行状态）：
+
+| 分组 | 功能 | 实际命令 |
+|------|------|----------|
+| 视觉抓取 | YOLO 抓取 | `ros2 launch grab_demo yolo_grab.launch.py` |
+| 视觉抓取 | HSV/颜色 抓取 | `ros2 launch grab_demo color_grab.launch.py` |
+| 视觉抓取 | ArUco 抓取 | `ros2 launch grab_demo aruco_grab.launch.py` |
+| 视觉抓取 | 手眼标定 | `ros2 launch grab_demo hand_eye.launch.py` |
+| 机器人驱动 | robot_state / io_service / system_service / motion | `ros2 launch lebai_driver *.launch.py` |
+| 运动规划 | MoveIt (lm3) | `ros2 launch lebai_lm3_moveit_config lm3.launch.py` |
+
+每项有 **启动 / 停止 / 日志** 按钮，绿点表示运行中（显示 pid 和运行时长）。
+
+> 注意：
+> - 视觉抓取（YOLO/HSV/ArUco）各自**已包含相机 + 机械臂 + MoveIt + 抓取服务**，
+>   三者选一个启动即可，**不要**再重复启动"机器人驱动 / MoveIt"，以免节点冲突。
+> - 停止时 Dashboard 会对整个进程组发 `SIGINT` 优雅关闭（ros2 launch 会连带关掉它拉起的所有节点），
+>   超时未退出再强制结束。
+> - 命令是**固定白名单**（在 `dashboard_node.py` 的 `LAUNCH_TASKS` 里定义），
+>   网页端不能执行任意命令；要增删功能改这个列表即可。
+> - 任务日志写在 `${TMPDIR:-/tmp}/lebai_dashboard_logs/<id>.log`。
+> - **前提**：启动 Dashboard 的终端已 `source install/setup.bash`，否则子进程找不到 `ros2`/功能包。
 
 ## 五、参数
 
@@ -91,10 +120,17 @@ http://<Jetson-IP>:8080/
   - 数字输出：`{"type":"set_do","pin":0,"value":true}`
   - 模拟输出：`{"type":"set_ao","pin":0,"value":3.3}`
   - 关节运动：`{"type":"move_joint","joint_pose":[0,0,0,0,0,0],"acc":1.0,"vel":1.0}`
+- `GET /api/tasks` → 功能启动任务的状态列表。
+- `POST /api/task` → 启停功能，body：`{"id":"yolo_grab","action":"start"}`（`action` 为 `start`/`stop`）。
+- `GET /api/task_log?id=yolo_grab` → 返回该任务最近的日志（纯文本）。
 
 ```bash
 curl http://localhost:8080/api/status
 curl -X POST http://localhost:8080/api/command -d '{"type":"system","name":"enable"}'
+# 一键启动 YOLO 抓取 / 查看日志 / 停止
+curl -X POST http://localhost:8080/api/task -d '{"id":"yolo_grab","action":"start"}'
+curl "http://localhost:8080/api/task_log?id=yolo_grab"
+curl -X POST http://localhost:8080/api/task -d '{"id":"yolo_grab","action":"stop"}'
 ```
 
 ## 七、说明
