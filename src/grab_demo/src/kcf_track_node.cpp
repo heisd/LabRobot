@@ -186,7 +186,7 @@ private:
         RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
                              "等待可跟踪目标(HSV 未找到色块或初始框无效)");
         if (show_image_ || (publish_debug_image_ && hasDebugSub())) {
-          drawAndPublish(rgb_ptr->image, false, rgb_msg->header);
+          drawAndPublish(rgb_ptr->image, false, -1.0, rgb_msg->header);
         }
         return;
       }
@@ -212,7 +212,7 @@ private:
     double dis = tf_pub_.publish(px, py, depth_ptr->image, this->now());
 
     if (show_image_ || (publish_debug_image_ && hasDebugSub())) {
-      drawAndPublish(rgb_ptr->image, true, rgb_msg->header);
+      drawAndPublish(rgb_ptr->image, true, dis, rgb_msg->header);
     }
 
     if (dis <= 0.0) {
@@ -226,7 +226,8 @@ private:
 
   bool hasDebugSub() { return debug_pub_ && debug_pub_->get_subscription_count() > 0; }
 
-  void drawAndPublish(const cv::Mat &image, bool has_target, const std_msgs::msg::Header &header)
+  void drawAndPublish(const cv::Mat &image, bool has_target, double dis,
+                      const std_msgs::msg::Header &header)
   {
     cv::Mat vis = image.clone();
     if (has_target) {
@@ -234,8 +235,10 @@ private:
       int cxp = bbox_.x + bbox_.width / 2;
       int cyp = bbox_.y + bbox_.height / 2;
       cv::drawMarker(vis, cv::Point(cxp, cyp), cv::Scalar(255, 0, 0), cv::MARKER_CROSS, 20, 2);
-      cv::putText(vis, "KCF tracking", cv::Point(bbox_.x, std::max(0, bbox_.y - 6)),
-                  cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 255), 1);
+      std::string label = "KCF tracking";
+      if (dis > 0.0) label += cv::format("  dis=%.3fm", dis);  // 框上标注距离
+      cv::putText(vis, label, cv::Point(bbox_.x, std::max(0, bbox_.y - 6)),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 255), 2);
     } else {
       cv::putText(vis, "seeking target...", cv::Point(10, 24),
                   cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 200, 255), 2);

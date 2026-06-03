@@ -149,7 +149,7 @@ private:
     if (best_idx < 0) {
       RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000, "未检测到符合阈值的颜色目标");
       if (show_image_ || (publish_debug_image_ && hasDebugSub())) {
-        drawAndPublish(rgb_ptr->image, contours, -1, cv::Point(-1, -1), mask, rgb_msg->header);
+        drawAndPublish(rgb_ptr->image, contours, -1, cv::Point(-1, -1), mask, -1.0, rgb_msg->header);
       }
       return;
     }
@@ -164,7 +164,7 @@ private:
     double dis = tf_pub_.publish(px, py, depth_ptr->image, this->now());
 
     if (show_image_ || (publish_debug_image_ && hasDebugSub())) {
-      drawAndPublish(rgb_ptr->image, contours, best_idx, cv::Point(px, py), mask, rgb_msg->header);
+      drawAndPublish(rgb_ptr->image, contours, best_idx, cv::Point(px, py), mask, dis, rgb_msg->header);
     }
 
     if (dis <= 0.0) {
@@ -177,15 +177,20 @@ private:
 
   bool hasDebugSub() { return debug_pub_ && debug_pub_->get_subscription_count() > 0; }
 
-  // 画轮廓 + 质心十字, 发布到话题, 可选弹窗(与 YOLO/KCF 风格一致)
+  // 画轮廓 + 质心十字 + 距离文字, 发布到话题, 可选弹窗(与 YOLO/KCF 风格一致)
   void drawAndPublish(const cv::Mat &image, const std::vector<std::vector<cv::Point>> &contours,
-                      int best_idx, const cv::Point &center, const cv::Mat &mask,
+                      int best_idx, const cv::Point &center, const cv::Mat &mask, double dis,
                       const std_msgs::msg::Header &header)
   {
     cv::Mat vis = image.clone();
     if (best_idx >= 0) {
       cv::drawContours(vis, contours, best_idx, cv::Scalar(0, 255, 0), 2);
       cv::drawMarker(vis, center, cv::Scalar(255, 0, 0), cv::MARKER_CROSS, 20, 2);
+      if (dis > 0.0) {  // 在质心旁标注距离(米)
+        cv::putText(vis, cv::format("dis=%.3fm", dis),
+                    cv::Point(center.x + 12, center.y - 12),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 255, 255), 2);
+      }
     } else {
       cv::putText(vis, "no target", cv::Point(10, 24),
                   cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 200, 255), 2);

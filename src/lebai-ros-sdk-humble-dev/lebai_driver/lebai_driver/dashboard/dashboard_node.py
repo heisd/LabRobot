@@ -45,6 +45,7 @@ import rclpy
 from rclpy.node import Node
 
 from sensor_msgs.msg import JointState
+from std_msgs.msg import Float32
 from std_srvs.srv import Empty
 from lebai_interfaces.msg import RobotStatus, IOStatus, GripperStatus
 from lebai_interfaces.srv import SetGripper, SetDO, SetAO, MoveJoint, MoveLine
@@ -246,6 +247,7 @@ class DashboardNode(Node):
             "robot_status": (None, 0.0),
             "io_status": (None, 0.0),
             "gripper_status": (None, 0.0),
+            "target_distance": (None, 0.0),
         }
 
         # ---- 订阅状态话题 ----
@@ -257,6 +259,9 @@ class DashboardNode(Node):
                                  lambda m: self._store("io_status", m), 10)
         self.create_subscription(GripperStatus, "/gripper_status",
                                  lambda m: self._store("gripper_status", m), 10)
+        # 目标距离(米), 由当前视觉算法(HSV/YOLO/KCF)经 TargetTFPublisher 发布
+        self.create_subscription(Float32, "/grab_target/distance",
+                                 lambda m: self._store("target_distance", m), 10)
 
         # ---- 服务客户端 ----
         self._sys_clients = {
@@ -359,6 +364,13 @@ class DashboardNode(Node):
                 "flange_din": [bool(b) for b in ios.flange_din],
                 "extend_din": [bool(b) for b in ios.extend_din],
             }
+
+        # 目标距离(米); 视觉算法检测到目标时才会持续刷新, 无目标则很快变 stale
+        td, ok, age = fresh("target_distance")
+        out["online"]["target_distance"] = ok
+        out["age"]["target_distance"] = age
+        if td is not None:
+            out["target_distance"] = round(float(td.data), 3)
 
         out["stamp"] = round(now, 3)
         return out
@@ -603,6 +615,11 @@ INDEX_HTML = """<!DOCTYPE html>
 
 <div id="view-monitor" class="view">
 <div class="wrap">
+  <div class="card" style="grid-column:1 / span 2; text-align:center;">
+    <h2>当前目标距离 (/grab_target/distance)</h2>
+    <div id="distance" style="font-size:34px; font-weight:700; color:#8b9bb0;">—</div>
+    <small>相机到目标的深度(米), 由当前运行的视觉算法(HSV/YOLO/KCF)发布; 无目标时显示 —</small>
+  </div>
   <div class="card">
     <h2>机器人状态</h2>
     <table id="robot"><tr><td class="k">等待 /robot_status ...</td></tr></table>
@@ -752,6 +769,18 @@ async function refresh(){
   document.getElementById('conn').innerHTML =
     '<span class="dot '+(allok?'ok':'bad')+'"></span>' +
     (allok ? '驱动在线' : '等待 robot_state 节点...');
+
+  // 目标距离(大字显示, 无目标/数据过期则显示 —)
+  const distEl = document.getElementById('distance');
+  if (distEl){
+    if (on.target_distance && s.target_distance != null){
+      distEl.textContent = s.target_distance.toFixed(3) + ' m';
+      distEl.style.color = '#3fb950';
+    } else {
+      distEl.textContent = '—';
+      distEl.style.color = '#8b9bb0';
+    }
+  }
 
   // 机器人状态
   if (s.robot){

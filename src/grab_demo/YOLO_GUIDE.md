@@ -13,6 +13,7 @@ HSV 颜色识别 (`hsv_range`)。两者的**相机接口和输出完全一致**�
 | 内参话题 | `/gemini_info` | `/gemini_info` |
 | 输出 TF | `camera_arm_depth_optical_frame` → `target_frame` | 同左 |
 | 反投影 | 针孔模型 + Z 补偿 0.07m | 同左 |
+| 距离 | — | 发布 `/grab_target/distance` (Float32,米) + 叠加到调试图 |
 | 目标点 | 最大轮廓的质心 | 检测框中心(中心邻域深度中值，更稳) |
 | 弹窗 | 会弹 `imshow` 窗口 | **默认不弹**，可选发布调试图像话题 |
 

@@ -14,6 +14,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
+#include <std_msgs/msg/float32.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <opencv2/opencv.hpp>
@@ -29,14 +30,20 @@ namespace grab_demo
 class TargetTFPublisher
 {
 public:
-  // 绑定到节点并设置坐标系与 Z 补偿(与 HSV/YOLO 保持一致, 默认 0.07m)
+  // 绑定到节点并设置坐标系与 Z 补偿(与 HSV/YOLO 保持一致, 默认 0.07m)。
+  // 同时在固定话题 distance_topic(默认 /grab_target/distance)发布目标距离(米),
+  // 供 Dashboard 等订阅显示; 传空字符串可关闭距离发布。
   void setup(rclcpp::Node *node, const std::string &camera_frame,
-             const std::string &target_frame, double z_offset)
+             const std::string &target_frame, double z_offset,
+             const std::string &distance_topic = "/grab_target/distance")
   {
     camera_frame_ = camera_frame;
     target_frame_ = target_frame;
     z_offset_ = z_offset;
     tf_pub_ = std::make_shared<tf2_ros::TransformBroadcaster>(node);
+    if (!distance_topic.empty()) {
+      dist_pub_ = node->create_publisher<std_msgs::msg::Float32>(distance_topic, 10);
+    }
   }
 
   // 从 CameraInfo 设置相机内参(与 HSV/YOLO 同样的校验: K 非零才生效)
@@ -96,11 +103,19 @@ public:
     tf.transform.translation.z = z;
     tf.transform.rotation.w = 1.0;  // 仅给位置, 姿态由抓取服务决定
     tf_pub_->sendTransform(tf);
+
+    // 同步把距离(米)发到话题, 供 Dashboard 显示
+    if (dist_pub_) {
+      std_msgs::msg::Float32 dmsg;
+      dmsg.data = static_cast<float>(dis);
+      dist_pub_->publish(dmsg);
+    }
     return dis;
   }
 
 private:
   std::shared_ptr<tf2_ros::TransformBroadcaster> tf_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr dist_pub_;
   std::string camera_frame_, target_frame_;
   double z_offset_ = 0.07;
   double fx_ = 0, fy_ = 0, cx_ = 0, cy_ = 0;

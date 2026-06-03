@@ -23,6 +23,7 @@
 | 内参话题 | `/gemini_info` |
 | 输出 TF | `camera_arm_depth_optical_frame → target_frame` |
 | 反投影 | 针孔模型 + Z 补偿 0.07m |
+| 距离 | 发布到 `/grab_target/distance` (std_msgs/Float32, 米)，并叠加到调试图 `dis=…m` |
 
 三种算法都通过共享的 **`grab_demo::TargetTFPublisher`**（`include/grab_demo/target_tf_publisher.hpp`）
 把"目标像素中心"统一转换成 `target_frame`，所以 `grab_service_node` 对 HSV/YOLO/KCF 一视同仁，无需改动。

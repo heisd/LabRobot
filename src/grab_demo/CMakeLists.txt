@@ -94,6 +94,7 @@ add_executable(hsv_range src/hsv_range.cpp)
 ament_target_dependencies(hsv_range
   rclcpp
   sensor_msgs
+  std_msgs
   cv_bridge
   OpenCV
   message_filters
@@ -232,6 +233,7 @@ if(CUDA_FOUND AND TENSORRT_INCLUDE_DIR AND TENSORRT_NVINFER)
   ament_target_dependencies(yolo_detect_node
     rclcpp
     sensor_msgs
+    std_msgs
     cv_bridge
     OpenCV
     message_filters
@@ -272,6 +274,7 @@ if(OPENCV_TRACKING_HEADER)
     rclcpp
     sensor_msgs
     std_srvs
+    std_msgs
     cv_bridge
     OpenCV
     message_filters

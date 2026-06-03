@@ -621,12 +621,12 @@ private:
       }
     }
 
-    // ---- 可视化(可选, 默认关闭) ----
-    if (show_image_ || (publish_debug_image_ && debug_pub_->get_subscription_count() > 0)) {
-      drawAndPublish(rgb_ptr->image, dets, target, rgb_msg->header);
-    }
+    // ---- 可视化决策(默认关闭) ----
+    bool want_vis = show_image_ ||
+                    (publish_debug_image_ && debug_pub_->get_subscription_count() > 0);
 
     if (!target) {
+      if (want_vis) drawAndPublish(rgb_ptr->image, dets, nullptr, -1.0, rgb_msg->header);
       RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000, "未检测到目标物体");
       return;
     }
@@ -635,6 +635,10 @@ private:
     int px = target->box.x + target->box.width / 2;
     int py = target->box.y + target->box.height / 2;
     double dis = tf_publisher_.publish(px, py, depth_ptr->image, this->now());
+
+    // 距离已知后再画(把距离叠加到图上)
+    if (want_vis) drawAndPublish(rgb_ptr->image, dets, target, dis, rgb_msg->header);
+
     if (dis <= 0.0) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
                            "目标 [%s] 中心深度无效, 跳过本帧",
@@ -662,9 +666,9 @@ private:
     return "id_" + std::to_string(id);
   }
 
-  // 画检测框, 发布到话题, 可选弹窗
+  // 画检测框 + 目标距离, 发布到话题, 可选弹窗
   void drawAndPublish(const cv::Mat &image, const std::vector<Detection> &dets,
-                      const Detection *target, const std_msgs::msg::Header &header)
+                      const Detection *target, double dis, const std_msgs::msg::Header &header)
   {
     cv::Mat vis = image.clone();
     for (const auto &d : dets) {
@@ -679,6 +683,11 @@ private:
       int cxp = target->box.x + target->box.width / 2;
       int cyp = target->box.y + target->box.height / 2;
       cv::drawMarker(vis, cv::Point(cxp, cyp), cv::Scalar(255, 0, 0), cv::MARKER_CROSS, 20, 2);
+      if (dis > 0.0) {  // 在目标下方标注距离(米)
+        cv::putText(vis, cv::format("dis=%.3fm", dis),
+                    cv::Point(target->box.x, target->box.y + target->box.height + 18),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 255, 255), 2);
+      }
     }
 
     if (publish_debug_image_ && debug_pub_) {
