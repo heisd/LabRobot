@@ -1,0 +1,104 @@
+# 乐白机械臂 Web Dashboard 使用说明
+
+`dashboard` 节点是一个网页版机械臂控制面板，**完全对齐 SDK 暴露的 ROS2 接口**：
+订阅 `robot_state` 的状态话题做显示，按钮调用 `system_service` / `io_service` /
+`motion_service` 的服务。
+
+- 仅用 Python 标准库 `http.server`，**无额外 pip 依赖**，适合 Jetson。
+- 纯网页形式，**不弹任何本地窗口**（headless 安全），从笔记本浏览器远程访问即可。
+
+## 一、对齐的接口
+
+| 类别 | 接口 | 用途 |
+|------|------|------|
+| 订阅 | `/joint_states` (sensor_msgs/JointState) | 关节角度/速度显示 |
+| 订阅 | `/robot_status` (lebai_interfaces/RobotStatus) | 急停/上电/可运动/运动中/错误/模式 |
+| 订阅 | `/io_status` (lebai_interfaces/IOStatus) | 数字/模拟 IO 显示 |
+| 订阅 | `/gripper_status` (lebai_interfaces/GripperStatus) | 夹爪位置/力度 |
+| 系统服务 | `/system_service/{power_on,power_off,enable,disable,pause_motion,resume_motion,abort_motion,entry_teach_mode,exit_teach_mode,emergency_stop,turn_off_robot}` (std_srvs/Empty) | 系统级控制按钮 |
+| IO 服务 | `/io_service/set_gripper_position`、`/io_service/set_gripper_force` (SetGripper) | 夹爪控制 |
+| IO 服务 | `/io_service/set_robot_do` (SetDO)、`/io_service/set_robot_ao` (SetAO) | 数字/模拟输出 |
+| 运动服务 | `/motion_service/move_joint` (MoveJoint) | 关节运动（会真实移动机械臂） |
+
+> 命令命名空间都做成了参数（`system_service_ns` / `io_service_ns` / `motion_service_ns`），
+> 默认 `/system_service`、`/io_service`、`/motion_service`，和驱动节点名一致。
+
+## 二、编译
+
+```bash
+cd ~/lebai
+colcon build --packages-select lebai_driver
+source install/setup.bash
+```
+
+## 三、运行
+
+Dashboard 本身不直接连机器人，它调用的是驱动各节点的服务，所以**先启动驱动**：
+
+```bash
+ros2 launch lebai_driver robot_state.launch.py
+ros2 launch lebai_driver io_service.launch.py
+ros2 launch lebai_driver system_service.launch.py
+ros2 launch lebai_driver motion.launch.py        # 需要关节运动时
+```
+
+再启动 Dashboard：
+
+```bash
+ros2 launch lebai_driver dashboard.launch.py            # 默认端口 8080
+# 或自定义端口
+ros2 launch lebai_driver dashboard.launch.py http_port:=9000
+# 或直接 run
+ros2 run lebai_driver dashboard --ros-args -p http_port:=8080
+```
+
+然后在浏览器打开（Jetson 本机或局域网其它电脑）：
+
+```
+http://<Jetson-IP>:8080/
+```
+
+## 四、界面功能
+
+- **机器人状态**：急停 / 上电 / 可运动 / 运动中 / 错误 / 错误码 / 模式（每 0.5s 刷新）。
+- **夹爪状态**：当前位置、力度。
+- **IO 状态**：机器人 DI/DO、AI、法兰 DI、扩展 DI。
+- **关节状态**：各关节角度（rad 和 °）、速度。
+- **系统控制**：上电/断电/使能/去使能/暂停/恢复/中止/进入退出示教/急停/关机。
+  危险操作（断电、急停、去使能、关机）会弹二次确认。
+- **夹爪控制**：设置位置（0 闭合 ~ 100 张开）、设置力度。
+- **数字输出 DO**：指定引脚置 ON/OFF。
+- **关节运动**：填 6 个关节角（rad）+ acc/vel，点"执行"做 move_joint；
+  "填入当前关节角"会把实时关节角填进输入框。**此操作会真实移动机械臂，有二次确认。**
+
+## 五、参数
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `http_host` | `0.0.0.0` | 监听地址，`0.0.0.0` 允许局域网访问 |
+| `http_port` | `8080` | 网页端口 |
+| `system_service_ns` | `/system_service` | 系统服务命名空间 |
+| `io_service_ns` | `/io_service` | IO 服务命名空间 |
+| `motion_service_ns` | `/motion_service` | 运动服务命名空间 |
+
+## 六、HTTP API（也可脚本调用）
+
+- `GET /api/status` → 返回当前状态 JSON。
+- `POST /api/command` → 执行命令，body 示例：
+  - 系统：`{"type":"system","name":"power_on"}`
+  - 夹爪位置：`{"type":"gripper_position","val":100}`
+  - 夹爪力度：`{"type":"gripper_force","val":50}`
+  - 数字输出：`{"type":"set_do","pin":0,"value":true}`
+  - 模拟输出：`{"type":"set_ao","pin":0,"value":3.3}`
+  - 关节运动：`{"type":"move_joint","joint_pose":[0,0,0,0,0,0],"acc":1.0,"vel":1.0}`
+
+```bash
+curl http://localhost:8080/api/status
+curl -X POST http://localhost:8080/api/command -d '{"type":"system","name":"enable"}'
+```
+
+## 七、说明
+
+- 命令均为非阻塞下发（`call_async`），按钮点完即返回"已发送"，实际结果以状态面板为准。
+- 若某服务未就绪，会提示"服务未就绪（对应节点是否已启动？）"。
+- 节点退出（Ctrl+C）时会自动关闭 HTTP 服务。

@@ -31,6 +31,7 @@ setup(
             'io_service = lebai_driver.io_service.io_service_node:main',
             'system_service = lebai_driver.system_service.system_service_node:main',
             'motion = lebai_driver.motion.motion_node:main',
+            'dashboard = lebai_driver.dashboard.dashboard_node:main',
         ],
     },
 )
