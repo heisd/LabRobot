@@ -65,6 +65,40 @@ ros2 topic echo /joint_states          # 关节状态
   `lebai_lm3_moveit_config` 的 `lm3_controllers.yaml` 一致，因此 `move_group`
   可直接驱动仿真机械臂（启动 move_group 时不要再起真机 `robot_interface`）。
 
+### 一键端到端抓取（gazebo_grab.launch.py）
+
+把 Gazebo + 相机 + MoveIt + HSV 视觉 + 抓取服务串成一条链路：
+
+```bash
+ros2 launch lebai_gazebo gazebo_grab.launch.py
+```
+
+它做了：
+- 复用 `gazebo.launch.py`（场景 + 机械臂 + 控制器 + 相机）；
+- `move_group`（仿真参数，`use_sim_time`，控制器 `lebai_trajectory_controller`）；
+- `world→base_link` 恒等静态 TF（grab_service 以 base_link 为参考系）；
+- HSV 视觉节点（默认红色阈值正好识别桌上的**可乐罐**，内参指向仿真相机 `/camera_arm/color/camera_info`）；
+- `grab_service_node`。
+
+触发抓取（识别到目标后，target_frame 已在发布）：
+
+```bash
+ros2 service call /obj_grab_service grab_demo/srv/GrabObject "{obj_link: 'target_frame'}"
+```
+
+> 也可在 Dashboard "仿真"页点【Gazebo 端到端抓取 (HSV+MoveIt)】启动，再到"监控"页看目标距离。
+
+### 端到端首次跑可能要调的地方（除第六节外）
+
+- **控制器 action 命名**：`lm3_controllers.yaml` 里 `action_ns: ""` 是给真机轨迹动作服务器用的；
+  ros2_control 的 `joint_trajectory_controller` 动作在
+  `/lebai_trajectory_controller/follow_joint_trajectory`。若 MoveIt 执行时报找不到 action，
+  把 MoveIt 控制器配置的 `action_ns` 改成 `follow_joint_trajectory`。
+- **base_link 与机械臂基座**：仿真里 `base_link`(=world 原点) 与 `lebai_base_link`(桌面 z=1.015) 通过
+  world 关联；若抓取目标位姿明显偏移，检查 `world_to_base` 的 z 和 `world→base_link` 是否一致。
+- **相机帧**：vision 用 `camera_arm_depth_optical_frame`（由 gazebo 相机插件 + xacro 的光学关节提供），
+  与真机的 `camera_link`/手眼标定不同，纯仿真用这套即可。
+
 ## 六、需要微调的地方（首次运行重点检查）
 
 1. **相机安装位姿**：`lm3_gazebo.xacro` 里 `tool0_to_camera` 的 `origin` 是估计值，

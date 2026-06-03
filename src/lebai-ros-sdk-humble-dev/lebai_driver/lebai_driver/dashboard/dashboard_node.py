@@ -122,6 +122,9 @@ LAUNCH_TASKS = [
     {"id": "sim_gazebo", "label": "Gazebo 仿真场景 + 机械臂", "group": "仿真",
      "cmd": ["ros2", "launch", "lebai_gazebo", "gazebo.launch.py"],
      "resources": ["sim"]},
+    {"id": "sim_grab", "label": "Gazebo 端到端抓取 (HSV+MoveIt)", "group": "仿真",
+     "cmd": ["ros2", "launch", "lebai_gazebo", "gazebo_grab.launch.py"],
+     "resources": ["sim"]},
 ]
 
 TASKS_BY_ID = {t["id"]: t for t in LAUNCH_TASKS}

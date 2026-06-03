@@ -17,9 +17,10 @@
   <!-- 世界根 -->
   <link name="world"/>
 
-  <!-- 复用已有机械臂宏(前缀 lebai_, 与 SRDF/MoveIt 命名一致) -->
+  <!-- 复用已有机械臂宏。注意: lm3_macro.xacro 末尾已经自带
+       <xacro:lebai_lm3 prefix="lebai_"/> 的实例化, 这里只 include, 不要再实例化,
+       否则链接/关节重名报错。 -->
   <xacro:include filename="$(find lebai_lm3_support)/urdf/lm3_macro.xacro"/>
-  <xacro:lebai_lm3 prefix="lebai_"/>
 
   <!-- 底座固定到世界, 抬到桌面高度(与 world 文件里的桌子一致) -->
   <joint name="world_to_base" type="fixed">
