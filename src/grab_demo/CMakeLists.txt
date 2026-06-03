@@ -38,6 +38,7 @@ find_package(PCL REQUIRED)
 find_package(pcl_conversions REQUIRED)  # 添加这一行
 find_package(pcl_ros REQUIRED)          # 添加这一行
 find_package(lebai_interfaces REQUIRED)
+find_package(std_srvs REQUIRED)
 
 moveit_package()
 find_package(moveit_ros_planning_interface REQUIRED)
@@ -93,6 +94,7 @@ add_executable(hsv_range src/hsv_range.cpp)
 ament_target_dependencies(hsv_range
   rclcpp
   sensor_msgs
+  std_msgs
   cv_bridge
   OpenCV
   message_filters
@@ -208,6 +210,86 @@ install(TARGETS camera_info_node
 
 
 
+
+# ---------------------------------------------------------------------------
+# YOLO TensorRT 检测节点 (可选)
+# 仅在能找到 CUDA + TensorRT 的环境(通常是 Jetson)上编译, 否则自动跳过,
+# 不会影响其它节点的正常构建。
+# ---------------------------------------------------------------------------
+find_package(CUDA QUIET)
+find_path(TENSORRT_INCLUDE_DIR NvInfer.h
+  HINTS /usr/include/aarch64-linux-gnu /usr/include/x86_64-linux-gnu
+        /usr/include /usr/local/tensorrt/include /usr/local/TensorRT/include)
+find_library(TENSORRT_NVINFER nvinfer
+  HINTS /usr/lib/aarch64-linux-gnu /usr/lib/x86_64-linux-gnu
+        /usr/local/tensorrt/lib /usr/local/TensorRT/lib)
+find_library(TENSORRT_ONNXPARSER nvonnxparser
+  HINTS /usr/lib/aarch64-linux-gnu /usr/lib/x86_64-linux-gnu
+        /usr/local/tensorrt/lib /usr/local/TensorRT/lib)
+
+if(CUDA_FOUND AND TENSORRT_INCLUDE_DIR AND TENSORRT_NVINFER)
+  message(STATUS "找到 CUDA 与 TensorRT, 编译 yolo_detect_node")
+  add_executable(yolo_detect_node src/yolo_detect_node.cpp)
+  ament_target_dependencies(yolo_detect_node
+    rclcpp
+    sensor_msgs
+    std_msgs
+    cv_bridge
+    OpenCV
+    message_filters
+    geometry_msgs
+    tf2_ros
+    tf2_geometry_msgs
+  )
+  target_include_directories(yolo_detect_node PRIVATE
+    ${TENSORRT_INCLUDE_DIR} ${CUDA_INCLUDE_DIRS})
+  target_link_libraries(yolo_detect_node
+    ${TENSORRT_NVINFER} ${CUDA_LIBRARIES})
+  # 本节点使用 std::clamp 等 C++17 特性, 单独为该 target 指定 C++17
+  # (不影响包内其它使用 C++11 的目标)
+  target_compile_features(yolo_detect_node PRIVATE cxx_std_17)
+  # 找到 onnx 解析器时, 允许节点在运行时直接从 .onnx 构建 engine
+  if(TENSORRT_ONNXPARSER)
+    target_link_libraries(yolo_detect_node ${TENSORRT_ONNXPARSER})
+    target_compile_definitions(yolo_detect_node PRIVATE HAVE_ONNX_PARSER=1)
+  endif()
+  install(TARGETS yolo_detect_node
+    DESTINATION lib/${PROJECT_NAME})
+else()
+  message(WARNING "未找到 CUDA 或 TensorRT, 跳过 yolo_detect_node 的编译 (仅 Jetson/带GPU环境需要)")
+endif()
+
+# ---------------------------------------------------------------------------
+# KCF 跟踪节点 (可选)
+# 需要 opencv_contrib 的 tracking 模块(提供 cv::TrackerKCF, opencv2/tracking.hpp)。
+# 找不到该模块时自动跳过编译, 不影响其它节点。
+# ---------------------------------------------------------------------------
+find_path(OPENCV_TRACKING_HEADER opencv2/tracking.hpp
+  HINTS ${OpenCV_INCLUDE_DIRS} /usr/include/opencv4 /usr/local/include/opencv4
+        /usr/include /usr/local/include)
+if(OPENCV_TRACKING_HEADER)
+  message(STATUS "找到 OpenCV tracking 模块, 编译 kcf_track_node")
+  add_executable(kcf_track_node src/kcf_track_node.cpp)
+  ament_target_dependencies(kcf_track_node
+    rclcpp
+    sensor_msgs
+    std_srvs
+    std_msgs
+    cv_bridge
+    OpenCV
+    message_filters
+    geometry_msgs
+    tf2_ros
+    tf2_geometry_msgs
+  )
+  install(TARGETS kcf_track_node
+    DESTINATION lib/${PROJECT_NAME})
+else()
+  message(WARNING "未找到 OpenCV tracking 模块(opencv_contrib), 跳过 kcf_track_node 的编译")
+endif()
+
+# VLM(视觉语言模型)抓取节点 —— 纯 Python, 用 ros2 run grab_demo vlm_grab_node.py 运行
+install(PROGRAMS scripts/vlm_grab_node.py DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 if(BUILD_TESTING)
