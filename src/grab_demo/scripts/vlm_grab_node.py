@@ -21,6 +21,7 @@ VLM 接口支持两种(provider 参数):
 
 import base64
 import json
+import math
 import os
 import threading
 import urllib.request
@@ -32,7 +33,7 @@ import rclpy
 from rclpy.node import Node
 
 from sensor_msgs.msg import Image, CameraInfo
-from std_msgs.msg import String, Float32
+from std_msgs.msg import String, Float32, Bool
 from geometry_msgs.msg import TransformStamped
 from tf2_ros import TransformBroadcaster
 import message_filters
@@ -90,6 +91,14 @@ class VlmGrabNode(Node):
         self.instruction_topic = self.declare_parameter("instruction_topic", "/vlm/instruction").value
         self.result_topic = self.declare_parameter("result_topic", "/vlm/result").value
         self.distance_topic = self.declare_parameter("distance_topic", "/grab_target/distance").value
+        self.confirm_topic = self.declare_parameter("confirm_topic", "/vlm/confirm").value
+
+        # ---- 安全加固参数 ----
+        self.max_instruction_len = int(self.declare_parameter("max_instruction_len", 200).value)
+        self.min_dist = float(self.declare_parameter("min_dist", 0.1).value)   # 允许的最近距离(m)
+        self.max_dist = float(self.declare_parameter("max_dist", 1.5).value)   # 允许的最远距离(m)
+        self.require_confirm = bool(self.declare_parameter("require_confirm", True).value)
+        self.force_json = bool(self.declare_parameter("force_json", True).value)  # openai 强制 JSON 输出
 
         if CvBridge is None:
             self.get_logger().fatal("缺少 cv_bridge, 无法运行 VLM 节点")
@@ -104,6 +113,7 @@ class VlmGrabNode(Node):
         self._intrinsics_ready = False
         self._target = None     # (x, y, z) 相机系下目标点; None 表示无目标
         self._busy = False
+        self._pending_grab = False  # 已理解到目标, 等待 Dashboard 确认抓取
 
         # ---- 订阅 ----
         self.create_subscription(CameraInfo, self.info_topic, self._info_cb, 1)
@@ -112,6 +122,8 @@ class VlmGrabNode(Node):
         self._sync = message_filters.ApproximateTimeSynchronizer([rgb_sub, depth_sub], 10, 0.3)
         self._sync.registerCallback(self._image_cb)
         self.create_subscription(String, self.instruction_topic, self._instruction_cb, 10)
+        # 抓取确认(安全加固): True=确认抓取, False=取消
+        self.create_subscription(Bool, self.confirm_topic, self._confirm_cb, 10)
 
         # ---- 发布 ----
         self.result_pub = self.create_publisher(String, self.result_topic, 10)
@@ -162,11 +174,28 @@ class VlmGrabNode(Node):
         text = (msg.data or "").strip()
         if not text:
             return
+        # 安全加固: 限制指令长度
+        if len(text) > self.max_instruction_len:
+            text = text[:self.max_instruction_len]
+            self._publish_result("(指令过长, 已截断到 %d 字)" % self.max_instruction_len)
         if self._busy:
             self._publish_result("⏳ 正在处理上一条指令, 请稍候...")
             return
         # 在线程里调用 VLM(网络阻塞), 不卡住 ROS 执行器
         threading.Thread(target=self._process, args=(text,), daemon=True).start()
+
+    def _confirm_cb(self, msg: Bool):
+        # 安全加固: 抓取需 Dashboard 二次确认
+        if msg.data:
+            if self._pending_grab and self._target is not None:
+                self._pending_grab = False
+                self._publish_result("👍 已确认, 开始抓取")
+                self._call_grab()
+            else:
+                self._publish_result("(当前没有待确认的抓取)")
+        else:
+            self._pending_grab = False
+            self._publish_result("已取消本次抓取")
 
     # ------------------------------------------------------------------
     # 主流程
@@ -196,29 +225,39 @@ class VlmGrabNode(Node):
                 self._publish_result("🚫 未找到合适物体: %s" % ans.get("reason", ""))
                 return
 
-            box = self._parse_box(ans, rgb.shape[1], rgb.shape[0])
+            img_w, img_h = rgb.shape[1], rgb.shape[0]
+            box = self._parse_box(ans, img_w, img_h)
             if box is None:
                 self._publish_result("❌ VLM 返回的框无法解析: %s" % json.dumps(ans, ensure_ascii=False))
                 return
             x, y, w, h = box
-            px, py = int(x + w / 2), int(y + h / 2)
-
-            dis = self._set_target(px, py, depth)
+            # 安全加固: 框中心像素裁剪到图像范围内
+            px = int(min(max(x + w / 2.0, 0), img_w - 1))
+            py = int(min(max(y + h / 2.0, 0), img_h - 1))
             label = ans.get("label", "目标")
             reason = ans.get("reason", "")
-            if self.publish_debug_image:
-                self._publish_debug(rgb, box, label, dis)
 
-            if dis <= 0:
-                self._publish_result("⚠ 已识别 [%s] 但中心深度无效, 无法定位" % label)
+            # 安全加固: 计算并校验目标(深度有效 + 距离在允许范围 + 坐标有限)
+            ok, dis, why = self._compute_target(px, py, depth)
+            if self.publish_debug_image:
+                self._publish_debug(rgb, box, label, dis if ok else -1.0)
+            if not ok:
+                self._target = None
+                self._publish_result("⚠ 已识别 [%s] 但无法定位: %s" % (label, why))
                 return
 
-            msg = "✅ 理解为 [%s] (%s), 距离 %.3fm" % (label, reason, dis)
-            self.get_logger().info(msg)
-            self._publish_result(msg)
+            base = "✅ 理解为 [%s] (%s), 距离 %.3fm" % (label, reason, dis)
+            self.get_logger().info(base)
 
-            if self.auto_grab:
+            # 安全加固: 自动抓取前二次确认
+            if self.auto_grab and self.require_confirm:
+                self._pending_grab = True
+                self._publish_result(base + "  → 请在 Dashboard 点【确认抓取】执行")
+            elif self.auto_grab:
+                self._publish_result(base + "  → 自动抓取中")
                 self._call_grab()
+            else:
+                self._publish_result(base)
         except Exception as e:  # noqa: BLE001
             self.get_logger().error("VLM 处理异常: %s" % e)
             self._publish_result("❌ 处理异常: %s" % e)
@@ -276,6 +315,9 @@ class VlmGrabNode(Node):
                 ],
             }],
         }
+        # 安全加固: 让 API 层强制返回合法 JSON(本地服务若不支持可设 force_json:=false)
+        if self.force_json:
+            body["response_format"] = {"type": "json_object"}
         resp = self._post(url, headers, body)
         return resp["choices"][0]["message"]["content"]
 
@@ -314,18 +356,32 @@ class VlmGrabNode(Node):
             return None
 
     @staticmethod
-    def _parse_box(ans, img_w, img_h):
+    def _clamp_box(x, y, w, h, img_w, img_h):
+        # 安全加固: 数值有限性 + 裁剪到图像内
+        if not all(math.isfinite(v) for v in (x, y, w, h)):
+            return None
+        x = min(max(x, 0.0), img_w - 1.0)
+        y = min(max(y, 0.0), img_h - 1.0)
+        w = min(max(w, 1.0), img_w - x)
+        h = min(max(h, 1.0), img_h - y)
+        return [x, y, w, h]
+
+    @classmethod
+    def _parse_box(cls, ans, img_w, img_h):
         # 支持 bbox=[x,y,w,h]; 兼容归一化(0~1)坐标; 或 point=[x,y]
-        if "bbox" in ans and isinstance(ans["bbox"], (list, tuple)) and len(ans["bbox"]) == 4:
-            x, y, w, h = [float(v) for v in ans["bbox"]]
-            if max(x, y, w, h) <= 1.5:  # 归一化
-                x, y, w, h = x * img_w, y * img_h, w * img_w, h * img_h
-            return [x, y, max(w, 1.0), max(h, 1.0)]
-        if "point" in ans and isinstance(ans["point"], (list, tuple)) and len(ans["point"]) == 2:
-            x, y = [float(v) for v in ans["point"]]
-            if max(x, y) <= 1.5:
-                x, y = x * img_w, y * img_h
-            return [x - 20, y - 20, 40, 40]  # 给个小框
+        try:
+            if "bbox" in ans and isinstance(ans["bbox"], (list, tuple)) and len(ans["bbox"]) == 4:
+                x, y, w, h = [float(v) for v in ans["bbox"]]
+                if max(x, y, w, h) <= 1.5:  # 归一化坐标 -> 像素
+                    x, y, w, h = x * img_w, y * img_h, w * img_w, h * img_h
+                return cls._clamp_box(x, y, w, h, img_w, img_h)
+            if "point" in ans and isinstance(ans["point"], (list, tuple)) and len(ans["point"]) == 2:
+                x, y = [float(v) for v in ans["point"]]
+                if max(x, y) <= 1.5:
+                    x, y = x * img_w, y * img_h
+                return cls._clamp_box(x - 20, y - 20, 40, 40, img_w, img_h)
+        except (TypeError, ValueError):
+            return None
         return None
 
     # ------------------------------------------------------------------
@@ -341,16 +397,21 @@ class VlmGrabNode(Node):
             return 0.0
         return float(np.median(vals)) / 1000.0  # mm -> m
 
-    def _set_target(self, px, py, depth):
+    def _compute_target(self, px, py, depth):
+        """计算并(若合法)设置目标点。返回 (ok, dis, reason)。安全加固集中在这里。"""
         dis = self._median_depth(depth, px, py, 5)
         if dis <= 0:
-            self._target = None
-            return 0.0
+            return False, 0.0, "中心深度无效(可能是无效深度区域)"
+        if not (self.min_dist <= dis <= self.max_dist):
+            return False, dis, "距离 %.3fm 超出允许范围 [%.2f, %.2f]m" % (
+                dis, self.min_dist, self.max_dist)
         x = (px - self._cx) / self._fx * dis
         y = (py - self._cy) / self._fy * dis
         z = dis + self.z_offset
+        if not all(math.isfinite(v) for v in (x, y, z)):
+            return False, dis, "投影坐标非法(NaN/Inf)"
         self._target = (x, y, z)
-        return dis
+        return True, dis, ""
 
     def _publish_target(self):
         if self._target is None:

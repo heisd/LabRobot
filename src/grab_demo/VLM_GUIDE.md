@@ -93,7 +93,11 @@ ros2 run rqt_image_view rqt_image_view /vlm_node/vlm_image   # 看框选可视�
 | `model` | `gpt-4o-mini` | 模型名 |
 | `api_key_env` | `""` | 自定义 Key 的环境变量名；留空按 provider 取默认 |
 | `request_timeout` | `30` | VLM 请求超时(秒) |
-| `auto_grab` | `true` | 理解到目标后是否自动调用抓取服务 |
+| `auto_grab` | `true` | 理解到目标后是否调用抓取服务 |
+| `require_confirm` | `true` | **安全**: 抓取前需在 Dashboard 点【确认抓取】才执行 |
+| `min_dist` / `max_dist` | `0.1` / `1.5` | **安全**: 目标距离允许范围(m), 超出则拒绝并报告 |
+| `max_instruction_len` | `200` | **安全**: 指令长度上限(超出截断) |
+| `force_json` | `true` | **安全**: openai 用 `response_format=json_object` 强制合法 JSON; 本地服务不支持时设 `false` |
 | `grab_service` | `/obj_grab_service` | 抓取服务名 |
 | `rgb_topic`/`depth_topic`/`camera_info_topic` | 同 HSV/YOLO/KCF | 相机话题 |
 | `camera_frame`/`target_frame`/`z_offset` | 同其它 | 坐标系与 Z 补偿 |
@@ -104,7 +108,17 @@ ros2 run rqt_image_view rqt_image_view /vlm_node/vlm_image   # 看框选可视�
 
 - VLM 调用在独立线程里进行（网络阻塞不卡 ROS）；同一时刻只处理一条指令，处理中再发会提示稍候。
 - 目标点确定后，节点以 15Hz **持续广播** `target_frame`，确保抓取服务能稳定查到 TF。
-- VLM 给的像素框不一定精确；本节点对归一化坐标、`point` 点位都做了兼容解析。
-- `auto_grab=true` 会让机械臂真实运动，请在安全环境下使用；不想自动抓可设 `auto_grab:=false`，
-  只发布 `target_frame`，再用别的方式触发抓取。
-- 需要联网（云端）或本地 VLM 服务可达；网络/服务异常时结果会回 `❌ VLM 调用失败`。
+
+### 安全加固（已内置）
+
+1. **输入约束**：指令超 `max_instruction_len` 自动截断；图像编码失败直接返回。
+2. **强制 JSON**：openai 走 `response_format=json_object`，API 层就约束成合法 JSON。
+3. **框裁剪**：VLM 返回的 bbox/point 会做有限性检查（NaN/Inf 拒绝）并**裁剪到图像范围内**，
+   越界坐标不会再进入针孔投影（修复了"越界中心→离谱 3D 点"的问题）。
+4. **合理性校验**：目标距离必须在 `[min_dist, max_dist]`、投影坐标必须有限，否则**拒绝并报告**，
+   不广播 `target_frame`。
+5. **抓取二次确认**：`require_confirm=true`（默认）时，节点理解到目标后**不会立刻动机械臂**，
+   而是等 Dashboard 点【确认抓取】(发 `/vlm/confirm` True)才执行；点【取消】则放弃。
+
+> 想全自动（不确认）：设 `require_confirm:=false`。只定位不抓：设 `auto_grab:=false`。
+> 网络/服务异常时结果会回 `❌ VLM 调用失败`。

@@ -75,10 +75,16 @@ def generate_launch_description():
             "api_base": "https://api.openai.com/v1",
             "model": "gpt-4o-mini",
             # api key 从环境变量读取(OPENAI_API_KEY / ANTHROPIC_API_KEY)
-            "auto_grab": True,           # 理解到目标后自动调用抓取服务
+            "auto_grab": True,           # 理解到目标后是否调用抓取服务
+            "require_confirm": True,     # 安全: 抓取前需 Dashboard 二次确认
+            "min_dist": 0.1,            # 安全: 允许的最近/最远距离(m)
+            "max_dist": 1.5,
+            "max_instruction_len": 200,  # 安全: 指令长度上限
+            "force_json": True,          # 安全: openai 强制 JSON 输出(本地服务不支持则设 False)
             "grab_service": "/obj_grab_service",
             "instruction_topic": "/vlm/instruction",
             "result_topic": "/vlm/result",
+            "confirm_topic": "/vlm/confirm",
             "publish_debug_image": True,
         }]
     )

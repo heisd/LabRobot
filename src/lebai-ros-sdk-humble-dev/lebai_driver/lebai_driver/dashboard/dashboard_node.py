@@ -45,7 +45,7 @@ import rclpy
 from rclpy.node import Node
 
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Float32, String
+from std_msgs.msg import Float32, String, Bool
 from std_srvs.srv import Empty
 from lebai_interfaces.msg import RobotStatus, IOStatus, GripperStatus
 from lebai_interfaces.srv import SetGripper, SetDO, SetAO, MoveJoint, MoveLine
@@ -268,6 +268,7 @@ class DashboardNode(Node):
                                  lambda m: self._store("target_distance", m), 10)
         # VLM 自然语言抓取: 发送指令 + 接收结果
         self._vlm_pub = self.create_publisher(String, "/vlm/instruction", 10)
+        self._vlm_confirm_pub = self.create_publisher(Bool, "/vlm/confirm", 10)
         self.create_subscription(String, "/vlm/result",
                                  lambda m: self._store("vlm_result", m), 10)
 
@@ -409,6 +410,8 @@ class DashboardNode(Node):
                 return self._call_move_joint(payload)
             if cmd == "vlm":
                 return self._send_vlm(payload)
+            if cmd == "vlm_confirm":
+                return self._send_vlm_confirm(payload)
             return False, f"未知命令类型: {cmd}"
         except Exception as e:  # noqa: BLE001 - 网页错误需返回给前端
             self.get_logger().error(f"命令执行异常: {e}")
@@ -480,6 +483,13 @@ class DashboardNode(Node):
         msg.data = text
         self._vlm_pub.publish(msg)
         return True, f"已发送 VLM 指令: {text}"
+
+    def _send_vlm_confirm(self, payload):
+        ok = bool(payload.get("confirm", False))
+        msg = Bool()
+        msg.data = ok
+        self._vlm_confirm_pub.publish(msg)
+        return True, ("已确认抓取" if ok else "已取消抓取")
 
     def _call_move_joint(self, payload):
         if not self._ready(self._cli_move_joint, "move_joint"):
@@ -648,15 +658,17 @@ INDEX_HTML = """<!DOCTYPE html>
   <div class="card" style="grid-column:1 / span 2;">
     <h2>VLM 自然语言抓取</h2>
     <div class="row">
-      <input id="vlmtext" type="text" style="width:60%;"
+      <input id="vlmtext" type="text" style="width:50%;"
              placeholder="例如: 把红色的瓶子递给我 / 我渴了 / 拿起最大的物体"
              onkeydown="if(event.key==='Enter')sendVlm()"/>
       <button onclick="sendVlm()">发送指令</button>
+      <button onclick="confirmVlm(true)">确认抓取</button>
+      <button class="danger" onclick="confirmVlm(false)">取消</button>
     </div>
     <div id="vlmresult" style="margin-top:6px; min-height:20px; color:#cfe3ff;">
-      <small>等待指令... (需先在"功能启动"页启动【VLM 抓取】)</small>
+      <small>等待指令... (需先在"功能启动"页启动【VLM 语言抓取】)</small>
     </div>
-    <small>指令发到 /vlm/instruction, 结果来自 /vlm/result; 理解到目标后机械臂会按 auto_grab 设置抓取。</small>
+    <small>安全机制: 默认 require_confirm, 节点理解到目标后会等你点【确认抓取】才动机械臂。</small>
   </div>
 
   <div class="card">
@@ -783,6 +795,9 @@ function sendVlm(){
   const t = document.getElementById('vlmtext').value.trim();
   if (!t){ toast('请输入指令', false); return; }
   post({type:'vlm', text:t});
+}
+function confirmVlm(ok){
+  post({type:'vlm_confirm', confirm: ok});
 }
 function movej(){
   if (!confirm('确认执行关节运动? 机械臂会真实移动!')) return;
