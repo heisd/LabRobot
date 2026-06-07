@@ -113,11 +113,13 @@ camera/image ───►│ qr_detector  │───────────�
 ```
 
 **`qr_detector`** — 订阅相机图像,用 `cv2.QRCodeDetector` 检测/解码二维码,发布:
-- `qr_code/detected` (`std_msgs/Bool`) — 当前帧是否检测到二维码
+- `qr_code/detected` (`std_msgs/Bool`) — 是否**确认**检测到二维码
 - `qr_code/data` (`std_msgs/String`) — 解码内容(如 `path:left`,供路径选择)
-- `qr_code/area_ratio` (`std_msgs/Float32`) — 二维码面积占比(距离的粗略代理)
+- `qr_code/area_ratio` (`std_msgs/Float32`) — 二维码面积占比(距离的粗略代理,与缩放无关)
 
-参数:`image_topic`(默认 `/camera/color/image_raw`)、`min_area_ratio`(默认 `0.002`,过滤远处误检)、`show_image`(默认 `False`)。
+> 为避免"检测过程本身打断/卡顿巡线",检测做了三重处理:**抽帧**(`detect_every_n`,把算力让给巡线)、**缩放**(`detect_scale`,先缩小再检测更快)、**解码+连续确认**(`min_consecutive`,必须连续多帧成功解码才算确认)。因此只是"在检测"时不会让小车停车,**只有真正确认到二维码命令**,`cmd_arbiter` 才会减速停车。
+
+参数:`image_topic`(默认 `/camera/color/image_raw`)、`min_area_ratio`(默认 `0.005`,过滤远处误检)、`show_image`(默认 `False`)、`detect_every_n`(默认 `3`)、`detect_scale`(默认 `0.5`)、`min_consecutive`(默认 `3`)。
 
 **`cmd_arbiter`** — 速度仲裁器(优先级 MUX)+ 二维码路径动作:
 - 正常时透传 `line_follow/cmd_vel` → `cmd_vel`(巡线)

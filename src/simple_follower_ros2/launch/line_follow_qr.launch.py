@@ -26,15 +26,19 @@ def generate_launch_description():
         remappings=[('cmd_vel', 'line_follow/cmd_vel')],
     )
 
-    # QR 检测节点: 检测到二维码时发布事件(detected / data / area_ratio)
+    # QR 检测节点: 抽帧 + 缩放 + 连续确认, 只有"确认到二维码"才让仲裁器停车;
+    # 仅仅在检测过程中不会打断巡线
     qr_detector_node = launch_ros.actions.Node(
         package='simple_follower_ros2',
         executable='qr_detector',
         name='qr_detector',
         parameters=[{
             'image_topic': '/camera/color/image_raw',
-            'min_area_ratio': 0.002,
+            'min_area_ratio': 0.005,
             'show_image': False,
+            'detect_every_n': 3,
+            'detect_scale': 0.5,
+            'min_consecutive': 3,
         }],
     )
 
