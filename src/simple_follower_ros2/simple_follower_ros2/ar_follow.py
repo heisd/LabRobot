@@ -84,8 +84,9 @@ class ArFollower(Node):
 			linearspeed = (target_offset_x - self.goal_x) * self.linearback_p
 			if abs(linearspeed) < 0.01:
 				linearspeed = 0.0
-			if linearspeed > self.max_linear_speed:
-				linearspeed = -self.max_linear_speed
+			if linearspeed < self.min_linear_speed:
+				linearspeed = self.min_linear_speed
+				#后退速度限幅, 避免目标远离时下发过大的倒车速度
 			self.move_cmd.linear.x = linearspeed
 			#当AR标签中心与小车中心存在偏差时
 			if target_offset_y > self.goal_y: 
@@ -115,9 +116,12 @@ def main(args=None):
 	arfollower=ArFollower()
 	try:
 		rclpy.spin(arfollower)
-	except:
-		ArFollower.destroy_node()
-		rclpy.shutdown()
+	except KeyboardInterrupt:
+		pass
+	finally:
+		arfollower.destroy_node()
+		if rclpy.ok():
+			rclpy.shutdown()
 		
 
 if __name__ == '__main__':

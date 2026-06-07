@@ -37,13 +37,15 @@ class LaserFollower(Node):
 		super().__init__('laserfollower')
 		self.controllerLossTimer = threading.Timer(1, self.controllerLoss) #if we lose connection
 		self.controllerLossTimer.start()
-		self.declare_parameter('P')
-		self.declare_parameter('I')
-		self.declare_parameter('D')
+		# PID 增益: 第一分量为角度, 第二分量为距离; 带默认值, 无参数文件也能正常启动
+		self.declare_parameter('P', [1.6, 0.5])
+		self.declare_parameter('I', [0.0, 0.0])
+		self.declare_parameter('D', [0.03, 0.005])
+		self.declare_parameter('targetDist', 0.8)
+		self.declare_parameter('maxSpeed', 0.4)
 		# as soon as we stop receiving Joy messages from the ps3 controller we stop all movement:
-		#self.switchMode= self.declare_parameter('~switchMode').value # if this is set to False the O button has to be kept pressed in order for it to move
 		self.switchMode= True
-		self.max_speed = self.declare_parameter('~maxSpeed').value
+		self.max_speed = self.get_parameter('maxSpeed').get_parameter_value().double_value
 		#self.controllButtonIndex = self.declare_parameter('~controllButtonIndex').value
 		self.controllButtonIndex = -4
 		self.buttonCallbackBusy=False
@@ -62,12 +64,11 @@ class LaserFollower(Node):
 		    '/object_tracker/info',
 		    self.trackerInfoCallback,
 		    qos)
-		targetDist = self.declare_parameter('~targetDist')
-		#pid_param = self.declare_parameter('~PID_controller')
-		P = self.get_parameter('P').get_parameter_value().double_value
-		I = self.get_parameter('I').get_parameter_value().double_value
-		D = self.get_parameter('D').get_parameter_value().double_value
-		self.PID_controller = simplePID([0, 0.8], [1.6, 0.5], [0, 0], [0.03,0.005])
+		targetDist = self.get_parameter('targetDist').get_parameter_value().double_value
+		P = list(self.get_parameter('P').get_parameter_value().double_array_value)
+		I = list(self.get_parameter('I').get_parameter_value().double_array_value)
+		D = list(self.get_parameter('D').get_parameter_value().double_array_value)
+		self.PID_controller = simplePID([0.0, targetDist], P, I, D)
 		# PID parameters first is angular, dist
 	def trackerInfoCallback(self, info):
 		# we do not handle any info from the object tracker specifically at the moment. just ignore that we lost the object for example
@@ -89,8 +90,8 @@ class LaserFollower(Node):
 		# call the PID controller to update it and get new speeds
 		[uncliped_ang_speed, uncliped_lin_speed] = self.PID_controller.update([angle_x, distance])
 		# clip these speeds to be less then the maximal speed specified above
-		angularSpeed = np.clip(-uncliped_ang_speed, -0.4, 0.4)
-		linearSpeed  = np.clip(-uncliped_lin_speed, -0.4, 0.4)
+		angularSpeed = np.clip(-uncliped_ang_speed, -self.max_speed, self.max_speed)
+		linearSpeed  = np.clip(-uncliped_lin_speed, -self.max_speed, self.max_speed)
 		# create the Twist message to send to the cmd_vel topic
 		velocity = Twist()	
 		velocity.linear.y = 0.0
@@ -126,7 +127,7 @@ class LaserFollower(Node):
 			# we are not busy. i.e. there is a real 'new' button press
 			# we deal with it in a seperate thread to be able to drop the other joy messages arriving in the mean
 			# time
-			thread.start_new_thread(self.threadedButtonCallback,  (joy_data, ))
+			_thread.start_new_thread(self.threadedButtonCallback,  (joy_data, ))
 			print("000000000000000")
 	def threadedButtonCallback(self, joy_data):
 		self.buttonCallbackBusy = True
@@ -165,12 +166,7 @@ class LaserFollower(Node):
 class simplePID:
 	'''very simple discrete PID controller'''
 	def __init__(self, target, P, I, D):
-
-		P = [1.5, 0.5]
-		I = [0, 0]
-		D = [0.02,0.002]
-		node = rclpy.create_node('simplepid')
-		# check if parameter shapes are compatabile. 
+		# check if parameter shapes are compatabile.
 		if(not(np.size(P)==np.size(I)==np.size(D)) or ((np.size(target)==1) and np.size(P)!=1) or (np.size(target )!=1 and (np.size(P) != np.size(target) and (np.size(P) != 1)))):
 			raise TypeError('input parameters shape is not compatable')
 		self.Kp		=np.array(P)

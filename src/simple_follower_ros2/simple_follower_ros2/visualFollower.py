@@ -110,7 +110,7 @@ class VisualFollower(Node):
 			# we are not busy. i.e. there is a real 'new' button press
 			# we deal with it in a seperate thread to be able to drop the other joy messages arriving in the mean
 			# time
-			thread.start_new_thread(self.threadedButtonCallback,  (joy_data, ))
+			_thread.start_new_thread(self.threadedButtonCallback,  (joy_data, ))
 
 	def threadedButtonCallback(self, joy_data):
 		self.buttonCallbackBusy = True
@@ -238,12 +238,14 @@ def main(args=None):
     print('visualFollower init done')
     try:
         rclpy.spin(visualFollower)
-    #except KeyboardInterrupt:
-    #	self.stopMoving()
+    except KeyboardInterrupt:
+        pass
     finally:
+        # 退出前先停车, 再销毁节点 (顺序反了会向已销毁节点发布而报错)
+        visualFollower.controllerLoss()
         visualFollower.destroy_node()
-        controllerLoss=visualFollower.controllerLoss()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
