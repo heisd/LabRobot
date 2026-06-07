@@ -2,17 +2,23 @@
 # coding=utf-8
 """QR 码检测节点.
 
-订阅相机图像, 使用 OpenCV ``QRCodeDetector`` 检测/解码二维码.
-本节点只负责"看见二维码", 不直接抢占底盘, 速度裁决交给 ``cmd_arbiter``,
-从而保证 "QR 事件优先级高于巡线(line_follow)".
+订阅相机图像, 检测/解码二维码. 本节点只负责"看见二维码", 不直接抢占底盘,
+速度裁决交给 ``cmd_arbiter``, 从而保证 "QR 事件优先级高于巡线(line_follow)".
 
-设计要点(为避免"检测过程本身"打断/卡顿巡线):
-  1) 抽帧检测 ``detect_every_n``: 只在每 N 帧里跑一次检测, 把算力让给巡线,
-     避免两个节点抢同一路图像的 CPU 导致一卡一卡;
-  2) 缩小检测 ``detect_scale``: 先把图像缩小再检测, QRCodeDetector 更快;
-  3) 解码 + 连续确认 ``min_consecutive``: 必须连续多帧"成功解码"出内容才算确认,
-     单帧噪声 / 偶发误检不会触发, 因此"只是在检测"时不会让小车停车,
-     只有真正确认到二维码命令时 cmd_arbiter 才会减速停车.
+检测后端(自动选择, 越靠前越鲁棒):
+  1) ``pyzbar`` (ZBar)         —— 对角度/弯曲/密集二维码远比 OpenCV 鲁棒(可选依赖)
+  2) ``cv2.QRCodeDetector``    —— OpenCV 自带, 无需额外安装
+
+  安装 pyzbar(强烈建议, 现场识别率高很多)::
+      sudo apt install libzbar0
+      pip3 install pyzbar
+
+为避免"检测过程本身"打断/卡顿巡线:
+  - 抽帧 ``detect_every_n``: 每 N 帧检测一次, 把算力让给巡线;
+  - 缩放 ``detect_scale``: 检测前可缩小图像(默认 1.0=不缩放, 保证识别率;
+    若 CPU 吃紧可调小, 但密集二维码可能识别不到);
+  - 解码 + 连续确认 ``min_consecutive``: 必须连续多帧成功解码才算确认,
+    单帧噪声不会触发 -> "只是在检测"时不会停车, 只有确认到二维码才停.
 
 发布话题:
   - ``qr_code/detected``   (std_msgs/Bool)    是否"确认"检测到二维码
@@ -36,16 +42,11 @@ class QRDetector(Node):
 
         # 参数
         self.declare_parameter('image_topic', '/camera/color/image_raw')
-        # 二维码面积占画面比例的下限, 过滤远处误检的噪点
-        self.declare_parameter('min_area_ratio', 0.005)
-        # 是否弹出窗口显示检测框(无显示器时请保持 False)
-        self.declare_parameter('show_image', False)
-        # 抽帧: 每 N 帧检测一次, 越大越省 CPU(对巡线越友好)
-        self.declare_parameter('detect_every_n', 3)
-        # 缩放: 检测前把图像缩小到该比例(0.1~1.0), 越小越快
-        self.declare_parameter('detect_scale', 0.5)
-        # 连续确认帧数: 连续多少个"已处理帧"成功解码才算确认, 防止误停
-        self.declare_parameter('min_consecutive', 3)
+        self.declare_parameter('min_area_ratio', 0.005)      # 面积下限, 过滤远处误检
+        self.declare_parameter('show_image', False)          # 可视化窗口
+        self.declare_parameter('detect_every_n', 3)          # 每 N 帧检测一次
+        self.declare_parameter('detect_scale', 1.0)          # 检测前缩放(1.0=不缩放)
+        self.declare_parameter('min_consecutive', 3)         # 连续确认帧数, 防误停
 
         g = self.get_parameter
         self.image_topic = g('image_topic').value
@@ -59,6 +60,17 @@ class QRDetector(Node):
 
         self.bridge = cv_bridge.CvBridge()
         self.detector = cv2.QRCodeDetector()
+
+        # 可选的 pyzbar 后端(更鲁棒)
+        try:
+            from pyzbar import pyzbar as _pyzbar
+            self._pyzbar = _pyzbar
+            self.get_logger().info('QR backend: pyzbar (robust)')
+        except Exception:  # noqa: BLE001 - 没装就回退
+            self._pyzbar = None
+            self.get_logger().warn(
+                'pyzbar not available, falling back to cv2.QRCodeDetector; '
+                'install with: sudo apt install libzbar0 && pip3 install pyzbar')
 
         qos = QoSProfile(depth=10)
         self.image_sub = self.create_subscription(
@@ -75,6 +87,49 @@ class QRDetector(Node):
             f'every_n={self.detect_every_n}, scale={self.detect_scale}, '
             f'confirm={self.min_consecutive})')
 
+    def _detect(self, gray):
+        """在(可能已缩放的)灰度图上检测二维码.
+
+        返回 (data, points, area_ratio); points 为该灰度图坐标系下的角点(可能为 None).
+        """
+        h, w = gray.shape[:2]
+        frame_area = float(h * w) or 1.0
+
+        # 1) pyzbar: 只返回已成功解码的二维码, 鲁棒性好
+        if self._pyzbar is not None:
+            for sym in self._pyzbar.decode(gray):
+                if sym.type != 'QRCODE':
+                    continue
+                data = sym.data.decode('utf-8', errors='replace')
+                if len(sym.polygon) >= 4:
+                    poly = np.array([[p.x, p.y] for p in sym.polygon], dtype=np.float32)
+                    area = abs(cv2.contourArea(poly.reshape(-1, 1, 2)))
+                else:
+                    r = sym.rect
+                    poly = np.array([[r.left, r.top],
+                                     [r.left + r.width, r.top],
+                                     [r.left + r.width, r.top + r.height],
+                                     [r.left, r.top + r.height]], dtype=np.float32)
+                    area = float(r.width * r.height)
+                return data, poly, area / frame_area
+            return '', None, 0.0
+
+        # 2) OpenCV: 单码失败再试多码
+        data, points, _ = self.detector.detectAndDecode(gray)
+        if points is None or len(points) == 0:
+            try:
+                ok, datas, pts_multi, _ = self.detector.detectAndDecodeMulti(gray)
+            except cv2.error:
+                ok = False
+            if ok and pts_multi is not None and len(pts_multi) > 0:
+                points = pts_multi[0]
+                data = datas[0] if datas else data
+        if points is None or len(points) == 0:
+            return data or '', None, 0.0
+        pts = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+        area = abs(cv2.contourArea(pts.reshape(-1, 1, 2))) if pts.shape[0] >= 4 else 0.0
+        return data or '', pts, area / frame_area
+
     def image_callback(self, msg):
         # 抽帧: 只处理每 N 帧中的一帧, 把算力让给巡线
         self.frame_idx += 1
@@ -87,33 +142,22 @@ class QRDetector(Node):
             self.get_logger().warn(f'cv_bridge conversion failed: {err}')
             return
 
-        # 缩小后再检测, 加速 QRCodeDetector
+        # 缩放(默认不缩放, 保证识别率), 再转灰度供检测
         if self.detect_scale < 0.999:
             small = cv2.resize(image, None, fx=self.detect_scale,
                                fy=self.detect_scale, interpolation=cv2.INTER_AREA)
         else:
             small = image
-        h, w = small.shape[:2]
-        frame_area = float(h * w)
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
-        data, points, _ = self.detector.detectAndDecode(small)
+        data, points, area_ratio = self._detect(gray)
 
-        area_ratio = 0.0
-        if points is not None and len(points) > 0:
-            pts = points.reshape(-1, 2)
-            if pts.shape[0] >= 4:
-                contour = pts.reshape(-1, 1, 2).astype(np.float32)
-                area = abs(cv2.contourArea(contour))
-                area_ratio = area / frame_area if frame_area > 0 else 0.0
-
-        # 必须"成功解码"且二维码足够大, 才算一次有效命中
+        # 必须"成功解码"且二维码足够大, 才算一次有效命中; 连续多帧才确认
         valid_hit = bool(data) and area_ratio >= self.min_area_ratio
         if valid_hit:
             self.consec += 1
         else:
             self.consec = 0
-
-        # 连续多帧命中才"确认"; 只有确认才会让 cmd_arbiter 停车
         confirmed = self.consec >= self.min_consecutive
 
         self.detected_pub.publish(Bool(data=bool(confirmed)))
@@ -139,10 +183,11 @@ class QRDetector(Node):
         else:
             status, color = 'searching', (0, 0, 255)      # 红: 未检测到
         if points is not None and len(points) > 0:
-            poly = (points.reshape(-1, 2) / self.detect_scale).astype(int)
+            poly = (np.asarray(points).reshape(-1, 2) / self.detect_scale).astype(int)
             cv2.polylines(image, [poly], True, color, 2)
         progress = min(self.consec, self.min_consecutive)
-        hud1 = f'{status}  data="{data}"'
+        backend = 'pyzbar' if self._pyzbar is not None else 'opencv'
+        hud1 = f'{status}  data="{data}"  [{backend}]'
         hud2 = f'area={area_ratio:.4f}  confirm={progress}/{self.min_consecutive}'
         cv2.putText(image, hud1, (10, 25),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)

@@ -37,7 +37,7 @@ def generate_launch_description():
             'min_area_ratio': 0.005,
             'show_image': True,
             'detect_every_n': 3,
-            'detect_scale': 0.5,
+            'detect_scale': 1.0,
             'min_consecutive': 3,
         }],
     )
