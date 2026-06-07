@@ -42,6 +42,7 @@ setup(
             'qr_detector = simple_follower_ros2.qr_detector:main',
             'cmd_arbiter = simple_follower_ros2.cmd_arbiter:main',
             'qr_make = simple_follower_ros2.qr_make:main',
+            'qr_make_gui = simple_follower_ros2.qr_make_gui:main',
         ],
     },
 )

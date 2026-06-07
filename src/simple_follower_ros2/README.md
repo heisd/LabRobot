@@ -39,7 +39,8 @@ simple_follower_ros2/
 │   ├── line_follow_plain.py            # 纯巡线(无分叉处理)
 │   ├── qr_detector.py                  # 二维码检测节点
 │   ├── cmd_arbiter.py                  # 速度仲裁器(QR 优先)
-│   ├── qr_make.py                      # 二维码生成工具
+│   ├── qr_make.py                      # 二维码生成工具(CLI)
+│   ├── qr_make_gui.py                  # 二维码可视化生成工具(GUI)
 │   ├── qr_codes/                       # qr_make 生成的二维码图片(与 QR 节点同级)
 │   └── adjust_hsv.py
 └── launch/
@@ -167,14 +168,29 @@ pip3 install pyzbar
 后端自动选择 `qrcode` / `segno` / `cv2.QRCodeEncoder` 中任意一个可用项。
 
 ```bash
-# 生成一组默认路径选择二维码(left/right/straight/stop)
+# 生成一组默认路径选择二维码(含 left/right/left30/right30/straight/stop)
 ros2 run simple_follower_ros2 qr_make --all
 
 # 生成单个自定义二维码
 ros2 run simple_follower_ros2 qr_make --data "path:left" --name turn_left
+
+# 生成任意角度的固定转角二维码
+ros2 run simple_follower_ros2 qr_make --turn left --angle 45
+# 随机角度(范围可配 --min-angle / --max-angle)
+ros2 run simple_follower_ros2 qr_make --turn right --random --min-angle 20 --max-angle 90
 ```
 
-仓库已预生成 `qr_codes/{turn_left,turn_right,go_straight,stop}.png`,可直接打印张贴在线路上。
+仓库已预生成 `qr_codes/{turn_left,turn_right,turn_left_30,turn_right_30,go_straight,stop}.png`,可直接打印张贴在线路上。
+
+### `qr_make_gui`(二维码可视化生成工具)
+
+基于 OpenCV 滑条的可视化工具:实时调方向 / 角度 / 类型,窗口里**实时预览**二维码,按键保存。
+
+```bash
+ros2 run simple_follower_ros2 qr_make_gui      # 或 qr_make --gui
+```
+
+窗口 `QR Maker` 滑条:`angle`(0~180)、`dir 0L/1R`、`mode`(0 固定转角 / 1 转到发现线 / 2 直行 / 3 停止)、`box`(清晰度)。按键:`s` 保存到 `qr_codes/`、`r` 随机角度+方向、`q`/`ESC` 退出。
 
 ### `adjust_hsv`(调参工具)
 
