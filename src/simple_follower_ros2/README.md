@@ -119,12 +119,24 @@ camera/image ───►│ qr_detector  │───────────�
 
 参数:`image_topic`(默认 `/camera/color/image_raw`)、`min_area_ratio`(默认 `0.002`,过滤远处误检)、`show_image`(默认 `False`)。
 
-**`cmd_arbiter`** — 速度仲裁器(优先级 MUX):
+**`cmd_arbiter`** — 速度仲裁器(优先级 MUX)+ 二维码路径动作:
 - 正常时透传 `line_follow/cmd_vel` → `cmd_vel`(巡线)
 - 一旦检测到二维码立即进入更高优先级流程:`FOLLOW → DECELERATING(先减速)→ STOPPED(后停下)`,期间忽略巡线指令
-- 二维码离开 `clear_hold` 秒后,若 `resume_after_clear=True` 则恢复巡线
+- 停稳后按二维码内容执行动作(状态机增加 `TURNING`):
 
-参数:`decel_duration`(减速到 0 的时间,默认 `1.2`s)、`publish_rate`(默认 `20`Hz)、`detect_timeout`(默认 `0.5`s)、`clear_hold`(默认 `1.0`s)、`resume_after_clear`(默认 `True`)。
+| 二维码内容(命中关键字即可) | 动作 |
+| --- | --- |
+| `path:left`  | **左转**:原地左转,直到重新发现线 → 恢复巡线 |
+| `path:right` | **右转**:原地右转,直到重新发现线 → 恢复巡线 |
+| `path:stop`  | **停止**:保持停车(二维码移走后按 `resume_after_clear` 恢复) |
+| `path:straight` | **直行**:停一下后继续巡线 |
+| 其它/无法识别 | 安全起见按 **停止** 处理 |
+
+> "重新发现线" 的判据复用巡线节点:`line_follow` 看到线时 `linear.x>0`,丢线时为 `0`,所以**无需改动巡线节点**即可知道线是否重新出现。左/右转会先"盲转" `turn_min_time` 秒离开路口,再开始找线,避免在路口原地旧线上误判;并有 `turn_max_time` 安全超时。处理完一张码后会"解除武装",必须等该码彻底离开才允许再次触发,避免对同一张码反复触发。
+
+参数:
+- 减速/停车:`decel_duration`(默认 `1.2`s)、`publish_rate`(默认 `20`Hz)、`detect_timeout`(默认 `0.5`s)、`clear_hold`(默认 `1.0`s)、`resume_after_clear`(默认 `True`)、`stop_dwell`(停稳停留,默认 `0.5`s)
+- 路径动作:`enable_path_action`(默认 `True`)、`turn_angular_speed`(默认 `0.4` rad/s)、`turn_min_time`(默认 `1.0`s)、`turn_max_time`(默认 `8.0`s)、`line_found_eps`(默认 `0.005`)、`line_confirm`(默认 `3` 帧)
 
 ### `qr_make`(二维码生成工具)
 

@@ -38,17 +38,27 @@ def generate_launch_description():
         }],
     )
 
-    # 速度仲裁器: QR 事件优先级高于巡线, 检测到二维码先减速后停下
+    # 速度仲裁器: QR 事件优先级高于巡线, 检测到二维码先减速后停下,
+    # 再按二维码内容执行 左转/右转/停止/直行
     cmd_arbiter_node = launch_ros.actions.Node(
         package='simple_follower_ros2',
         executable='cmd_arbiter',
         name='cmd_arbiter',
         parameters=[{
+            # 减速 / 停车
             'decel_duration': 1.2,
             'publish_rate': 20.0,
             'detect_timeout': 0.5,
             'clear_hold': 1.0,
             'resume_after_clear': True,
+            'stop_dwell': 0.5,
+            # 路径动作(左/右转直到重新发现线)
+            'enable_path_action': True,
+            'turn_angular_speed': 0.4,
+            'turn_min_time': 1.0,
+            'turn_max_time': 8.0,
+            'line_found_eps': 0.005,
+            'line_confirm': 3,
         }],
     )
 
