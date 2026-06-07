@@ -36,6 +36,7 @@ simple_follower_ros2/
 │   ├── laserfollower.py / laserTracker.py
 │   ├── ar_follow.py
 │   ├── line_follow.py / line_follow_node.py
+│   ├── line_follow_plain.py            # 纯巡线(无分叉处理)
 │   ├── qr_detector.py                  # 二维码检测节点
 │   ├── cmd_arbiter.py                  # 速度仲裁器(QR 优先)
 │   ├── qr_make.py                      # 二维码生成工具
@@ -48,6 +49,7 @@ simple_follower_ros2/
     ├── line_follower.launch.py
     ├── line_follow_random.launch.py
     ├── line_follow_qr.launch.py        # 巡线 + 二维码路径选择(QR 优先)
+    ├── line_follow_qr_fixed.launch.py  # 纯巡线 + 二维码固定转角
     └── adjust_hsv.launch.py
 ```
 
@@ -94,9 +96,12 @@ float32 distance   # 估算距离(m)
 参数(`ar_param.yaml`):
 - ArUco ID、目标距离、PID 等
 
-### `line_follow` / `line_follow_node`(巡线)
+### `line_follow` / `line_follow_node` / `line_follow_plain`(巡线)
 
-订阅 RGB 图像,基于颜色阈值提取线条质心,输出 `cmd_vel` 巡线。`line_follow_random` 在 T 字 / Y 字分叉处随机左右选择。
+订阅 RGB 图像,基于颜色阈值提取线条质心,输出 `cmd_vel` 巡线。
+- `line_follow` — 含左叉确认的分叉处理。
+- `line_follow_node`(`line_follow_random`)— 在 T 字 / Y 字分叉处随机左右选择。
+- `line_follow_plain` — **纯巡线,无任何分叉处理**(只做"阈值→底部质心→PID")。路口左右转交给二维码 + `cmd_arbiter` 决定,适合配合"固定转角"二维码使用。
 
 ### 二维码路径选择(`qr_detector` + `cmd_arbiter`)
 
@@ -139,14 +144,20 @@ pip3 install pyzbar
 | --- | --- |
 | `path:left`  | **左转**:原地左转,直到重新发现线 → 恢复巡线 |
 | `path:right` | **右转**:原地右转,直到重新发现线 → 恢复巡线 |
+| `path:left30` | **固定左转 30°**:原地左转固定角度 → 恢复巡线(数字可改, 如 `left45`) |
+| `path:right30` | **固定右转 30°**:原地右转固定角度 → 恢复巡线 |
 | `path:stop`  | **停止**:保持停车(二维码移走后按 `resume_after_clear` 恢复) |
 | `path:straight` | **直行**:停一下后继续巡线 |
 | 其它/无法识别 | 安全起见按 **停止** 处理 |
 
+> **固定转角**为开环按时间转(时长 = 角度弧度 / `turn_angular_speed`),不依赖里程计;现场若角度偏差,微调 `turn_angular_speed` 即可。`path:left`/`path:right`(不带数字)仍是"转到重新发现线"的旧行为。
+>
+> **同一二维码冷却**:同一**内容**的二维码在 `same_qr_cooldown` 秒(默认 `5.0`)内只会触发一次动作,避免靠近/经过同一张码时被反复识别;不同内容的二维码不受影响。
+
 > "重新发现线" 的判据复用巡线节点:`line_follow` 看到线时 `linear.x>0`,丢线时为 `0`,所以**无需改动巡线节点**即可知道线是否重新出现。左/右转会先"盲转" `turn_min_time` 秒离开路口,再开始找线,避免在路口原地旧线上误判;并有 `turn_max_time` 安全超时。处理完一张码后会"解除武装",必须等该码彻底离开才允许再次触发,避免对同一张码反复触发。
 
 参数:
-- 减速/停车:`decel_duration`(默认 `1.2`s)、`publish_rate`(默认 `20`Hz)、`detect_timeout`(默认 `0.5`s)、`clear_hold`(默认 `1.0`s)、`resume_after_clear`(默认 `True`)、`stop_dwell`(停稳停留,默认 `0.5`s)
+- 减速/停车:`decel_duration`(默认 `1.2`s)、`publish_rate`(默认 `20`Hz)、`detect_timeout`(默认 `0.5`s)、`clear_hold`(默认 `1.0`s)、`resume_after_clear`(默认 `True`)、`stop_dwell`(停稳停留,默认 `0.5`s)、`same_qr_cooldown`(同一码冷却,默认 `5.0`s)
 - 路径动作:`enable_path_action`(默认 `True`)、`turn_angular_speed`(默认 `0.4` rad/s)、`turn_min_time`(默认 `1.0`s)、`turn_max_time`(默认 `8.0`s)、`line_found_eps`(默认 `0.005`)、`line_confirm`(默认 `3` 帧)
 
 ### `qr_make`(二维码生成工具)
@@ -178,6 +189,7 @@ ros2 run simple_follower_ros2 qr_make --data "path:left" --name turn_left
 | `line_follower.launch.py` | 启动底盘 + 相机 + 巡线 |
 | `line_follow_random.launch.py` | 巡线 + 分叉随机选择 |
 | `line_follow_qr.launch.py` | 巡线 + 二维码路径选择(QR 优先,先减速后停下) |
+| `line_follow_qr_fixed.launch.py` | 纯巡线(无分叉)+ 二维码固定转角(left30/right30) |
 | `adjust_hsv.launch.py` | 启动 HSV 调试 |
 
 ## 编译与运行
@@ -205,6 +217,10 @@ ros2 launch simple_follower_ros2 laser_follower.launch.py
 # 4. 巡线 + 二维码路径选择(检测到二维码先减速后停下, QR 优先级高于巡线)
 ros2 run simple_follower_ros2 qr_make --all   # 先生成并打印二维码
 ros2 launch simple_follower_ros2 line_follow_qr.launch.py
+
+# 5. 纯巡线(无分叉) + 二维码固定转角(left30/right30)
+ros2 run simple_follower_ros2 qr_make --all   # 含 turn_left_30 / turn_right_30
+ros2 launch simple_follower_ros2 line_follow_qr_fixed.launch.py
 ```
 
 ## 注意事项

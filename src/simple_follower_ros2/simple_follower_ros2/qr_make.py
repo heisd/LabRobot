@@ -26,9 +26,15 @@ import argparse
 import os
 
 # 默认的一组路径选择二维码: 文件名 -> 二维码内容
+#   path:left / path:right        -> 原地转, 转到重新发现线
+#   path:left30 / path:right30    -> 原地固定转 30 度
+#   path:straight                 -> 直行
+#   path:stop                     -> 停车
 DEFAULT_CODES = {
     'turn_left': 'path:left',
     'turn_right': 'path:right',
+    'turn_left_30': 'path:left30',
+    'turn_right_30': 'path:right30',
     'go_straight': 'path:straight',
     'stop': 'path:stop',
 }
