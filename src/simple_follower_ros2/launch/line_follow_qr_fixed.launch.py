@@ -8,6 +8,13 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 
 def generate_launch_description():
+    """巡线 + 二维码路径选择(固定转角版).
+
+    与 line_follow_qr.launch.py 的区别:
+      - 巡线节点用 line_follow_plain(纯巡线, 无任何分叉处理);
+      - 配合 path:left30 / path:right30 这类二维码做"固定转角".
+    cmd_arbiter 同时兼容 path:left/right(转到发现线)与 path:left30/right30(固定转角).
+    """
     bringup_dir = get_package_share_directory('turn_on_wheeltec_robot')
     launch_dir = os.path.join(bringup_dir, 'launch')
 
@@ -18,16 +25,15 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(os.path.join(launch_dir, 'turn_on_wheeltec_robot.launch.py')),
     )
 
-    # 巡线节点: 速度输出重映射到中间话题 line_follow/cmd_vel, 交给仲裁器统一裁决
+    # 纯巡线节点(无分叉): 速度重映射到中间话题交给仲裁器
     line_follow_node = launch_ros.actions.Node(
         package='simple_follower_ros2',
-        executable='line_follow',
-        name='line_follow',
+        executable='line_follow_plain',
+        name='line_follow_plain',
         remappings=[('cmd_vel', 'line_follow/cmd_vel')],
     )
 
-    # QR 检测节点: 抽帧 + 缩放 + 连续确认, 只有"确认到二维码"才让仲裁器停车;
-    # 仅仅在检测过程中不会打断巡线
+    # QR 检测节点
     qr_detector_node = launch_ros.actions.Node(
         package='simple_follower_ros2',
         executable='qr_detector',
@@ -42,14 +48,12 @@ def generate_launch_description():
         }],
     )
 
-    # 速度仲裁器: QR 事件优先级高于巡线, 检测到二维码先减速后停下,
-    # 再按二维码内容执行 左转/右转/停止/直行
+    # 速度仲裁器: QR 优先, 先减速后停下, 再按内容执行固定转角 / 寻线转角 / 停止 / 直行
     cmd_arbiter_node = launch_ros.actions.Node(
         package='simple_follower_ros2',
         executable='cmd_arbiter',
         name='cmd_arbiter',
         parameters=[{
-            # 减速 / 停车
             'decel_duration': 1.2,
             'publish_rate': 20.0,
             'detect_timeout': 0.5,
@@ -57,13 +61,13 @@ def generate_launch_description():
             'resume_after_clear': True,
             'stop_dwell': 0.5,
             'same_qr_cooldown': 5.0,
-            # 路径动作(左/右转直到重新发现线)
             'enable_path_action': True,
             'turn_angular_speed': 0.4,
             'turn_min_time': 1.0,
             'turn_max_time': 8.0,
             'line_found_eps': 0.005,
             'line_confirm': 3,
+            # 固定转角用里程计闭环, 角度更准
             'use_odom_turn': True,
             'odom_topic': '/odom',
         }],

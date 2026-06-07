@@ -11,6 +11,7 @@ data_files.append(('share/' + package_name, ['launch/visual_follower.launch.py']
 data_files.append(('share/' + package_name, ['launch/adjust_hsv.launch.py']))
 data_files.append(('share/' + package_name, ['launch/aruco_follower.launch.py']))
 data_files.append(('share/' + package_name, ['launch/line_follow_qr.launch.py']))
+data_files.append(('share/' + package_name, ['launch/line_follow_qr_fixed.launch.py']))
 
 data_files.append(('share/' + package_name, ['package.xml']))
 
@@ -30,6 +31,7 @@ setup(
         'console_scripts': [
             'line_follow = simple_follower_ros2.line_follow:main',
             'line_follow_node = simple_follower_ros2.line_follow_node:main',
+            'line_follow_plain = simple_follower_ros2.line_follow_plain:main',
             'laserfollower = simple_follower_ros2.laserfollower:main',
             'visualtracker = simple_follower_ros2.visualTracker:main',
             'visualfollow = simple_follower_ros2.visualFollower:main',
@@ -40,6 +42,7 @@ setup(
             'qr_detector = simple_follower_ros2.qr_detector:main',
             'cmd_arbiter = simple_follower_ros2.cmd_arbiter:main',
             'qr_make = simple_follower_ros2.qr_make:main',
+            'qr_make_gui = simple_follower_ros2.qr_make_gui:main',
         ],
     },
 )

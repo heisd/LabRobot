@@ -29,8 +29,12 @@
 因此无需改动巡线节点即可知道线是否重新出现.
 """
 
+import math
+import re
+
 import rclpy
 from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
 from std_msgs.msg import Bool, String
@@ -42,16 +46,21 @@ STATE_TURNING = 'TURNING'
 
 
 def parse_action(data):
-    """把二维码内容解析为动作: left / right / stop / straight."""
+    """把二维码内容解析为 (action, angle).
+
+    action: 'left' / 'right' / 'straight' / 'stop'
+    angle : None 表示左右转为"转到重新发现线"(原行为);
+            数字(度)表示固定转角, 例如 path:left30 -> ('left', 30.0).
+    """
     text = (data or '').strip().lower()
-    if 'left' in text:
-        return 'left'
-    if 'right' in text:
-        return 'right'
+    m = re.search(r'(left|right)\s*([0-9]+(?:\.[0-9]+)?)?', text)
+    if m:
+        angle = float(m.group(2)) if m.group(2) else None
+        return m.group(1), angle
     if 'straight' in text or 'forward' in text:
-        return 'straight'
+        return 'straight', None
     # stop 或无法识别 -> 安全起见停车
-    return 'stop'
+    return 'stop', None
 
 
 class CmdArbiter(Node):
@@ -65,6 +74,7 @@ class CmdArbiter(Node):
         self.declare_parameter('clear_hold', 1.0)           # 二维码离开多久后恢复巡线(s)
         self.declare_parameter('resume_after_clear', True)  # stop 码移走后是否恢复巡线
         self.declare_parameter('stop_dwell', 0.5)           # 停稳后再执行动作前的停留(s)
+        self.declare_parameter('same_qr_cooldown', 5.0)     # 同一内容二维码的冷却(s)
 
         # 路径动作(左/右转)参数
         self.declare_parameter('enable_path_action', True)  # 是否执行左右转/直行动作
@@ -73,6 +83,8 @@ class CmdArbiter(Node):
         self.declare_parameter('turn_max_time', 8.0)        # 转向安全超时(s)
         self.declare_parameter('line_found_eps', 0.005)     # 判定"发现线"的 linear.x 阈值
         self.declare_parameter('line_confirm', 3)           # 连续多少帧发现线才确认
+        self.declare_parameter('use_odom_turn', True)       # 固定转角是否用里程计闭环
+        self.declare_parameter('odom_topic', '/odom')       # 里程计话题
 
         g = self.get_parameter
         self.decel_duration = g('decel_duration').value
@@ -81,12 +93,15 @@ class CmdArbiter(Node):
         self.clear_hold = g('clear_hold').value
         self.resume_after_clear = g('resume_after_clear').value
         self.stop_dwell = g('stop_dwell').value
+        self.same_qr_cooldown = g('same_qr_cooldown').value
         self.enable_path_action = g('enable_path_action').value
         self.turn_angular_speed = g('turn_angular_speed').value
         self.turn_min_time = g('turn_min_time').value
         self.turn_max_time = g('turn_max_time').value
         self.line_found_eps = g('line_found_eps').value
         self.line_confirm = g('line_confirm').value
+        self.use_odom_turn = g('use_odom_turn').value
+        self.odom_topic = g('odom_topic').value
 
         # 防止非法频率导致除零 / 异常高频定时器
         if self.publish_rate is None or self.publish_rate < 1.0:
@@ -102,6 +117,8 @@ class CmdArbiter(Node):
             Bool, 'qr_code/detected', self.detected_callback, qos)
         self.data_sub = self.create_subscription(
             String, 'qr_code/data', self.data_callback, qos)
+        self.odom_sub = self.create_subscription(
+            Odometry, self.odom_topic, self.odom_callback, qos)
 
         self.last_follow = Twist()        # 最近一次巡线速度
         self.last_follow_time = None      # 最近一次收到巡线速度的时间
@@ -109,6 +126,8 @@ class CmdArbiter(Node):
         self.last_qr_data = ''            # 最近解码到的二维码内容
 
         self.qr_last_true = None          # 最近一次 detected=True 的时间(s)
+        self.last_handled_data = ''       # 最近一次已处理的二维码内容
+        self.last_handled_time = -1e9     # 最近一次处理完成的时间(用于冷却)
         self.state = STATE_FOLLOW
         self.armed = True                 # 是否允许二维码触发(防止对同一码反复触发)
         self.decel_start_time = None
@@ -116,7 +135,18 @@ class CmdArbiter(Node):
         self.stop_time = None
         self.turn_start_time = None
         self.turn_dir = 0.0               # +1 左转, -1 右转
+        self.turn_fixed = False           # True=固定转角, False=转到发现线
+        self.turn_target_time = 0.0       # 固定转角(开环)需要转的时长(s)
+        self.turn_target_rad = 0.0        # 固定转角目标弧度
+        self.turn_safety_time = 0.0       # 固定转角安全超时(s)
+        self.turn_use_odom = False        # 本次固定转角是否用里程计闭环
+        self.turn_accum = 0.0             # 已累计转过的弧度(里程计)
+        self.turn_prev_yaw = 0.0          # 上一次 yaw, 用于累计
         self.line_hits = 0
+
+        # 里程计
+        self.have_odom = False
+        self.current_yaw = 0.0
 
         self.timer = self.create_timer(1.0 / self.publish_rate, self.update)
         self.get_logger().info('cmd_arbiter started: QR priority > line_follow')
@@ -136,10 +166,28 @@ class CmdArbiter(Node):
     def data_callback(self, msg):
         self.last_qr_data = msg.data
 
+    @staticmethod
+    def _yaw_from_quat(q):
+        siny = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        return math.atan2(siny, cosy)
+
+    def odom_callback(self, msg):
+        self.current_yaw = self._yaw_from_quat(msg.pose.pose.orientation)
+        self.have_odom = True
+
     def qr_active(self):
         if self.qr_last_true is None:
             return False
         return (self.now() - self.qr_last_true) <= self.detect_timeout
+
+    def in_cooldown(self):
+        """同一内容的二维码是否处于冷却期(短时间内只识别一次)."""
+        if not self.last_handled_data:
+            return False
+        if self.last_qr_data != self.last_handled_data:
+            return False
+        return (self.now() - self.last_handled_time) < self.same_qr_cooldown
 
     def line_found(self):
         """巡线节点当前是否看到线(用其 linear.x 作为代理, 且数据要新鲜)."""
@@ -168,6 +216,9 @@ class CmdArbiter(Node):
     def enter_decel(self):
         self.state = STATE_DECEL
         self.decel_start_time = self.now()
+        # 记录本次处理的二维码内容, 启动同内容冷却
+        self.last_handled_data = self.last_qr_data
+        self.last_handled_time = self.now()
         # 从当前实际速度开始减速, 保证平滑; 若刚好为 0 则退回巡线速度
         start = self.last_published
         if abs(start.linear.x) < 1e-6 and abs(start.angular.z) < 1e-6:
@@ -176,17 +227,40 @@ class CmdArbiter(Node):
         self.get_logger().info(
             f'QR detected -> decelerate then stop (content="{self.last_qr_data}")')
 
-    def enter_turn(self, direction):
+    def enter_turn(self, direction, angle=None):
         self.state = STATE_TURNING
         self.turn_start_time = self.now()
         self.turn_dir = 1.0 if direction == 'left' else -1.0
         self.line_hits = 0
-        self.get_logger().info(f'QR action: turn {direction} until line re-found')
+        if angle is not None and self.turn_angular_speed > 1e-3:
+            # 固定转角
+            self.turn_fixed = True
+            self.turn_target_rad = math.radians(angle)
+            self.turn_target_time = self.turn_target_rad / self.turn_angular_speed
+            # 安全超时: 期望时长的 2 倍再加 2s, 防止里程计异常时一直打转
+            self.turn_safety_time = self.turn_target_time * 2.0 + 2.0
+            # 有里程计就闭环, 否则退回开环按时间
+            self.turn_use_odom = bool(self.use_odom_turn and self.have_odom)
+            self.turn_accum = 0.0
+            self.turn_prev_yaw = self.current_yaw
+            mode = 'odom' if self.turn_use_odom else 'time'
+            self.get_logger().info(
+                f'QR action: turn {direction} fixed {angle} deg '
+                f'[{mode}] (~{self.turn_target_time:.2f}s)')
+        else:
+            # 转到重新发现线(原行为)
+            self.turn_fixed = False
+            self.turn_use_odom = False
+            self.turn_target_time = 0.0
+            self.get_logger().info(
+                f'QR action: turn {direction} until line re-found')
 
     def resume_follow(self):
         self.state = STATE_FOLLOW
         # 解除武装, 必须等当前二维码彻底离开后才允许再次触发, 防止重复触发同一码
         self.armed = False
+        # 动作完成后刷新冷却起点, 保证同一码在冷却期内不会被再次处理
+        self.last_handled_time = self.now()
         self.get_logger().info('resume line following')
 
     # ------------------------------------------------------------------ loop
@@ -197,9 +271,14 @@ class CmdArbiter(Node):
             # 二维码离开后重新武装
             if not active:
                 self.armed = True
-            if self.armed and active:
+            # 同一内容二维码在冷却期内不再触发
+            if self.armed and active and not self.in_cooldown():
                 self.enter_decel()
             else:
+                if active and self.in_cooldown():
+                    self.get_logger().info(
+                        f'QR "{self.last_qr_data}" in cooldown, ignored',
+                        throttle_duration_sec=1.0)
                 self.publish(self.last_follow)
 
         elif self.state == STATE_DECEL:
@@ -220,9 +299,9 @@ class CmdArbiter(Node):
             # 先停稳一会儿
             if (self.now() - self.stop_time) < self.stop_dwell:
                 return
-            action = parse_action(self.last_qr_data)
+            action, angle = parse_action(self.last_qr_data)
             if self.enable_path_action and action in ('left', 'right'):
-                self.enter_turn(action)
+                self.enter_turn(action, angle)
             elif self.enable_path_action and action == 'straight':
                 self.resume_follow()
             else:  # stop 或未启用动作
@@ -235,13 +314,52 @@ class CmdArbiter(Node):
             turn.angular.z = self.turn_dir * self.turn_angular_speed
             self.publish(turn)
             elapsed = self.now() - self.turn_start_time
-            # 盲转阶段结束后才开始找线, 避免在路口原地的旧线上误判
+            # 固定转角: 里程计闭环到目标角度(或开环按时间), 不等线
+            if self.turn_fixed:
+                target_deg = math.degrees(self.turn_target_rad)
+                if self.turn_use_odom:
+                    delta = self.current_yaw - self.turn_prev_yaw
+                    delta = math.atan2(math.sin(delta), math.cos(delta))  # 处理 ±pi 翻转
+                    self.turn_accum += delta
+                    self.turn_prev_yaw = self.current_yaw
+                    done_deg = math.degrees(abs(self.turn_accum))
+                    self.get_logger().info(
+                        f'turning [odom] {done_deg:.1f}/{target_deg:.1f} deg',
+                        throttle_duration_sec=0.3)
+                    if abs(self.turn_accum) >= self.turn_target_rad:
+                        self.get_logger().info(
+                            f'fixed turn done [odom]: turned {done_deg:.1f} deg '
+                            f'(target {target_deg:.1f})')
+                        self.resume_follow()
+                        return
+                else:
+                    self.get_logger().info(
+                        f'turning [time] {elapsed:.2f}/{self.turn_target_time:.2f}s '
+                        f'(~{target_deg:.1f} deg)',
+                        throttle_duration_sec=0.3)
+                    if elapsed >= self.turn_target_time:
+                        self.get_logger().info(
+                            f'fixed turn done [time]: ~{target_deg:.1f} deg '
+                            f'in {elapsed:.2f}s')
+                        self.resume_follow()
+                        return
+                if elapsed >= self.turn_safety_time:
+                    self.get_logger().warn(
+                        f'fixed-turn timeout after {elapsed:.1f}s, resume anyway')
+                    self.resume_follow()
+                return
+            # 寻线转向: 盲转阶段结束后才开始找线, 避免在路口原地的旧线上误判
+            self.get_logger().info(
+                f'turning [seek] {elapsed:.1f}s, line hits={self.line_hits}/{self.line_confirm}',
+                throttle_duration_sec=0.5)
             if elapsed >= self.turn_min_time:
                 if self.line_found():
                     self.line_hits += 1
                 else:
                     self.line_hits = 0
                 if self.line_hits >= self.line_confirm:
+                    self.get_logger().info(
+                        f'seek turn done: line re-found after {elapsed:.1f}s')
                     self.resume_follow()
                     return
             if elapsed >= self.turn_max_time:

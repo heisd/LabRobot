@@ -19,16 +19,30 @@
 
     # 生成单个自定义二维码
     ros2 run simple_follower_ros2 qr_make --data "path:left" --name turn_left
-    python3 qr_make.py --data "stop" --name stop_here --box-size 12
+
+    # 生成任意/随机角度的固定转角二维码
+    ros2 run simple_follower_ros2 qr_make --turn left --angle 45
+    ros2 run simple_follower_ros2 qr_make --turn right --random --min-angle 20 --max-angle 90
+
+    # 打开可视化生成工具(滑条调方向/角度, 实时预览, 按 s 保存)
+    ros2 run simple_follower_ros2 qr_make_gui
+    ros2 run simple_follower_ros2 qr_make --gui
 """
 
 import argparse
 import os
+import random
 
 # 默认的一组路径选择二维码: 文件名 -> 二维码内容
+#   path:left / path:right        -> 原地转, 转到重新发现线
+#   path:left30 / path:right30    -> 原地固定转 30 度
+#   path:straight                 -> 直行
+#   path:stop                     -> 停车
 DEFAULT_CODES = {
     'turn_left': 'path:left',
     'turn_right': 'path:right',
+    'turn_left_30': 'path:left30',
+    'turn_right_30': 'path:right30',
     'go_straight': 'path:straight',
     'stop': 'path:stop',
 }
@@ -89,26 +103,100 @@ def save_qr(data, path, box_size=10, border=4):
     ) from last_err
 
 
+def turn_content(direction, angle):
+    """方向 + 角度 -> (文件名, 二维码内容).
+
+    例如 turn_content('left', 30) -> ('turn_left_30', 'path:left30').
+    """
+    a = f'{angle:g}'
+    content = f'path:{direction}{a}'
+    name = f'turn_{direction}_{a.replace(".", "_")}'
+    return name, content
+
+
+def render_qr(data, box_size=10, border=4):
+    """生成二维码并返回 OpenCV BGR 图(用于 GUI 预览). 全部后端失败则抛异常."""
+    import numpy as np
+    import cv2
+
+    # qrcode (+Pillow)
+    try:
+        import qrcode
+        qr = qrcode.QRCode(
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=box_size, border=border)
+        qr.add_data(data)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color='black', back_color='white').convert('RGB')
+        return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+    except Exception:  # noqa: BLE001 - 逐后端兜底
+        pass
+
+    # segno (纯 Python) -> PNG 字节 -> 解码
+    try:
+        import io
+        import segno
+        buff = io.BytesIO()
+        segno.make_qr(data, error='m').save(buff, kind='png', scale=box_size, border=border)
+        arr = np.frombuffer(buff.getvalue(), dtype=np.uint8)
+        gray = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+        return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # OpenCV 自带编码器
+    enc = cv2.QRCodeEncoder_create()
+    qr = enc.encode(data)
+    qr = cv2.resize(qr, None, fx=box_size, fy=box_size, interpolation=cv2.INTER_NEAREST)
+    pad = border * box_size
+    qr = cv2.copyMakeBorder(qr, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=255)
+    return cv2.cvtColor(qr, cv2.COLOR_GRAY2BGR)
+
+
 def main():
     parser = argparse.ArgumentParser(description='生成二维码图片(用于巡线路径选择)')
     parser.add_argument('--data', help='二维码内容(单个生成时必填)')
     parser.add_argument('--name', help='输出文件名(不含扩展名), 默认按内容生成')
     parser.add_argument('--all', action='store_true', help='生成一组默认的路径选择二维码')
+    parser.add_argument('--turn', choices=['left', 'right'], help='生成固定转角二维码的方向')
+    parser.add_argument('--angle', type=float, help='固定转角角度(度), 配合 --turn')
+    parser.add_argument('--random', action='store_true', help='随机角度(配 --min-angle/--max-angle)')
+    parser.add_argument('--min-angle', type=float, default=15.0, help='随机角度下限(度)')
+    parser.add_argument('--max-angle', type=float, default=90.0, help='随机角度上限(度)')
+    parser.add_argument('--gui', action='store_true', help='打开可视化生成工具(等价于 qr_make_gui)')
     parser.add_argument('--out', default=None, help='输出目录, 默认 <节点同级>/qr_codes')
     parser.add_argument('--box-size', type=int, default=10, help='每个模块的像素大小')
     parser.add_argument('--border', type=int, default=4, help='白边模块数(标准为 4)')
     args = parser.parse_args()
+
+    if args.gui:
+        try:
+            from simple_follower_ros2.qr_make_gui import main as gui_main
+        except ImportError:
+            from qr_make_gui import main as gui_main
+        gui_main()
+        return
 
     out = args.out or output_dir()
     os.makedirs(out, exist_ok=True)
 
     if args.all:
         items = DEFAULT_CODES.items()
+    elif args.turn or args.random:
+        direction = args.turn or random.choice(['left', 'right'])
+        if args.angle is not None:
+            angle = args.angle
+        elif args.random:
+            angle = float(random.randint(int(args.min_angle), int(args.max_angle)))
+        else:
+            angle = 30.0
+        name, data = turn_content(direction, angle)
+        items = [(args.name or name, data)]
     elif args.data:
         name = args.name or args.data.replace(':', '_').replace('/', '_').replace(' ', '_')
         items = [(name, args.data)]
     else:
-        parser.error('请使用 --data 指定内容, 或使用 --all 生成默认集合')
+        parser.error('请使用 --data / --all / --turn / --random / --gui 之一')
 
     for name, data in items:
         path = os.path.join(out, f'{name}.png')
