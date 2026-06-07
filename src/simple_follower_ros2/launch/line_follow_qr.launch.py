@@ -35,7 +35,7 @@ def generate_launch_description():
         parameters=[{
             'image_topic': '/camera/color/image_raw',
             'min_area_ratio': 0.005,
-            'show_image': False,
+            'show_image': True,
             'detect_every_n': 3,
             'detect_scale': 0.5,
             'min_consecutive': 3,

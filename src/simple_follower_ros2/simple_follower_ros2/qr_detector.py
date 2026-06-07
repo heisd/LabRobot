@@ -128,13 +128,28 @@ class QRDetector(Node):
             self.last_data = ''
 
         if self.show_image:
-            if confirmed and points is not None:
-                poly = (points.reshape(-1, 2) / self.detect_scale).astype(int)
-                cv2.polylines(image, [poly], True, (0, 255, 0), 2)
-                cv2.putText(image, data or 'QR', tuple(poly[0]),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.imshow('qr_detector', image)
-            cv2.waitKey(3)
+            self._show_gui(image, points, data, area_ratio, valid_hit, confirmed)
+
+    def _show_gui(self, image, points, data, area_ratio, valid_hit, confirmed):
+        """QR 检测可视化窗口: 状态 / 解码内容 / 确认进度 / 检测框."""
+        if confirmed:
+            status, color = 'CONFIRMED', (0, 255, 0)      # 绿: 已确认
+        elif valid_hit:
+            status, color = 'detecting', (0, 255, 255)    # 黄: 命中但未确认
+        else:
+            status, color = 'searching', (0, 0, 255)      # 红: 未检测到
+        if points is not None and len(points) > 0:
+            poly = (points.reshape(-1, 2) / self.detect_scale).astype(int)
+            cv2.polylines(image, [poly], True, color, 2)
+        progress = min(self.consec, self.min_consecutive)
+        hud1 = f'{status}  data="{data}"'
+        hud2 = f'area={area_ratio:.4f}  confirm={progress}/{self.min_consecutive}'
+        cv2.putText(image, hud1, (10, 25),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        cv2.putText(image, hud2, (10, 52),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        cv2.imshow('QR Check', image)
+        cv2.waitKey(3)
 
 
 def main(args=None):
