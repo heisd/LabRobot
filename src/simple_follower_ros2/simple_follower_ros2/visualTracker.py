@@ -86,7 +86,6 @@ class VisualTracker(Node):
 		# find contours of the object
 		contours = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
 
-		newPos = None #if no contour at all was found the last position will again be set to none
 		# lets you display the image for debuging. Not in realtime though
 		if displayImage:
 			backConverted = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
@@ -105,25 +104,16 @@ class VisualTracker(Node):
 			plt.xticks([]),plt.yticks([])
 			plt.show()
 			rclpy.sleep(0.2)
-		# go threw all the contours. starting with the bigest one
-		for contour in sorted(contours, key=cv2.contourArea, reverse=True):
-			# get position of object for this contour
-
-			pos = self.analyseContour(contour, depthFrame)
-
-			# if it's the first one we found it will be the fall back for the next scan if we don't find a plausible one
-			if newPos is None:
-				newPos = pos
-			# check if the position is plausible
-			#if self.checkPosPlausible(pos):
-			self.lastPosition = pos
-			self.publishPosition(pos)
+		# 选取面积最大的轮廓作为目标(最稳健的近似)
+		ordered = sorted(contours, key=cv2.contourArea, reverse=True)
+		if len(ordered) == 0:
+			# 完全没有检测到目标 -> 发布 distance=0, 让下游 follower 立即停车
+			self.lastPosition = None
+			self.publishLost()
 			return
-		
-		self.lastPosition = newPos #we didn't find a plossible last position, so we just save the biggest contour 
-		# and publish warnings
-		#self.get_logger().warn('no position found')
-		#self.infoPublisher.publish(StringMsg('visual:nothing found'))
+		pos = self.analyseContour(ordered[0], depthFrame)
+		self.lastPosition = pos
+		self.publishPosition(pos)
 		
 	def publishPosition(self, pos):
 		# calculate the angles from the raw position
@@ -133,6 +123,13 @@ class VisualTracker(Node):
 		self.posMsg.distance=float(pos[1])
 		# publish the position (angleX, angleY, distance)
 
+		self.positionPublisher.publish(self.posMsg)
+
+	def publishLost(self):
+		'''目标丢失: 发布 distance=0 (以及 0 角度), 通知下游 follower 停车.'''
+		self.posMsg.angle_x = 0.0
+		self.posMsg.angle_y = 0.0
+		self.posMsg.distance = 0.0
 		self.positionPublisher.publish(self.posMsg)
 
 	def checkPosPlausible(self, pos):
@@ -205,7 +202,9 @@ class VisualTracker(Node):
 		depthObject = depthFrame[y0:y1, x0:x1]
 
 		# get the average of all valid points (average to have a more reliable distance measure)
-		depthArray = depthObject[~np.isnan(depthObject)]
+		# 先转 float 再过滤: 深度可能是 16UC1(整型, np.isnan 会报错); 0 表示无效读数也一并剔除
+		depthObject = depthObject.astype(np.float32)
+		depthArray = depthObject[np.isfinite(depthObject) & (depthObject > 0)]
 		#averageDistance = np.mean(depthArray)
 		
 		if len(depthArray) == 0:
