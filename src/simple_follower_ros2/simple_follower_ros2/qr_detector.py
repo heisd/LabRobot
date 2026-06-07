@@ -114,21 +114,38 @@ class QRDetector(Node):
                 return data, poly, area / frame_area
             return '', None, 0.0
 
-        # 2) OpenCV: 单码失败再试多码
-        data, points, _ = self.detector.detectAndDecode(gray)
-        if points is None or len(points) == 0:
-            try:
-                ok, datas, pts_multi, _ = self.detector.detectAndDecodeMulti(gray)
-            except cv2.error:
-                ok = False
-            if ok and pts_multi is not None and len(pts_multi) > 0:
-                points = pts_multi[0]
-                data = datas[0] if datas else data
-        if points is None or len(points) == 0:
-            return data or '', None, 0.0
-        pts = np.asarray(points, dtype=np.float32).reshape(-1, 2)
-        area = abs(cv2.contourArea(pts.reshape(-1, 1, 2))) if pts.shape[0] >= 4 else 0.0
-        return data or '', pts, area / frame_area
+        # 2) OpenCV: 原图与 Otsu 二值化两种输入, 各试单码/多码;
+        #    只接受"成功解码"的结果, 避免把背景里的暗色方块误当二维码
+        for src in (gray, self._otsu(gray)):
+            data, points = self._opencv_try(src)
+            if data:
+                pts = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+                if pts.shape[0] >= 4:
+                    area = abs(cv2.contourArea(pts.reshape(-1, 1, 2)))
+                else:
+                    area = 0.0
+                return data, pts, area / frame_area
+        return '', None, 0.0
+
+    @staticmethod
+    def _otsu(gray):
+        """Otsu 二值化, 缓解光照不均 / 轻微模糊."""
+        return cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+
+    def _opencv_try(self, img):
+        """OpenCV 单码 + 多码尝试, 仅返回成功解码的 (data, points)."""
+        data, points, _ = self.detector.detectAndDecode(img)
+        if data:
+            return data, points
+        try:
+            ok, datas, pts_multi, _ = self.detector.detectAndDecodeMulti(img)
+        except cv2.error:
+            ok = False
+        if ok and datas is not None and pts_multi is not None:
+            for d, p in zip(datas, pts_multi):
+                if d:
+                    return d, p
+        return '', None
 
     def image_callback(self, msg):
         # 抽帧: 只处理每 N 帧中的一帧, 把算力让给巡线
@@ -159,6 +176,14 @@ class QRDetector(Node):
         else:
             self.consec = 0
         confirmed = self.consec >= self.min_consecutive
+
+        # 只要成功解码就打日志(限频), 方便现场确认"到底有没有检测到"
+        if data:
+            progress = min(self.consec, self.min_consecutive)
+            self.get_logger().info(
+                f'QR seen: "{data}" area={area_ratio:.4f} '
+                f'(min={self.min_area_ratio}) confirm={progress}/{self.min_consecutive}',
+                throttle_duration_sec=0.5)
 
         self.detected_pub.publish(Bool(data=bool(confirmed)))
         self.area_pub.publish(Float32(data=float(area_ratio)))
