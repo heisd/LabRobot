@@ -10,6 +10,9 @@ WheelTec 机器人多模态跟随包,提供视觉颜色跟随、激光跟随、A
 - `laserfollower` / `laserTracker` — 基于 2D 激光的目标跟随
 - `ar_follow` — 基于 ArUco 的跟随
 - `line_follow` / `line_follow_node` — 基于颜色线条的巡线
+- `qr_detector` — 二维码检测(发布检测事件,用于路径选择)
+- `cmd_arbiter` — 速度仲裁器(**QR 事件优先级 > 巡线**,检测到二维码先减速后停下)
+- `qr_make` — 二维码生成工具
 - `adjust_hsv` — HSV 阈值调试工具
 
 ## 目录结构
@@ -33,6 +36,10 @@ simple_follower_ros2/
 │   ├── laserfollower.py / laserTracker.py
 │   ├── ar_follow.py
 │   ├── line_follow.py / line_follow_node.py
+│   ├── qr_detector.py                  # 二维码检测节点
+│   ├── cmd_arbiter.py                  # 速度仲裁器(QR 优先)
+│   ├── qr_make.py                      # 二维码生成工具
+│   ├── qr_codes/                       # qr_make 生成的二维码图片(与 QR 节点同级)
 │   └── adjust_hsv.py
 └── launch/
     ├── visual_follower.launch.py
@@ -40,6 +47,7 @@ simple_follower_ros2/
     ├── aruco_follower.launch.py
     ├── line_follower.launch.py
     ├── line_follow_random.launch.py
+    ├── line_follow_qr.launch.py        # 巡线 + 二维码路径选择(QR 优先)
     └── adjust_hsv.launch.py
 ```
 
@@ -90,6 +98,61 @@ float32 distance   # 估算距离(m)
 
 订阅 RGB 图像,基于颜色阈值提取线条质心,输出 `cmd_vel` 巡线。`line_follow_random` 在 T 字 / Y 字分叉处随机左右选择。
 
+### 二维码路径选择(`qr_detector` + `cmd_arbiter`)
+
+用于"巡线过程中检测到二维码先减速后停下",且 **二维码事件优先级高于巡线**。
+两节点配合工作,巡线节点本身无需改动(launch 中把它的 `cmd_vel` 重映射到中间话题):
+
+```
+                 ┌──────────────┐  line_follow/cmd_vel
+camera/image ───►│ line_follow  │──────────────────────┐
+                 └──────────────┘                       ▼
+                 ┌──────────────┐  qr_code/detected ┌──────────────┐
+camera/image ───►│ qr_detector  │──────────────────►│ cmd_arbiter  │──► cmd_vel
+                 └──────────────┘  qr_code/data      └──────────────┘
+```
+
+**`qr_detector`** — 订阅相机图像,用 `cv2.QRCodeDetector` 检测/解码二维码,发布:
+- `qr_code/detected` (`std_msgs/Bool`) — 当前帧是否检测到二维码
+- `qr_code/data` (`std_msgs/String`) — 解码内容(如 `path:left`,供路径选择)
+- `qr_code/area_ratio` (`std_msgs/Float32`) — 二维码面积占比(距离的粗略代理)
+
+参数:`image_topic`(默认 `/camera/color/image_raw`)、`min_area_ratio`(默认 `0.002`,过滤远处误检)、`show_image`(默认 `False`)。
+
+**`cmd_arbiter`** — 速度仲裁器(优先级 MUX)+ 二维码路径动作:
+- 正常时透传 `line_follow/cmd_vel` → `cmd_vel`(巡线)
+- 一旦检测到二维码立即进入更高优先级流程:`FOLLOW → DECELERATING(先减速)→ STOPPED(后停下)`,期间忽略巡线指令
+- 停稳后按二维码内容执行动作(状态机增加 `TURNING`):
+
+| 二维码内容(命中关键字即可) | 动作 |
+| --- | --- |
+| `path:left`  | **左转**:原地左转,直到重新发现线 → 恢复巡线 |
+| `path:right` | **右转**:原地右转,直到重新发现线 → 恢复巡线 |
+| `path:stop`  | **停止**:保持停车(二维码移走后按 `resume_after_clear` 恢复) |
+| `path:straight` | **直行**:停一下后继续巡线 |
+| 其它/无法识别 | 安全起见按 **停止** 处理 |
+
+> "重新发现线" 的判据复用巡线节点:`line_follow` 看到线时 `linear.x>0`,丢线时为 `0`,所以**无需改动巡线节点**即可知道线是否重新出现。左/右转会先"盲转" `turn_min_time` 秒离开路口,再开始找线,避免在路口原地旧线上误判;并有 `turn_max_time` 安全超时。处理完一张码后会"解除武装",必须等该码彻底离开才允许再次触发,避免对同一张码反复触发。
+
+参数:
+- 减速/停车:`decel_duration`(默认 `1.2`s)、`publish_rate`(默认 `20`Hz)、`detect_timeout`(默认 `0.5`s)、`clear_hold`(默认 `1.0`s)、`resume_after_clear`(默认 `True`)、`stop_dwell`(停稳停留,默认 `0.5`s)
+- 路径动作:`enable_path_action`(默认 `True`)、`turn_angular_speed`(默认 `0.4` rad/s)、`turn_min_time`(默认 `1.0`s)、`turn_max_time`(默认 `8.0`s)、`line_found_eps`(默认 `0.005`)、`line_confirm`(默认 `3` 帧)
+
+### `qr_make`(二维码生成工具)
+
+生成可打印的二维码图片,默认保存在 **QR 节点同级目录** 的 `qr_codes/` 文件夹下。
+后端自动选择 `qrcode` / `segno` / `cv2.QRCodeEncoder` 中任意一个可用项。
+
+```bash
+# 生成一组默认路径选择二维码(left/right/straight/stop)
+ros2 run simple_follower_ros2 qr_make --all
+
+# 生成单个自定义二维码
+ros2 run simple_follower_ros2 qr_make --data "path:left" --name turn_left
+```
+
+仓库已预生成 `qr_codes/{turn_left,turn_right,go_straight,stop}.png`,可直接打印张贴在线路上。
+
 ### `adjust_hsv`(调参工具)
 
 弹出 OpenCV trackbar,实时调整 HSV 阈值并显示分割结果。
@@ -103,6 +166,7 @@ float32 distance   # 估算距离(m)
 | `aruco_follower.launch.py` | 启动相机 + ArUco 节点 + 跟随 |
 | `line_follower.launch.py` | 启动底盘 + 相机 + 巡线 |
 | `line_follow_random.launch.py` | 巡线 + 分叉随机选择 |
+| `line_follow_qr.launch.py` | 巡线 + 二维码路径选择(QR 优先,先减速后停下) |
 | `adjust_hsv.launch.py` | 启动 HSV 调试 |
 
 ## 编译与运行
@@ -126,6 +190,10 @@ ros2 launch simple_follower_ros2 visual_follower.launch.py
 
 # 3. 也可以激光跟随(任何最近的腿/物体)
 ros2 launch simple_follower_ros2 laser_follower.launch.py
+
+# 4. 巡线 + 二维码路径选择(检测到二维码先减速后停下, QR 优先级高于巡线)
+ros2 run simple_follower_ros2 qr_make --all   # 先生成并打印二维码
+ros2 launch simple_follower_ros2 line_follow_qr.launch.py
 ```
 
 ## 注意事项
