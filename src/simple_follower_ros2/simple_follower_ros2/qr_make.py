@@ -55,7 +55,9 @@ def _save_with_qrcode(data, path, box_size, border):
 
 def _save_with_segno(data, path, box_size, border):
     import segno
-    qr = segno.make(data, error='m')
+    # 必须用 make_qr 强制标准二维码: segno.make 对短内容会生成 Micro QR(M1-M4),
+    # 而微信 / 手机相机 / ZBar / OpenCV 都不支持 Micro QR, 会"扫不出来".
+    qr = segno.make_qr(data, error='m')
     qr.save(path, scale=box_size, border=border)
 
 
