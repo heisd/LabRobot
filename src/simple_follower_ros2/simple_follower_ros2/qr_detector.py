@@ -51,7 +51,11 @@ class QRDetector(Node):
         self.get_logger().info(f'qr_detector started, subscribing image: {self.image_topic}')
 
     def image_callback(self, msg):
-        image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        try:
+            image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        except Exception as err:  # noqa: BLE001 - 单帧异常不应使节点崩溃
+            self.get_logger().warn(f'cv_bridge conversion failed: {err}')
+            return
         h, w = image.shape[:2]
         frame_area = float(h * w)
 

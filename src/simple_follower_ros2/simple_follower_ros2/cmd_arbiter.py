@@ -88,6 +88,12 @@ class CmdArbiter(Node):
         self.line_found_eps = g('line_found_eps').value
         self.line_confirm = g('line_confirm').value
 
+        # 防止非法频率导致除零 / 异常高频定时器
+        if self.publish_rate is None or self.publish_rate < 1.0:
+            self.get_logger().warn(
+                f'publish_rate={self.publish_rate} invalid, clamping to 1.0 Hz')
+            self.publish_rate = 1.0
+
         qos = QoSProfile(depth=10)
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', qos)
         self.follow_sub = self.create_subscription(
