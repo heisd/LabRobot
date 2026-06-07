@@ -275,6 +275,10 @@ class CmdArbiter(Node):
             if self.armed and active and not self.in_cooldown():
                 self.enter_decel()
             else:
+                if active and self.in_cooldown():
+                    self.get_logger().info(
+                        f'QR "{self.last_qr_data}" in cooldown, ignored',
+                        throttle_duration_sec=1.0)
                 self.publish(self.last_follow)
 
         elif self.state == STATE_DECEL:
@@ -312,28 +316,50 @@ class CmdArbiter(Node):
             elapsed = self.now() - self.turn_start_time
             # 固定转角: 里程计闭环到目标角度(或开环按时间), 不等线
             if self.turn_fixed:
+                target_deg = math.degrees(self.turn_target_rad)
                 if self.turn_use_odom:
                     delta = self.current_yaw - self.turn_prev_yaw
                     delta = math.atan2(math.sin(delta), math.cos(delta))  # 处理 ±pi 翻转
                     self.turn_accum += delta
                     self.turn_prev_yaw = self.current_yaw
+                    done_deg = math.degrees(abs(self.turn_accum))
+                    self.get_logger().info(
+                        f'turning [odom] {done_deg:.1f}/{target_deg:.1f} deg',
+                        throttle_duration_sec=0.3)
                     if abs(self.turn_accum) >= self.turn_target_rad:
+                        self.get_logger().info(
+                            f'fixed turn done [odom]: turned {done_deg:.1f} deg '
+                            f'(target {target_deg:.1f})')
                         self.resume_follow()
                         return
-                elif elapsed >= self.turn_target_time:
-                    self.resume_follow()
-                    return
+                else:
+                    self.get_logger().info(
+                        f'turning [time] {elapsed:.2f}/{self.turn_target_time:.2f}s '
+                        f'(~{target_deg:.1f} deg)',
+                        throttle_duration_sec=0.3)
+                    if elapsed >= self.turn_target_time:
+                        self.get_logger().info(
+                            f'fixed turn done [time]: ~{target_deg:.1f} deg '
+                            f'in {elapsed:.2f}s')
+                        self.resume_follow()
+                        return
                 if elapsed >= self.turn_safety_time:
-                    self.get_logger().warn('fixed-turn timeout, resume anyway')
+                    self.get_logger().warn(
+                        f'fixed-turn timeout after {elapsed:.1f}s, resume anyway')
                     self.resume_follow()
                 return
-            # 盲转阶段结束后才开始找线, 避免在路口原地的旧线上误判
+            # 寻线转向: 盲转阶段结束后才开始找线, 避免在路口原地的旧线上误判
+            self.get_logger().info(
+                f'turning [seek] {elapsed:.1f}s, line hits={self.line_hits}/{self.line_confirm}',
+                throttle_duration_sec=0.5)
             if elapsed >= self.turn_min_time:
                 if self.line_found():
                     self.line_hits += 1
                 else:
                     self.line_hits = 0
                 if self.line_hits >= self.line_confirm:
+                    self.get_logger().info(
+                        f'seek turn done: line re-found after {elapsed:.1f}s')
                     self.resume_follow()
                     return
             if elapsed >= self.turn_max_time:
