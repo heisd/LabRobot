@@ -5,3 +5,4 @@ log/
 *.gv
 *.pdf
 .marscode/
+__pycache__/
