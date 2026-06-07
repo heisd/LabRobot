@@ -10,6 +10,7 @@ data_files.append(('share/' + package_name, ['launch/visual_follower.launch.py']
 data_files.append(('share/' + package_name, ['launch/visual_follower.launch.py']))
 data_files.append(('share/' + package_name, ['launch/adjust_hsv.launch.py']))
 data_files.append(('share/' + package_name, ['launch/aruco_follower.launch.py']))
+data_files.append(('share/' + package_name, ['launch/line_follow_qr.launch.py']))
 
 data_files.append(('share/' + package_name, ['package.xml']))
 
@@ -36,7 +37,9 @@ setup(
             'lasertracker ='
             ' simple_follower_ros2.laserTracker:main',
             'arfollower = simple_follower_ros2.ar_follow:main',
-    
+            'qr_detector = simple_follower_ros2.qr_detector:main',
+            'cmd_arbiter = simple_follower_ros2.cmd_arbiter:main',
+            'qr_make = simple_follower_ros2.qr_make:main',
         ],
     },
 )
