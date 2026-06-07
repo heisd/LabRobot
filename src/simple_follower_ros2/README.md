@@ -56,7 +56,7 @@ simple_follower_ros2/
 ## 依赖项
 
 - buildtool: `ament_python`
-- depend: `rclpy`、`geometry_msgs`、`sensor_msgs`、`std_msgs`、`cv_bridge`、`OpenCV`、`numpy`、`aruco_msgs`(用于 ArUco 跟随)
+- depend: `rclpy`、`geometry_msgs`、`nav_msgs`(里程计闭环转角)、`sensor_msgs`、`std_msgs`、`cv_bridge`、`OpenCV`、`numpy`、`aruco_msgs`(用于 ArUco 跟随);可选 `pyzbar`(更鲁棒的二维码识别)
 
 ## 消息定义
 
@@ -150,7 +150,7 @@ pip3 install pyzbar
 | `path:straight` | **直行**:停一下后继续巡线 |
 | 其它/无法识别 | 安全起见按 **停止** 处理 |
 
-> **固定转角**为开环按时间转(时长 = 角度弧度 / `turn_angular_speed`),不依赖里程计;现场若角度偏差,微调 `turn_angular_speed` 即可。`path:left`/`path:right`(不带数字)仍是"转到重新发现线"的旧行为。
+> **固定转角**默认用 **里程计(`/odom`)闭环**精确转到目标角度:转向时累计 `odom` 的 yaw 变化(已处理 ±π 翻转),达到目标弧度即停,角度与速度/地面无关,更准。若拿不到里程计(`use_odom_turn=False` 或没有 `/odom`)则自动退回**开环按时间**(时长 = 角度弧度 / `turn_angular_speed`);两种模式都有安全超时(期望时长×2+2s)。`path:left`/`path:right`(不带数字)仍是"转到重新发现线"的旧行为。
 >
 > **同一二维码冷却**:同一**内容**的二维码在 `same_qr_cooldown` 秒(默认 `5.0`)内只会触发一次动作,避免靠近/经过同一张码时被反复识别;不同内容的二维码不受影响。
 
@@ -159,6 +159,7 @@ pip3 install pyzbar
 参数:
 - 减速/停车:`decel_duration`(默认 `1.2`s)、`publish_rate`(默认 `20`Hz)、`detect_timeout`(默认 `0.5`s)、`clear_hold`(默认 `1.0`s)、`resume_after_clear`(默认 `True`)、`stop_dwell`(停稳停留,默认 `0.5`s)、`same_qr_cooldown`(同一码冷却,默认 `5.0`s)
 - 路径动作:`enable_path_action`(默认 `True`)、`turn_angular_speed`(默认 `0.4` rad/s)、`turn_min_time`(默认 `1.0`s)、`turn_max_time`(默认 `8.0`s)、`line_found_eps`(默认 `0.005`)、`line_confirm`(默认 `3` 帧)
+- 固定转角闭环:`use_odom_turn`(默认 `True`)、`odom_topic`(默认 `/odom`)
 
 ### `qr_make`(二维码生成工具)
 

@@ -67,6 +67,9 @@ def generate_launch_description():
             'turn_max_time': 8.0,
             'line_found_eps': 0.005,
             'line_confirm': 3,
+            # 固定转角用里程计闭环, 角度更准
+            'use_odom_turn': True,
+            'odom_topic': '/odom',
         }],
     )
 

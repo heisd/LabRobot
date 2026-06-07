@@ -64,6 +64,8 @@ def generate_launch_description():
             'turn_max_time': 8.0,
             'line_found_eps': 0.005,
             'line_confirm': 3,
+            'use_odom_turn': True,
+            'odom_topic': '/odom',
         }],
     )
 
