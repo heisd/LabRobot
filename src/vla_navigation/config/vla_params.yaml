@@ -15,6 +15,7 @@ vla_navigator:
     awake_topic: "awake_flag"           # 唤醒标志, 用于语音问候
     goal_topic: "goal_pose"             # Nav2 目标点话题
     tts_topic: "tts_text"               # 发给 tts 节点的播报文本
+    status_topic: "vla/status"          # 可读状态(指令/决策/导航), 供 dashboard 展示
     map_frame: "map"
     base_frame: "base_footprint"
 

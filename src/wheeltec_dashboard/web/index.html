@@ -126,6 +126,43 @@
       </div>
     </section>
 
+    <section class="card card-wide">
+      <h2>VLA 语音导航 <span class="muted">(/vla)</span></h2>
+      <div class="vla">
+        <div class="vla-row">
+          <input id="vla-instr" type="text" placeholder="输入导航指令，如：去厨房 / 向前一米然后左转" />
+          <button id="vla-send">发送指令</button>
+        </div>
+        <div class="vla-quick">
+          <button class="vla-q" data-instr="去厨房">去厨房</button>
+          <button class="vla-q" data-instr="去充电桩">去充电桩</button>
+          <button class="vla-q" data-instr="去门口">去门口</button>
+          <button class="vla-q" data-instr="去原点">去原点</button>
+          <button class="vla-q vla-q-stop" data-instr="停">停</button>
+        </div>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">最近识别 (/voice_words)</div>
+            <div id="vla-heard" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">语音播报 (/tts_text)</div>
+            <div id="vla-say" class="metric-value">—</div>
+          </div>
+        </div>
+        <div class="vla-row">
+          <input id="tts-input" type="text" placeholder="让小车说话…（发布到 /tts_text）" />
+          <button id="tts-send">播报</button>
+        </div>
+        <div class="vla-timeline-head">
+          <span>VLA 时间线 <span class="muted">(/vla/status)</span></span>
+          <button id="vla-clear">清空</button>
+        </div>
+        <div id="vla-timeline" class="vla-timeline"></div>
+      </div>
+      <p class="hint">指令发布到 <code>/vla/instruction</code>；麦克风识别走 <code>/voice_words</code>。决策与导航状态来自 <code>/vla/status</code>，目标点见 RViz 或 <code>/goal_pose</code>。需先启动 <code>vla_navigator</code> 节点与 rosbridge。</p>
+    </section>
+
     <section class="card">
       <h2>参数 (/wheeltec_robot)</h2>
       <div class="params">

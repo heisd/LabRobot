@@ -64,6 +64,12 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 - **日志面板**：订阅 `/rosout`，按等级 (DEBUG/INFO/WARN/ERROR/FATAL)
   与节点名子串过滤；可配置环形缓冲行数 (50–5000)、暂停/继续、清空、
   自动滚动；按等级着色。
+- **VLA 语音导航**：把自然语言指令发布到 `/vla/instruction`（输入框 +
+  常用目的地快捷按钮），让 `vla_navigation` 包的 `vla_navigator` 节点用
+  本地多模态大模型决策导航；实时显示麦克风识别 `/voice_words`、语音播报
+  `/tts_text`，以及决策/导航时间线 `/vla/status`；还可向 `/tts_text` 发文本
+  让小车开口说话。**需先启动 `vla_navigator`（如 `vla_bringup.launch.py`）**，
+  目标点可在本面板 3D 视图或 RViz 的 `/goal_pose` 查看。
 
 ## 网络说明
 

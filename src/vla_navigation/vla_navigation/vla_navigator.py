@@ -10,6 +10,7 @@
 """
 
 import base64
+import json
 import math
 import os
 import queue
@@ -61,6 +62,7 @@ class VlaNavigator(Node):
         self.declare_parameter('awake_topic', 'awake_flag')
         self.declare_parameter('goal_topic', 'goal_pose')
         self.declare_parameter('tts_topic', 'tts_text')
+        self.declare_parameter('status_topic', 'vla/status')
         self.declare_parameter('map_frame', 'map')
         self.declare_parameter('base_frame', 'base_footprint')
         self.declare_parameter('use_action', False)
@@ -97,6 +99,8 @@ class VlaNavigator(Node):
 
         self.goal_pub = self.create_publisher(PoseStamped, gp('goal_topic').value, 10)
         self.tts_pub = self.create_publisher(String, gp('tts_topic').value, 10)
+        # 给 dashboard / 调试用的可读状态(指令/决策/导航)
+        self.status_pub = self.create_publisher(String, gp('status_topic').value, 10)
 
         self.create_subscription(Image, gp('image_topic').value,
                                  self._image_cb, qos_profile_sensor_data)
@@ -147,6 +151,12 @@ class VlaNavigator(Node):
             return
         self.tts_pub.publish(String(data=str(text)))
         self.get_logger().info('TTS: %s' % text)
+
+    def _status(self, text):
+        """发布一条可读状态(供 dashboard 时间线展示)并记录日志."""
+        text = str(text)
+        self.status_pub.publish(String(data=text))
+        self.get_logger().info(text)
 
     def _image_cb(self, msg):
         try:
@@ -209,12 +219,13 @@ class VlaNavigator(Node):
                 self._task_queue.task_done()
 
     def _process(self, text, image_b64):
+        self._status('[指令] %s' % text)
         decision = self.vlm.query(
             instruction=text,
             waypoint_text=self.waypoint_map.describe(),
             image_b64=image_b64,
         )
-        self.get_logger().info('大模型决策: %s' % decision)
+        self._status('[决策] %s' % json.dumps(decision, ensure_ascii=False))
         self._dispatch(decision)
 
     def _dispatch(self, decision):
@@ -230,6 +241,7 @@ class VlaNavigator(Node):
         elif action == 'relative_move':
             self._handle_relative(decision, say)
         elif action == 'stop':
+            self._status('[停止]')
             self._say(say or '好的，停下')
             self._cancel_nav()
         elif action == 'speak':
@@ -240,14 +252,14 @@ class VlaNavigator(Node):
     def _handle_goto(self, name, say):
         wp = self.waypoint_map.match(name)
         if wp is None:
-            self.get_logger().warn('未知航点: %r' % name)
+            self._status('[导航] 未知地点: %s' % (name or ''))
             self._say('我不知道%s在哪里' % (name or '那个地点'))
             return
         z, w = wp.quaternion()
         pose = self._make_pose(self.map_frame, wp.x, wp.y, z, w)
         self._say(say or ('好的，正在前往%s' % wp.name))
         self._send_goal(pose)
-        self.get_logger().info('前往航点 %s -> (x=%.2f, y=%.2f)' % (wp.name, wp.x, wp.y))
+        self._status('[导航] 前往 %s (x=%.2f, y=%.2f)' % (wp.name, wp.x, wp.y))
 
     def _handle_relative(self, decision, say):
         try:
@@ -276,12 +288,13 @@ class VlaNavigator(Node):
         except TransformException as exc:
             self.get_logger().warn('TF 转换失败 (%s -> %s): %s' % (
                 self.base_frame, self.map_frame, exc))
+            self._status('[相对移动] TF 失败, 暂时无法定位')
             self._say('我暂时定位不到自己的位置')
             return
 
         self._say(say or '好的，马上过去')
         self._send_goal(goal)
-        self.get_logger().info('相对移动: 距离=%.2fm, 角度=%.1f° -> map(x=%.2f, y=%.2f)' % (
+        self._status('[相对移动] 距离=%.2fm 角度=%.1f° -> map(%.2f, %.2f)' % (
             distance, angle_deg, goal.pose.position.x, goal.pose.position.y))
 
     # --------------------------------------------------------------- nav output

@@ -15,6 +15,8 @@
   let ros = null;
   const subs = [];   // active subscriptions
   let cmdVelPub = null;
+  let vlaInstrPub = null;  // /vla/instruction publisher
+  let ttsPub = null;       // /tts_text publisher
 
   function setStatus(state, text) {
     statusEl.className = 'status status-' + state;
@@ -103,6 +105,14 @@
       try { cmdVelPub.unadvertise(); } catch (_) { /* ignore */ }
       cmdVelPub = null;
     }
+    if (vlaInstrPub) {
+      try { vlaInstrPub.unadvertise(); } catch (_) { /* ignore */ }
+      vlaInstrPub = null;
+    }
+    if (ttsPub) {
+      try { ttsPub.unadvertise(); } catch (_) { /* ignore */ }
+      ttsPub = null;
+    }
   }
 
   function setupTopics() {
@@ -175,6 +185,28 @@
       messageType: 'geometry_msgs/msg/Twist',
     });
     cmdVelPub.advertise();
+
+    // VLA: publish instructions / TTS text, watch recognition + status.
+    vlaInstrPub = new ROSLIB.Topic({
+      ros, name: '/vla/instruction', messageType: 'std_msgs/msg/String',
+    });
+    vlaInstrPub.advertise();
+    ttsPub = new ROSLIB.Topic({
+      ros, name: '/tts_text', messageType: 'std_msgs/msg/String',
+    });
+    ttsPub.advertise();
+
+    sub('/voice_words', 'std_msgs/msg/String', (msg) => {
+      const el = $('vla-heard');
+      if (el) el.textContent = msg.data || '—';
+    });
+    sub('/tts_text', 'std_msgs/msg/String', (msg) => {
+      const el = $('vla-say');
+      if (el) el.textContent = msg.data || '—';
+    });
+    sub('/vla/status', 'std_msgs/msg/String', (msg) => {
+      addVlaStatus(msg.data || '');
+    });
 
     // Build viewer + log subscription as part of the connection lifecycle.
     rebuildViewer();
@@ -943,6 +975,65 @@
 
   // Start streams once on load (they're independent of rosbridge).
   applyAllCams();
+
+  // ---------- VLA voice navigation ----------
+  const VLA_MAX_LINES = 200;
+
+  function addVlaStatus(text) {
+    const view = $('vla-timeline');
+    if (!view) return;
+    const row = document.createElement('div');
+    row.className = 'vla-line';
+    const t = document.createElement('span');
+    t.className = 'vt';
+    t.textContent = new Date().toLocaleTimeString();
+    const m = document.createElement('span');
+    m.className = 'vm';
+    m.textContent = text;          // textContent: never inject markup from ROS
+    row.appendChild(t);
+    row.appendChild(m);
+    view.appendChild(row);
+    while (view.childElementCount > VLA_MAX_LINES) view.removeChild(view.firstChild);
+    view.scrollTop = view.scrollHeight;
+  }
+
+  function sendInstruction(text) {
+    const t = (text || '').trim();
+    if (!t) return;
+    if (!vlaInstrPub) { addVlaStatus('未连接 rosbridge，无法发送指令'); return; }
+    vlaInstrPub.publish(new ROSLIB.Message({ data: t }));
+    addVlaStatus('> 发送指令: ' + t);
+  }
+
+  function sendTts(text) {
+    const t = (text || '').trim();
+    if (!t) return;
+    if (!ttsPub) { addVlaStatus('未连接 rosbridge，无法播报'); return; }
+    ttsPub.publish(new ROSLIB.Message({ data: t }));
+  }
+
+  const vlaInstrInput = $('vla-instr');
+  const vlaSendBtn = $('vla-send');
+  if (vlaSendBtn) vlaSendBtn.addEventListener('click', () => sendInstruction(vlaInstrInput.value));
+  if (vlaInstrInput) vlaInstrInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { sendInstruction(vlaInstrInput.value); vlaInstrInput.value = ''; }
+  });
+  document.querySelectorAll('.vla-q').forEach((b) => {
+    b.addEventListener('click', () => sendInstruction(b.dataset.instr));
+  });
+
+  const ttsInput = $('tts-input');
+  const ttsSendBtn = $('tts-send');
+  if (ttsSendBtn) ttsSendBtn.addEventListener('click', () => sendTts(ttsInput.value));
+  if (ttsInput) ttsInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { sendTts(ttsInput.value); ttsInput.value = ''; }
+  });
+
+  const vlaClearBtn = $('vla-clear');
+  if (vlaClearBtn) vlaClearBtn.addEventListener('click', () => {
+    const v = $('vla-timeline');
+    if (v) v.innerHTML = '';
+  });
 
   // ---------- Logs (/rosout) ----------
   const logView = $('log-view');

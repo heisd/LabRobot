@@ -147,6 +147,14 @@ ros2 topic pub --once /tts_text std_msgs/msg/String "{data: '你好，我是小�
 `vla_navigator` 把推理放在**独立工作线程**：指令回调只负责抓取当前帧并入队，
 工作线程串行取出、调用 Ollama 并分发动作。队列已满（上一条仍在推理）时新指令会被忽略并告警。
 
+## 接入 dashboard
+
+`wheeltec_dashboard` 新增了 **“VLA 语音导航”卡片**：输入框/快捷按钮把指令发到
+`/vla/instruction`，并实时显示 `/voice_words`（识别）、`/tts_text`（播报）与
+`/vla/status`（决策与导航时间线）。为此 `vla_navigator` 会把每步可读状态发布到
+`/vla/status`（`std_msgs/String`，话题名见 `status_topic` 参数）。用法：先正常启动
+dashboard（`ros2 launch wheeltec_dashboard dashboard.launch.py`）与本节点即可。
+
 ## 局限
 
 - 在本仓库的云端开发容器里**无法编译/运行**（无 ROS/GPU/Ollama），所有代码需在实车上构建验证。
