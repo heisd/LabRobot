@@ -70,8 +70,10 @@ ros2 launch vla_navigation vla_bringup.launch.py
 
 它默认拉起：底盘 `turn_on_wheeltec_robot`、雷达、Nav2(`bringup_launch.py`, 地图
 `WHEELTEC.yaml`)、Orbbec Gemini 摄像头(`/camera/color/image_raw`)、语音链
-(`wheeltec_mic`+`voice_control`+`call_recognition`+`tts`)、`vla_navigator`，以及
-**RViz2**（配置 `rviz/vla.rviz`，含相机画面与 `/goal_pose` 目标箭头）。
+(`wheeltec_mic`+`voice_control`+`call_recognition`+`tts`)、`vla_navigator`、
+**RViz2**（配置 `rviz/vla.rviz`，含相机画面与 `/goal_pose` 目标箭头），以及
+**Web 仪表盘**（`wheeltec_dashboard`：rosbridge + 静态页 + web_video_server，
+带“VLA 语音导航”卡片，浏览器开 `http://<机器人IP>:8080/`）。
 **故意不启动 `command_recognition`**（它会把“去I/J/K点”直接发 `goal_pose`，与 VLA 抢目标）。
 
 启动是**分批错开**的（各约 2s），让后启的节点等前面就绪：
@@ -79,7 +81,7 @@ ros2 launch vla_navigation vla_bringup.launch.py
 ```
 t=0s  底盘(TF/odom)
 t≈2s  雷达 + 摄像头
-t≈4s  Nav2 + RViz2
+t≈4s  Nav2 + RViz2 + Web 仪表盘
 t≈6s  语音链 + VLA 大脑
 ```
 
@@ -87,12 +89,13 @@ t≈6s  语音链 + VLA 大脑
 
 ```bash
 ros2 launch vla_navigation vla_bringup.launch.py \
-    start_nav:=false start_camera:=false \
+    start_nav:=false start_camera:=false start_dashboard:=false \
     vlm_model:=qwen2.5vl:3b use_action:=false
 ```
 
-可选参数：`start_base / start_lidar / start_nav / start_camera / start_voice / start_rviz`
-（默认全 true）、`map`、`nav_params`、`rviz_config`、`mic_port`、`asr_appid`、`vlm_model`、`use_action`。
+可选参数：`start_base / start_lidar / start_nav / start_camera / start_voice /
+start_rviz / start_dashboard`（默认全 true）、`map`、`nav_params`、`rviz_config`、
+`http_port`、`ws_port`、`mic_port`、`asr_appid`、`vlm_model`、`use_action`。
 
 只想单独跑 VLA 节点（底盘/导航/语音都自行启动）时仍可用：
 

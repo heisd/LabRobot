@@ -5,6 +5,8 @@
   雷达 start_lidar   : wheeltec_lidar
   导航 start_nav     : wheeltec_nav2/bringup_launch.py (map=WHEELTEC.yaml)
   摄像头 start_camera : Orbbec Gemini (wheeltec_camera, 发布 /camera/color/image_raw)
+  RViz start_rviz    : RViz2 (rviz/vla.rviz)
+  仪表盘 start_dashboard : Web 面板 (rosbridge + web_server + web_video_server, 含 VLA 卡片)
   语音 start_voice   : wheeltec_mic + voice_control + call_recognition + tts
   VLA(始终启动)      : vla_navigator
 
@@ -38,9 +40,11 @@ def generate_launch_description():
     tts_share = get_package_share_directory('tts')
     robot_share = get_package_share_directory('turn_on_wheeltec_robot')
     nav_share = get_package_share_directory('wheeltec_nav2')
+    dash_share = get_package_share_directory('wheeltec_dashboard')
 
     robot_launch = os.path.join(robot_share, 'launch')
     nav_launch = os.path.join(nav_share, 'launch')
+    dash_launch = os.path.join(dash_share, 'launch')
 
     vla_params = os.path.join(vla_share, 'config', 'vla_params.yaml')
     vla_waypoints = os.path.join(vla_share, 'config', 'waypoints.yaml')
@@ -61,9 +65,12 @@ def generate_launch_description():
     start_camera = LaunchConfiguration('start_camera')
     start_voice = LaunchConfiguration('start_voice')
     start_rviz = LaunchConfiguration('start_rviz')
+    start_dashboard = LaunchConfiguration('start_dashboard')
     nav_map = LaunchConfiguration('map')
     nav_params = LaunchConfiguration('nav_params')
     rviz_cfg = LaunchConfiguration('rviz_config')
+    http_port = LaunchConfiguration('http_port')
+    ws_port = LaunchConfiguration('ws_port')
 
     declare_args = [
         DeclareLaunchArgument('mic_port', default_value='/dev/wheeltec_mic',
@@ -88,12 +95,18 @@ def generate_launch_description():
                               description='启动麦克风/离线识别/TTS 语音链'),
         DeclareLaunchArgument('start_rviz', default_value='true',
                               description='启动 RViz2 可视化'),
+        DeclareLaunchArgument('start_dashboard', default_value='true',
+                              description='启动 Web 仪表盘(rosbridge+web_server+web_video_server)'),
         DeclareLaunchArgument('map', default_value=default_map,
                               description='Nav2 地图文件'),
         DeclareLaunchArgument('nav_params', default_value=default_nav_params,
                               description='Nav2 参数文件'),
         DeclareLaunchArgument('rviz_config', default_value=default_rviz,
                               description='RViz2 配置文件'),
+        DeclareLaunchArgument('http_port', default_value='8080',
+                              description='仪表盘 HTTP 端口'),
+        DeclareLaunchArgument('ws_port', default_value='9090',
+                              description='rosbridge websocket 端口'),
     ]
 
     # ---------------- 底盘 / 雷达 / 导航 / 摄像头 ----------------
@@ -125,6 +138,12 @@ def generate_launch_description():
         package='rviz2', executable='rviz2', name='rviz2', output='screen',
         arguments=['-d', rviz_cfg],
         condition=IfCondition(start_rviz),
+    )
+    dashboard = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(dash_launch, 'dashboard.launch.py')),
+        launch_arguments={'http_port': http_port, 'ws_port': ws_port}.items(),
+        condition=IfCondition(start_dashboard),
     )
 
     # ---------------- 语音输入链 + TTS ----------------
@@ -176,8 +195,8 @@ def generate_launch_description():
     ld.add_action(base)
     # t≈2s: 传感器(雷达 / 摄像头)
     ld.add_action(TimerAction(period=2.0, actions=[lidar, camera]))
-    # t≈4s: 导航 + RViz
-    ld.add_action(TimerAction(period=4.0, actions=[nav, rviz]))
+    # t≈4s: 导航 + RViz + Web 仪表盘
+    ld.add_action(TimerAction(period=4.0, actions=[nav, rviz, dashboard]))
     # t≈6s: 语音输入链 + TTS + VLA 大脑
     ld.add_action(TimerAction(period=6.0, actions=[
         wheeltec_mic, voice_control, call_recognition, tts, vla_navigator]))
