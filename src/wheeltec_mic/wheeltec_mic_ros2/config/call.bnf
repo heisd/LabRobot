@@ -8,6 +8,7 @@
 <callstart>:(小车|关闭|打开|开始)<choose>;
 <choose>:<action>|<navigation>|<turn>|<follow>;
 <action>:前进|后退|停|过来|休眠|自主建图|导航;
-<navigation>:去(I|J|K|O|P|Q)点;
+<navigation>:去<place>点|去<place>|导航到<place>|前往<place>|到<place>;
+<place>:I|J|K|O|P|Q|原点|起点|出发点|厨房|客厅|卧室|餐厅|书房|门口|大门|出口|充电桩|充电|回充|前台|会议室|洗手间|阳台|窗边;
 <turn>:(左|右)转;
 <follow>:雷达跟随;
