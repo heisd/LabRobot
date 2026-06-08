@@ -22,7 +22,8 @@ import os
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
+                            TimerAction)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -47,6 +48,7 @@ def generate_launch_description():
 
     default_map = os.path.join(nav_share, 'map', 'WHEELTEC.yaml')
     default_nav_params = os.path.join(nav_share, 'param', 'nav_param_s300_pro.yaml')
+    default_rviz = os.path.join(vla_share, 'rviz', 'vla.rviz')
 
     mic_port = LaunchConfiguration('mic_port')
     mic_baud = LaunchConfiguration('mic_baud')
@@ -58,8 +60,10 @@ def generate_launch_description():
     start_nav = LaunchConfiguration('start_nav')
     start_camera = LaunchConfiguration('start_camera')
     start_voice = LaunchConfiguration('start_voice')
+    start_rviz = LaunchConfiguration('start_rviz')
     nav_map = LaunchConfiguration('map')
     nav_params = LaunchConfiguration('nav_params')
+    rviz_cfg = LaunchConfiguration('rviz_config')
 
     declare_args = [
         DeclareLaunchArgument('mic_port', default_value='/dev/wheeltec_mic',
@@ -82,10 +86,14 @@ def generate_launch_description():
                               description='启动 Orbbec Gemini 摄像头'),
         DeclareLaunchArgument('start_voice', default_value='true',
                               description='启动麦克风/离线识别/TTS 语音链'),
+        DeclareLaunchArgument('start_rviz', default_value='true',
+                              description='启动 RViz2 可视化'),
         DeclareLaunchArgument('map', default_value=default_map,
                               description='Nav2 地图文件'),
         DeclareLaunchArgument('nav_params', default_value=default_nav_params,
                               description='Nav2 参数文件'),
+        DeclareLaunchArgument('rviz_config', default_value=default_rviz,
+                              description='RViz2 配置文件'),
     ]
 
     # ---------------- 底盘 / 雷达 / 导航 / 摄像头 ----------------
@@ -112,6 +120,11 @@ def generate_launch_description():
             'params_file': nav_params,
         }.items(),
         condition=IfCondition(start_nav),
+    )
+    rviz = Node(
+        package='rviz2', executable='rviz2', name='rviz2', output='screen',
+        arguments=['-d', rviz_cfg],
+        condition=IfCondition(start_rviz),
     )
 
     # ---------------- 语音输入链 + TTS ----------------
@@ -157,13 +170,15 @@ def generate_launch_description():
     ld = LaunchDescription()
     for action in declare_args:
         ld.add_action(action)
+
+    # 错开启动, 让后面的节点等前面就绪(底盘 TF -> 雷达 -> 导航/RViz -> 语音/VLA)
+    # t=0: 底盘
     ld.add_action(base)
-    ld.add_action(lidar)
-    ld.add_action(nav)
-    ld.add_action(camera)
-    ld.add_action(wheeltec_mic)
-    ld.add_action(voice_control)
-    ld.add_action(call_recognition)
-    ld.add_action(tts)
-    ld.add_action(vla_navigator)
+    # t≈2s: 传感器(雷达 / 摄像头)
+    ld.add_action(TimerAction(period=2.0, actions=[lidar, camera]))
+    # t≈4s: 导航 + RViz
+    ld.add_action(TimerAction(period=4.0, actions=[nav, rviz]))
+    # t≈6s: 语音输入链 + TTS + VLA 大脑
+    ld.add_action(TimerAction(period=6.0, actions=[
+        wheeltec_mic, voice_control, call_recognition, tts, vla_navigator]))
     return ld
