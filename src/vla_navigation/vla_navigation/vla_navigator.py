@@ -12,6 +12,8 @@
 import base64
 import math
 import os
+import queue
+import threading
 
 import cv2
 
@@ -116,6 +118,14 @@ class VlaNavigator(Node):
         self._last_instruction = ''
         self._last_stamp = self.get_clock().now()
 
+        # 大模型推理放到独立工作线程, 避免长耗时推理阻塞 ROS 执行器
+        # (否则推理期间收不到图像/TF/语音, 节点会"假死")
+        self._task_queue = queue.Queue(maxsize=2)
+        self._worker_stop = threading.Event()
+        self._worker = threading.Thread(
+            target=self._worker_loop, name='vla_worker', daemon=True)
+        self._worker.start()
+
         self.get_logger().info(
             'VLA 导航节点就绪: 模型=%s, 图像=%s, 目标发布=%s' % (
                 gp('vlm_model').value, gp('image_topic').value,
@@ -171,10 +181,34 @@ class VlaNavigator(Node):
         self._last_stamp = now
 
         self.get_logger().info('收到指令: %s' % text)
+        # 在回调里(执行器线程)快速抓取当前帧并编码, 再交给工作线程推理
         image_b64 = self._encode_image()
         if self.send_image and image_b64 is None:
             self.get_logger().warn('暂无可用摄像头图像, 本次按纯文本推理')
 
+        try:
+            self._task_queue.put_nowait((text, image_b64))
+        except queue.Full:
+            self.get_logger().warn('上一条指令仍在推理中, 忽略本条: %s' % text)
+
+    def _worker_loop(self):
+        """工作线程: 串行处理指令, 每条做一次大模型推理并分发动作."""
+        while not self._worker_stop.is_set():
+            try:
+                item = self._task_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                if item is None:  # 退出哨兵
+                    break
+                text, image_b64 = item
+                self._process(text, image_b64)
+            except Exception as exc:  # noqa: BLE001  单条指令异常不应拖垮线程
+                self.get_logger().error('VLA 推理处理异常: %s' % exc)
+            finally:
+                self._task_queue.task_done()
+
+    def _process(self, text, image_b64):
         decision = self.vlm.query(
             instruction=text,
             waypoint_text=self.waypoint_map.describe(),
@@ -289,6 +323,16 @@ class VlaNavigator(Node):
             self._goal_handle = None
         self.get_logger().info('收到停止指令')
 
+    def stop_worker(self):
+        """通知工作线程退出并等待其结束(节点关闭时调用)."""
+        self._worker_stop.set()
+        try:
+            self._task_queue.put_nowait(None)
+        except queue.Full:
+            pass
+        if self._worker.is_alive():
+            self._worker.join(timeout=2.0)
+
 
 def main(args=None):
     rclpy.init(args=args)
@@ -298,6 +342,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        node.stop_worker()
         node.destroy_node()
         rclpy.shutdown()
 

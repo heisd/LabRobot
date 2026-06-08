@@ -111,11 +111,20 @@ ros2 topic pub --once /tts_text std_msgs/msg/String "{data: '你好，我是小�
 
 ## 与现有语音模块的关系
 
-- 输入沿用 `wheeltec_mic` 的 `voice_words`（离线命令词）。要识别更丰富的目的地，
-  可在 `wheeltec_mic_ros2/config/call.bnf` 里扩充语法并重建语法缓存；若需要**自由说话**，
-  则要接入在线 ASR（本期未做）。
+- 输入沿用 `wheeltec_mic` 的 `voice_words`（离线命令词）。已在
+  `wheeltec_mic_ros2/config/call.bnf` 的 `<navigation>` 中扩充了命名目的地
+  （原点/厨房/客厅/卧室/餐厅/书房/门口/充电桩/前台/会议室…）以及
+  “去X / 导航到X / 前往X / 到X”等说法，并保留原有 `去I/J/K点`。
+  该语法在语音节点启动时会自动重建生效（如未生效，删除
+  `config/msc/res/asr/GrmBuilld` 缓存后重启）。若要**自由说话**，仍需接入在线 ASR（本期未做）。
 - 输出复用改造后的 `tts` 节点：它现在**订阅 `tts_text` 话题**并用 `aplay` 真正播放，
   而不再是开机只合成一次 WAV。
+
+## 并发模型
+
+大模型推理可能耗时数秒到数十秒。为避免阻塞 ROS 执行器（推理期间收不到图像/TF/语音），
+`vla_navigator` 把推理放在**独立工作线程**：指令回调只负责抓取当前帧并入队，
+工作线程串行取出、调用 Ollama 并分发动作。队列已满（上一条仍在推理）时新指令会被忽略并告警。
 
 ## 局限
 
