@@ -62,20 +62,31 @@ source install/setup.bash
 
 ## 运行
 
-分别在不同终端启动（顺序无所谓，建议先起 Nav2 与摄像头）：
+底盘/Nav2 与摄像头按原方式单独启动（依赖地图与硬件）：
 
 ```bash
 # 1) 底盘 + Nav2(已建好地图 WHEELTEC.yaml)
 ros2 launch wheeltec_robot_nav2 wheeltec_nav2.launch.py
+# 2) 摄像头(发布 /image_raw)
+ros2 launch usb_cam usb_cam_launch.py
+```
 
-# 2) 摄像头
-ros2 launch usb_cam usb_cam_launch.py        # 发布 /image_raw
+然后**一键启动**语音输入链 + TTS + VLA 大脑（推荐）：
 
-# 3) 语音输入(麦克风离线识别) + TTS 播报
-ros2 launch wheeltec_mic_ros2 base.launch.py # 发布 voice_words / awake_flag
-ros2 launch tts tts_make.launch.py           # 订阅 tts_text, 用 aplay 播放
+```bash
+ros2 launch vla_navigation vla_bringup.launch.py
+# 可选参数:
+#   mic_port:=/dev/wheeltec_mic  asr_appid:=6159904a
+#   vlm_model:=qwen2.5vl:3b      use_action:=false
+```
 
-# 4) VLA 导航大脑
+`vla_bringup.launch.py` 启动 `wheeltec_mic` + `voice_control` + `call_recognition`
++ `tts` + `vla_navigator`。**故意不启动 `command_recognition`**（它会把“去I/J/K点”
+直接发成 `goal_pose`，与 VLA 抢导航目标）。
+
+只想单独跑 VLA 节点（语音/TTS 自行启动)时仍可用：
+
+```bash
 ros2 launch vla_navigation vla_navigation.launch.py
 ```
 
