@@ -9,7 +9,7 @@ vla_navigator:
     jpeg_quality: 70
 
     # ---- ROS 话题 / 坐标系 ----
-    image_topic: "/image_raw"           # usb_cam 默认图像话题; astra 改成 /camera/color/image_raw
+    image_topic: "/camera/color/image_raw"  # S300 自带 Orbbec Gemini; 若用 usb_cam 改成 /image_raw
     voice_topic: "voice_words"          # wheeltec_mic 离线识别结果
     instruction_topic: "/vla/instruction"  # 方便不说话也能打字测试
     awake_topic: "awake_flag"           # 唤醒标志, 用于语音问候

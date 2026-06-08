@@ -62,29 +62,29 @@ source install/setup.bash
 
 ## 运行
 
-底盘/Nav2 与摄像头按原方式单独启动（依赖地图与硬件）：
-
-```bash
-# 1) 底盘 + Nav2(已建好地图 WHEELTEC.yaml)
-ros2 launch wheeltec_robot_nav2 wheeltec_nav2.launch.py
-# 2) 摄像头(发布 /image_raw)
-ros2 launch usb_cam usb_cam_launch.py
-```
-
-然后**一键启动**语音输入链 + TTS + VLA 大脑（推荐）：
+**一键启动**整套（底盘 + 雷达 + 导航 + 摄像头 + 语音 + VLA）：
 
 ```bash
 ros2 launch vla_navigation vla_bringup.launch.py
-# 可选参数:
-#   mic_port:=/dev/wheeltec_mic  asr_appid:=6159904a
-#   vlm_model:=qwen2.5vl:3b      use_action:=false
 ```
 
-`vla_bringup.launch.py` 启动 `wheeltec_mic` + `voice_control` + `call_recognition`
-+ `tts` + `vla_navigator`。**故意不启动 `command_recognition`**（它会把“去I/J/K点”
-直接发成 `goal_pose`，与 VLA 抢导航目标）。
+它默认拉起：底盘 `turn_on_wheeltec_robot`、雷达、Nav2(`bringup_launch.py`, 地图
+`WHEELTEC.yaml`)、Orbbec Gemini 摄像头(`/camera/color/image_raw`)、语音链
+(`wheeltec_mic`+`voice_control`+`call_recognition`+`tts`)、以及 `vla_navigator`。
+**故意不启动 `command_recognition`**（它会把“去I/J/K点”直接发 `goal_pose`，与 VLA 抢目标）。
 
-只想单独跑 VLA 节点（语音/TTS 自行启动)时仍可用：
+每部分都能用 `start_*` 单独关掉（比如已经单独开了 Nav2/摄像头）：
+
+```bash
+ros2 launch vla_navigation vla_bringup.launch.py \
+    start_nav:=false start_camera:=false \
+    vlm_model:=qwen2.5vl:3b use_action:=false
+```
+
+可选参数：`start_base / start_lidar / start_nav / start_camera / start_voice`（默认全 true）、
+`map`、`nav_params`、`mic_port`、`asr_appid`、`vlm_model`、`use_action`。
+
+只想单独跑 VLA 节点（底盘/导航/语音都自行启动）时仍可用：
 
 ```bash
 ros2 launch vla_navigation vla_navigation.launch.py

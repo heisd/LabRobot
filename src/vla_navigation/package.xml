@@ -24,9 +24,11 @@
   <exec_depend>python3-requests</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
-  <!-- 一键启动 launch 复用的语音包(读取其 share 目录/可执行节点) -->
+  <!-- 一键启动 launch 复用的其它包(读取其 share 目录/include 其 launch) -->
   <exec_depend>wheeltec_mic_ros2</exec_depend>
   <exec_depend>tts</exec_depend>
+  <exec_depend>turn_on_wheeltec_robot</exec_depend>
+  <exec_depend>wheeltec_nav2</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
