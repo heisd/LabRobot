@@ -35,15 +35,20 @@ class LaserFollower(Node):
 
 	def __init__(self):
 		super().__init__('laserfollower')
-		self.controllerLossTimer = threading.Timer(1, self.controllerLoss) #if we lose connection
-		self.controllerLossTimer.start()
-		self.declare_parameter('P')
-		self.declare_parameter('I')
-		self.declare_parameter('D')
+		# 位置看门狗: 目标丢失(tracker 停发位置)后超时停车, 防止小车带着最后速度一直跑
+		self.position_timeout = 0.5
+		self._last_pos_time = None
+		self._stopped_by_watchdog = False
+		self.watchdog = self.create_timer(0.1, self._watchdog)
+		# PID 增益: 第一分量为角度, 第二分量为距离; 带默认值, 无参数文件也能正常启动
+		self.declare_parameter('P', [1.6, 0.5])
+		self.declare_parameter('I', [0.0, 0.0])
+		self.declare_parameter('D', [0.03, 0.005])
+		self.declare_parameter('targetDist', 0.8)
+		self.declare_parameter('maxSpeed', 0.4)
 		# as soon as we stop receiving Joy messages from the ps3 controller we stop all movement:
-		#self.switchMode= self.declare_parameter('~switchMode').value # if this is set to False the O button has to be kept pressed in order for it to move
 		self.switchMode= True
-		self.max_speed = self.declare_parameter('~maxSpeed').value
+		self.max_speed = self.get_parameter('maxSpeed').get_parameter_value().double_value
 		#self.controllButtonIndex = self.declare_parameter('~controllButtonIndex').value
 		self.controllButtonIndex = -4
 		self.buttonCallbackBusy=False
@@ -62,12 +67,11 @@ class LaserFollower(Node):
 		    '/object_tracker/info',
 		    self.trackerInfoCallback,
 		    qos)
-		targetDist = self.declare_parameter('~targetDist')
-		#pid_param = self.declare_parameter('~PID_controller')
-		P = self.get_parameter('P').get_parameter_value().double_value
-		I = self.get_parameter('I').get_parameter_value().double_value
-		D = self.get_parameter('D').get_parameter_value().double_value
-		self.PID_controller = simplePID([0, 0.8], [1.6, 0.5], [0, 0], [0.03,0.005])
+		targetDist = self.get_parameter('targetDist').get_parameter_value().double_value
+		P = list(self.get_parameter('P').get_parameter_value().double_array_value)
+		I = list(self.get_parameter('I').get_parameter_value().double_array_value)
+		D = list(self.get_parameter('D').get_parameter_value().double_array_value)
+		self.PID_controller = simplePID([0.0, targetDist], P, I, D)
 		# PID parameters first is angular, dist
 	def trackerInfoCallback(self, info):
 		# we do not handle any info from the object tracker specifically at the moment. just ignore that we lost the object for example
@@ -77,7 +81,19 @@ class LaserFollower(Node):
 		laser_follow_flag.data=1
 		self.laserfwflagPublisher.publish(laser_follow_flag)
 		self.get_logger().info('laser_follow_flag: {}'.format(laser_follow_flag))
+	def _watchdog(self):
+		# 收到过位置后, 若 position_timeout 内不再有新位置, 判定为失联并停车
+		if self._last_pos_time is None:
+			return
+		dt = (self.get_clock().now() - self._last_pos_time).nanoseconds * 1e-9
+		if dt > self.position_timeout:
+			if not self._stopped_by_watchdog:
+				self.get_logger().warn('position timeout, stop moving')
+				self._stopped_by_watchdog = True
+			self.stopMoving()
 	def positionUpdateCallback(self, position):
+		self._last_pos_time = self.get_clock().now()
+		self._stopped_by_watchdog = False
 		angle_x= position.angle_x
 		distance = position.distance
 		#print(distance)
@@ -89,8 +105,8 @@ class LaserFollower(Node):
 		# call the PID controller to update it and get new speeds
 		[uncliped_ang_speed, uncliped_lin_speed] = self.PID_controller.update([angle_x, distance])
 		# clip these speeds to be less then the maximal speed specified above
-		angularSpeed = np.clip(-uncliped_ang_speed, -0.4, 0.4)
-		linearSpeed  = np.clip(-uncliped_lin_speed, -0.4, 0.4)
+		angularSpeed = np.clip(-uncliped_ang_speed, -self.max_speed, self.max_speed)
+		linearSpeed  = np.clip(-uncliped_lin_speed, -self.max_speed, self.max_speed)
 		# create the Twist message to send to the cmd_vel topic
 		velocity = Twist()	
 		velocity.linear.y = 0.0
@@ -106,47 +122,6 @@ class LaserFollower(Node):
 		#self.get_logger().info('linearSpeed: {}, angularSpeed: {}'.format(linearSpeed, angularSpeed))
 		self.cmdVelPublisher.publish(velocity)
 		self.publish_flag()
-	def buttonCallback(self, joy_data):
-		# this method gets called whenever we receive a message from the joy stick
-
-		# there is a timer that always gets reset if we have a new joy stick message
-		# if it runs out we know that we have lost connection and the controllerLoss function
-		# will be called
-		# if we are in switch mode, one button press will make the follower active / inactive 
-		# but 'one' button press will be visible in roughly 10 joy messages (since they get published to fast) 
-		# so we need to drop the remaining 9
-		self.controllerLossTimer.cancel()
-		self.controllerLossTimer = threading.Timer(0.5, self.controllerLoss)
-		self.controllerLossTimer.start()
-
-		if self.buttonCallbackBusy:
-			# we are busy with dealing with the last message
-			return 
-		else:
-			# we are not busy. i.e. there is a real 'new' button press
-			# we deal with it in a seperate thread to be able to drop the other joy messages arriving in the mean
-			# time
-			thread.start_new_thread(self.threadedButtonCallback,  (joy_data, ))
-			print("000000000000000")
-	def threadedButtonCallback(self, joy_data):
-		self.buttonCallbackBusy = True
-
-		if(joy_data.buttons[self.controllButtonIndex]==self.switchMode and self.active):
-			# we are active
-			# switchMode = false: we will always be inactive whenever the button is not pressed (buttons[index]==false)
-			# switchMode = true: we will only become inactive if we press the button. (if we keep pressing it, 
-			# we would alternate between active and not in 0.5 second intervalls)
-			self.get_logger().info('stoping')
-			self.stopMoving()
-			self.active = False
-			time.sleep(0.5)
-		elif(joy_data.buttons[self.controllButtonIndex]==True and not(self.active)):
-			# if we are not active and just pressed the button (or are constantly pressing it) we become active
-			self.get_logger().info('activating')
-			self.active = True #enable response
-			time.sleep(0.5)
-
-		self.buttonCallbackBusy = False
 	def stopMoving(self):
 		velocity = Twist()
 		velocity.linear.x = 0.0
@@ -165,12 +140,7 @@ class LaserFollower(Node):
 class simplePID:
 	'''very simple discrete PID controller'''
 	def __init__(self, target, P, I, D):
-
-		P = [1.5, 0.5]
-		I = [0, 0]
-		D = [0.02,0.002]
-		node = rclpy.create_node('simplepid')
-		# check if parameter shapes are compatabile. 
+		# check if parameter shapes are compatabile.
 		if(not(np.size(P)==np.size(I)==np.size(D)) or ((np.size(target)==1) and np.size(P)!=1) or (np.size(target )!=1 and (np.size(P) != np.size(target) and (np.size(P) != 1)))):
 			raise TypeError('input parameters shape is not compatable')
 		self.Kp		=np.array(P)

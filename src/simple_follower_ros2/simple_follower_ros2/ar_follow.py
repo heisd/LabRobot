@@ -45,10 +45,27 @@ class ArFollower(Node):
 		self.move_cmd = Twist()
 		self.move_cmd.linear.x = 0.0
 		self.move_cmd.angular.z = 0.0
-		
+
+		# 看门狗: 丢失 AR 标签(超时无 marker)后停车, 避免小车带着最后速度一直跑
+		self.marker_timeout = 0.5
+		self._last_marker_time = None
+		self._stopped_by_watchdog = False
+		self.watchdog = self.create_timer(0.1, self._watchdog)
+
+	def _watchdog(self):
+		if self._last_marker_time is None:
+			return
+		dt = (self.get_clock().now() - self._last_marker_time).nanoseconds * 1e-9
+		if dt > self.marker_timeout:
+			if not self._stopped_by_watchdog:
+				self.get_logger().warn('marker lost, stop moving')
+				self._stopped_by_watchdog = True
+			self.cmdvelpublisher.publish(Twist())
 
 	def set_cmd_vel(self, msg):
-				
+		self._last_marker_time = self.get_clock().now()
+		self._stopped_by_watchdog = False
+
 		offset_y = 0.3 #小车中心与摄像头检测到的AR标签中心的偏差
 		target_offset_y = msg.pose.position.x - offset_y #AR标签位姿信息x方向(已校正)-对应ROS中y方向
 		target_offset_x = msg.pose.position.z #AR标签位姿信息z方向-对应ROS中x方向		
@@ -84,8 +101,9 @@ class ArFollower(Node):
 			linearspeed = (target_offset_x - self.goal_x) * self.linearback_p
 			if abs(linearspeed) < 0.01:
 				linearspeed = 0.0
-			if linearspeed > self.max_linear_speed:
-				linearspeed = -self.max_linear_speed
+			if linearspeed < self.min_linear_speed:
+				linearspeed = self.min_linear_speed
+				#后退速度限幅, 避免目标远离时下发过大的倒车速度
 			self.move_cmd.linear.x = linearspeed
 			#当AR标签中心与小车中心存在偏差时
 			if target_offset_y > self.goal_y: 
@@ -115,9 +133,12 @@ def main(args=None):
 	arfollower=ArFollower()
 	try:
 		rclpy.spin(arfollower)
-	except:
-		ArFollower.destroy_node()
-		rclpy.shutdown()
+	except KeyboardInterrupt:
+		pass
+	finally:
+		arfollower.destroy_node()
+		if rclpy.ok():
+			rclpy.shutdown()
 		
 
 if __name__ == '__main__':

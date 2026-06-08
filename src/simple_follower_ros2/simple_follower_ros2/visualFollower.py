@@ -23,9 +23,12 @@ class VisualFollower(Node):
 		super().__init__('visualfollower')
 		qos = QoSProfile(depth=10)
 		
-		# as soon as we stop receiving Joy messages from the ps3 controller we stop all movement:
-		self.controllerLossTimer = threading.Timer(1, self.controllerLoss) #if we lose connection
-		self.controllerLossTimer.start()
+		# 位置看门狗: 超过 position_timeout 秒没收到目标位置(tracker 崩溃/无消息)就停车,
+		# 防止目标丢失后小车带着最后一次速度一直跑
+		self.position_timeout = 0.5
+		self._last_pos_time = None
+		self._stopped_by_watchdog = False
+		self.watchdog = self.create_timer(0.1, self._watchdog)
 		self.switchMode= True  # if this is set to False the O button has to be kept pressed in order for it to move
 		self.max_speed = 0.3
 		self.controllButtonIndex = -4
@@ -54,12 +57,22 @@ class VisualFollower(Node):
 		# we do not handle any info from the object tracker specifically at the moment. just ignore that we lost the object for example
 		self.get_logger().warn(info.data)
 	
+	def _watchdog(self):
+		# 收到过位置后, 若 position_timeout 内不再有新位置, 判定为失联并停车
+		if self._last_pos_time is None:
+			return
+		dt = (self.get_clock().now() - self._last_pos_time).nanoseconds * 1e-9
+		if dt > self.position_timeout:
+			if not self._stopped_by_watchdog:
+				self.get_logger().warn('position timeout, stop moving')
+				self._stopped_by_watchdog = True
+			self.stopMoving()
+
 	def positionUpdateCallback(self, position):
 
 		# gets called whenever we receive a new position. It will then update the motorcomand
-
-		#if(not(self.active)):
-			#return #if we are not active we will return imediatly without doing anything
+		self._last_pos_time = self.get_clock().now()
+		self._stopped_by_watchdog = False
 
 		angleX= position.angle_x
 		distance = position.distance
@@ -88,49 +101,6 @@ class VisualFollower(Node):
 			self.cmdVelPublisher.publish(velocity)
 		#self.get_logger().info('linearSpeed: {}, angularSpeed: {}'.format(linearSpeed, angularSpeed))
 			
-
-	def buttonCallback(self, joy_data):
-		# this method gets called whenever we receive a message from the joy stick
-
-		# there is a timer that always gets reset if we have a new joy stick message
-		# if it runs out we know that we have lost connection and the controllerLoss function
-		# will be called
-		self.controllerLossTimer.cancel()
-		self.controllerLossTimer = threading.Timer(0.5, self.controllerLoss)
-		self.controllerLossTimer.start()
-
-		# if we are in switch mode, one button press will make the follower active / inactive 
-		# but 'one' button press will be visible in roughly 10 joy messages (since they get published to fast) 
-		# so we need to drop the remaining 9
-		
-		if self.buttonCallbackBusy:
-			# we are busy with dealing with the last message
-			return 
-		else:
-			# we are not busy. i.e. there is a real 'new' button press
-			# we deal with it in a seperate thread to be able to drop the other joy messages arriving in the mean
-			# time
-			thread.start_new_thread(self.threadedButtonCallback,  (joy_data, ))
-
-	def threadedButtonCallback(self, joy_data):
-		self.buttonCallbackBusy = True
-
-		if(joy_data.buttons[self.controllButtonIndex]==self.switchMode and self.active):
-			# we are active
-			# switchMode = false: we will always be inactive whenever the button is not pressed (buttons[index]==false)
-			# switchMode = true: we will only become inactive if we press the button. (if we keep pressing it, 
-			# we would alternate between active and not in 0.5 second intervalls)
-			self.get_logger().info('stoping')
-			self.stopMoving()
-			self.active = False
-			time.sleep(0.5)
-		elif(joy_data.buttons[self.controllButtonIndex]==True and not(self.active)):
-			# if we are not active and just pressed the button (or are constantly pressing it) we become active
-			self.get_logger().info('activating')
-			self.active = True #enable response
-			time.sleep(0.5)
-
-		self.buttonCallbackBusy = False
 
 	def stopMoving(self):
 		velocity = Twist()
@@ -238,12 +208,14 @@ def main(args=None):
     print('visualFollower init done')
     try:
         rclpy.spin(visualFollower)
-    #except KeyboardInterrupt:
-    #	self.stopMoving()
+    except KeyboardInterrupt:
+        pass
     finally:
+        # 退出前先停车, 再销毁节点 (顺序反了会向已销毁节点发布而报错)
+        visualFollower.controllerLoss()
         visualFollower.destroy_node()
-        controllerLoss=visualFollower.controllerLoss()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

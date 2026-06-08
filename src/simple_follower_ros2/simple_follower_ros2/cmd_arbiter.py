@@ -279,7 +279,12 @@ class CmdArbiter(Node):
                     self.get_logger().info(
                         f'QR "{self.last_qr_data}" in cooldown, ignored',
                         throttle_duration_sec=1.0)
-                self.publish(self.last_follow)
+                # 巡线数据过期(line_follow 崩溃/停发)时下发零速, 不再透传陈旧速度
+                if (self.last_follow_time is None or
+                        (self.now() - self.last_follow_time) > self.detect_timeout):
+                    self.publish(Twist())
+                else:
+                    self.publish(self.last_follow)
 
         elif self.state == STATE_DECEL:
             elapsed = self.now() - self.decel_start_time

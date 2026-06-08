@@ -15,7 +15,7 @@ from rclpy.qos import qos_profile_sensor_data
 from turn_on_wheeltec_robot.msg import Position as PositionMsg
 from std_msgs.msg import String as StringMsg
 
-np.seterr(all='raise')  
+np.seterr(divide='ignore', invalid='ignore')
 displayImage=False
 plt.close('all')
 
@@ -28,9 +28,12 @@ class VisualTracker(Node):
 		# 初始化 OpenCV 的桥接器
 		self.bridge = cv_bridge.CvBridge()
 		#self.tmp_list = self.get_parameter('~targetred/upper').value
-		# 图像的上下限阈值
-		self.targetUpper = np.array([0, 50, 50])
-		self.targetLower = np.array([180, 255, 255])
+		# 红色在 HSV 中跨越 0/180 两端, 需要两段范围相或才能完整覆盖;
+		# S/V 取较高下限以滤除低饱和/暗背景 (参数顺序: 下限, 上限)
+		self.redLower1 = np.array([0, 100, 80])
+		self.redUpper1 = np.array([10, 255, 255])
+		self.redLower2 = np.array([160, 100, 80])
+		self.redUpper2 = np.array([180, 255, 255])
 		
 		#self.pictureHeight= self.get_parameter('~pictureDimensions/pictureHeight')
 		#self.pictureWidth = self.get_parameter('~pictureDimensions/pictureWidth')
@@ -47,7 +50,7 @@ class VisualTracker(Node):
 		# precompute tangens since thats all we need anyways:
 		self.tanVertical = np.tan(vertAngle)
 		self.tanHorizontal = np.tan(horizontalAngle)	
-		self.lastPoCsition =None
+		self.lastPosition = None
 		# one callback that deals with depth and rgb at the same time
 		im_sub = message_filters.Subscriber(self, Image, '/camera/color/image_raw')
 		dep_sub = message_filters.Subscriber(self,Image,'/camera/depth/image_raw', qos_profile=qos_profile_sensor_data)
@@ -66,13 +69,15 @@ class VisualTracker(Node):
 		# 转换为 OpenCV 图像
 		frame = self.bridge.imgmsg_to_cv2(image_data, desired_encoding='rgb8')
 		depthFrame = self.bridge.imgmsg_to_cv2(depth_data, desired_encoding='passthrough')#"32FC1")	
-		if(np.shape(frame)[0:2] != (self.pictureHeight, self.pictureWidth)):
-			raise ValueError('image does not have the right shape. shape(frame): {}, shape parameters:{}'.format(np.shape(frame)[0:2], (self.pictureHeight, self.pictureWidth)))
+		# 按实际图像尺寸更新, 避免分辨率与硬编码不一致时直接抛异常
+		self.pictureHeight, self.pictureWidth = frame.shape[:2]
 		# blure a little and convert to HSV color space
 		#blurred = cv2.GaussianBlur(frame, (11,11), 0)
 		hsv = cv2.cvtColor(frame, cv2.COLOR_RGB2HSV)	
 		# select all the pixels that are in the range specified by the target
-		org_mask = cv2.inRange(hsv, self.targetUpper, self.targetLower)	
+		org_mask = cv2.bitwise_or(
+			cv2.inRange(hsv, self.redLower1, self.redUpper1),
+			cv2.inRange(hsv, self.redLower2, self.redUpper2))
 
 		# clean that up a little, the iterations are pretty much arbitrary
 		mask = cv2.erode(org_mask, None, iterations=4)		
@@ -81,7 +86,6 @@ class VisualTracker(Node):
 		# find contours of the object
 		contours = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
 
-		newPos = None #if no contour at all was found the last position will again be set to none
 		# lets you display the image for debuging. Not in realtime though
 		if displayImage:
 			backConverted = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
@@ -100,25 +104,16 @@ class VisualTracker(Node):
 			plt.xticks([]),plt.yticks([])
 			plt.show()
 			rclpy.sleep(0.2)
-		# go threw all the contours. starting with the bigest one
-		for contour in sorted(contours, key=cv2.contourArea, reverse=True):
-			# get position of object for this contour
-
-			pos = self.analyseContour(contour, depthFrame)
-
-			# if it's the first one we found it will be the fall back for the next scan if we don't find a plausible one
-			if newPos is None:
-				newPos = pos
-			# check if the position is plausible
-			#if self.checkPosPlausible(pos):
-			self.lastPosition = pos
-			self.publishPosition(pos)
+		# 选取面积最大的轮廓作为目标(最稳健的近似)
+		ordered = sorted(contours, key=cv2.contourArea, reverse=True)
+		if len(ordered) == 0:
+			# 完全没有检测到目标 -> 发布 distance=0, 让下游 follower 立即停车
+			self.lastPosition = None
+			self.publishLost()
 			return
-		
-		self.lastPosition = newPos #we didn't find a plossible last position, so we just save the biggest contour 
-		# and publish warnings
-		#self.get_logger().warn('no position found')
-		#self.infoPublisher.publish(StringMsg('visual:nothing found'))
+		pos = self.analyseContour(ordered[0], depthFrame)
+		self.lastPosition = pos
+		self.publishPosition(pos)
 		
 	def publishPosition(self, pos):
 		# calculate the angles from the raw position
@@ -128,6 +123,13 @@ class VisualTracker(Node):
 		self.posMsg.distance=float(pos[1])
 		# publish the position (angleX, angleY, distance)
 
+		self.positionPublisher.publish(self.posMsg)
+
+	def publishLost(self):
+		'''目标丢失: 发布 distance=0 (以及 0 角度), 通知下游 follower 停车.'''
+		self.posMsg.angle_x = 0.0
+		self.posMsg.angle_y = 0.0
+		self.posMsg.distance = 0.0
 		self.positionPublisher.publish(self.posMsg)
 
 	def checkPosPlausible(self, pos):
@@ -192,10 +194,17 @@ class VisualTracker(Node):
 		minSize = int(min(size)/3)
 
 		# get all the depth points within this area (that is within the object)
-		depthObject = depthFrame[(center[1]-minSize):(center[1]+minSize), (center[0]-minSize):(center[0]+minSize)]
+		# 裁剪到图像边界内, 防止负索引回绕取到错误区域
+		y0 = max(0, center[1] - minSize)
+		y1 = min(depthFrame.shape[0], center[1] + minSize)
+		x0 = max(0, center[0] - minSize)
+		x1 = min(depthFrame.shape[1], center[0] + minSize)
+		depthObject = depthFrame[y0:y1, x0:x1]
 
 		# get the average of all valid points (average to have a more reliable distance measure)
-		depthArray = depthObject[~np.isnan(depthObject)]
+		# 先转 float 再过滤: 深度可能是 16UC1(整型, np.isnan 会报错); 0 表示无效读数也一并剔除
+		depthObject = depthObject.astype(np.float32)
+		depthArray = depthObject[np.isfinite(depthObject) & (depthObject > 0)]
 		#averageDistance = np.mean(depthArray)
 		
 		if len(depthArray) == 0:
@@ -204,10 +213,9 @@ class VisualTracker(Node):
 		else:
 			averageDistance = np.mean(depthArray)
 			
-		if(averageDistance>400 or averageDistance<3000):
-			pass
-		else:
-			averageDistance=400
+		# 有效深度区间 (mm); 超出该范围视为无效, 置 0 交由上层判定为"丢失目标"
+		if averageDistance < 400 or averageDistance > 3000:
+			averageDistance = 0.0
 
 
 		return (centerRaw, averageDistance)
