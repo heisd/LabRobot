@@ -72,7 +72,7 @@ int TTS::text_to_speech(const char* src_text, const char* des_path, const char* 
 	}
 	printf("正在合成 ...\n");
 	fwrite(&wav_hdr, sizeof(wav_hdr) ,1, fp); //添加wav音频头，使用采样率为16000
-	while (1) 
+	while (1)
 	{
 		/* 获取合成音频 */
 		const void* data = QTTSAudioGet(sessionID, &audio_len, &synth_status, &ret);
@@ -96,7 +96,7 @@ int TTS::text_to_speech(const char* src_text, const char* des_path, const char* 
 	}
 	/* 修正wav文件头数据的大小 */
 	wav_hdr.size_8 += wav_hdr.data_size + (sizeof(wav_hdr) - 8);
-	
+
 	/* 将修正过的数据写回文件头部,音频文件为wav格式 */
 	fseek(fp, 4, 0);
 	fwrite(&wav_hdr.size_8,sizeof(wav_hdr.size_8), 1, fp); //写入size_8的值
@@ -114,69 +114,89 @@ int TTS::text_to_speech(const char* src_text, const char* des_path, const char* 
 	return ret;
 }
 
-/* 语音合成 */
-int TTS::init()
+/* 构造会话参数(发音人/资源路径/音量音调语速等), 每次合成均可复用 */
+std::string TTS::build_session_params()
 {
-	int         ret                  = MSP_SUCCESS;
-	std::string login_ori		 	 = "appid = ";
-	std::string login_fin     	 	 = login_ori + appid + ", work_dir = .";
-	const char* login_params = login_fin.c_str();//登录参数,appid与msc库绑定,请勿随意改动
-	//cout<< ">>>>>>> login_params:"<< login_params<< endl;
+	std::string session_ori_1 = "engine_type = local,voice_name=";
+	std::string session_ori_2 = ", text_encoding = UTF8, tts_res_path = fo|";
+	std::string session_ori_3 = "/config/bin/msc/res/tts/xiaoyan.jet;fo|";
+	std::string session_ori_4 = "/config/bin/msc/res/tts/common.jet, sample_rate = ";
+	std::string session_ori_5 = ", volume = ";
+	std::string session_ori_6 = ", pitch = ";
+	std::string session_ori_7 = ", rdn = ";
+	std::string session_ori_8 = ", speed = ";
+	std::string session_fin = session_ori_1 + voice_name + session_ori_2 + source_path +
+		session_ori_3 + source_path + session_ori_4 + std::to_string(sample_rate) +
+		session_ori_5 + std::to_string(volume) + session_ori_6 + std::to_string(pitch) +
+		session_ori_7 + std::to_string(rdn) + session_ori_8 + std::to_string(speed);
+	return session_fin;
+}
 
-	std::string session_ori_1		 = "engine_type = local,voice_name=";
-	std::string session_ori_2		 = ", text_encoding = UTF8, tts_res_path = fo|";
-	std::string session_ori_3		 = "/config/bin/msc/res/tts/xiaoyan.jet;fo|";
-	std::string session_ori_4		 = "/config/bin/msc/res/tts/common.jet, sample_rate = ";
-	std::string session_ori_5	 	 = ", volume = ";
-	std::string session_ori_6	 	 = ", pitch = ";
-	std::string session_ori_7	 	 = ", rdn = ";
-	std::string session_ori_8	 	 = ", speed = ";
-	std::string session_fin			 = session_ori_1 + voice_name + session_ori_2 + source_path + session_ori_3 + source_path + session_ori_4 + std::to_string(sample_rate) + session_ori_5 + std::to_string(volume) + session_ori_6 + std::to_string(pitch) + session_ori_7 + std::to_string(rdn) + session_ori_8 + std::to_string(speed);
-	const char* session_begin_params = session_fin.c_str();
-	//cout<< ">>>>>>> session_begin_params:"<< session_begin_params<< endl;
-
-	std::string audio_path = "src/tts_make_ros2/audio/";
-	std::string repalce = "install/tts/share/tts";
-	size_t start_pos = source_path.find(repalce);
-	if(start_pos != std::string::npos) {
-        source_path.replace(start_pos, repalce.length(), audio_path);
-    }
-    //cout<< ">>>>>>> source_path:"<< source_path << endl;
-	std::string filename_fin		 = source_path + current_time();
-	const char* filename             = filename_fin.c_str(); //合成的语音文件名称
-	//cout<< ">>>>>>> filename:"<< filename << endl;
-	const char* text                 = tts_text.c_str(); //合成文本
-	/* 用户登录 */
-	ret = MSPLogin(NULL, NULL, login_params); //第一个参数是用户名，第二个参数是密码，第三个参数是登录参数，用户名和密码可在http://www.xfyun.cn注册获取
-	if (MSP_SUCCESS != ret){
-		printf("MSPLogin failed, error code: %d.\n", ret);
-		goto exit ;//登录失败，退出登录
+/* 合成并播放一段文本 */
+int TTS::speak(const std::string &text)
+{
+	if (text.empty()) return 0;
+	if (!logged_in)
+	{
+		RCLCPP_WARN(this->get_logger(), "TTS engine not logged in, drop text: %s", text.c_str());
+		return -1;
 	}
 
-	printf("\n###########################################################################\n");
-	printf("## 语音合成（Text To Speech，TTS）技术能够自动将任意文字实时转换为连续的 ##\n");
-	printf("## 自然语音，是一种能够在任何时间、任何地点，向任何人提供语音信息服务的  ##\n");
-	printf("## 高效便捷手段，非常符合信息时代海量数据、动态更新和个性化查询的需求。  ##\n");
-	printf("###########################################################################\n\n");
-
-	/* 文本合成 */
-	printf("开始合成 ...\n");
-	ret = text_to_speech(text, filename, session_begin_params);
+	/* 合成到临时wav文件, 再交给aplay播放 */
+	std::string wav_file = "/tmp/tts_make.wav";
+	RCLCPP_INFO(this->get_logger(), ">>>>>合成文本: %s", text.c_str());
+	int ret = text_to_speech(text.c_str(), wav_file.c_str(), session_params_str.c_str());
 	if (MSP_SUCCESS != ret)
 	{
-		printf("text_to_speech failed, error code: %d.\n", ret);
+		RCLCPP_ERROR(this->get_logger(), "text_to_speech failed, error code: %d.", ret);
+		return ret;
 	}
-	printf("合成完毕\n");
 
-exit:
-	MSPLogout(); //退出登录
+	std::string play_cmd = audio_device + wav_file;
+	int prc = system(play_cmd.c_str());
+	(void)prc;
+	return ret;
+}
 
-	return 0;
+/* 待合成文本话题回调: 收到文本即合成并播放 */
+void TTS::text_callback(const std_msgs::msg::String::SharedPtr msg)
+{
+	speak(msg->data);
+}
+
+/* 登录引擎, 播报开机问候语, 并开始监听待合成文本话题 */
+void TTS::start()
+{
+	login_params_str   = "appid = " + appid + ", work_dir = .";
+	session_params_str = build_session_params();
+
+	/* 用户登录, 整个生命周期保持登录, 析构时再登出 */
+	int ret = MSPLogin(NULL, NULL, login_params_str.c_str());
+	if (MSP_SUCCESS != ret)
+	{
+		RCLCPP_ERROR(this->get_logger(), "MSPLogin failed, error code: %d.", ret);
+		logged_in = false;
+	}
+	else
+	{
+		logged_in = true;
+		RCLCPP_INFO(this->get_logger(), "TTS MSPLogin success!");
+	}
+
+	/* 创建待合成文本话题订阅者, 任何节点向该话题发布文本即可让小车说话 */
+	tts_sub = this->create_subscription<std_msgs::msg::String>(
+		tts_topic, 10,
+		[this](const std_msgs::msg::String::SharedPtr msg){ this->text_callback(msg); });
+
+	/* 开机问候语(参数tts_text非空时播报一次, 兼容原有行为) */
+	if (!tts_text.empty()) speak(tts_text);
+
+	RCLCPP_INFO(this->get_logger(), "tts_node ready, listening on topic: %s", tts_topic.c_str());
 }
 
 /* 初始化 */
-TTS::TTS(const std::string &node_name,const rclcpp::NodeOptions &options) 
-: rclcpp::Node(node_name,options){
+TTS::TTS(const std::string &node_name,const rclcpp::NodeOptions &options)
+: rclcpp::Node(node_name,options), logged_in(false){
 	RCLCPP_INFO(this->get_logger(),"%s node init!\n",node_name.c_str());
 
 	this->declare_parameter<int>("rdn",0);
@@ -188,6 +208,8 @@ TTS::TTS(const std::string &node_name,const rclcpp::NodeOptions &options)
 	this->declare_parameter<string>("appid","");
 	this->declare_parameter<string>("voice_name","");
 	this->declare_parameter<string>("tts_text","");
+	this->declare_parameter<string>("tts_topic","tts_text");
+	this->declare_parameter<string>("audio_device","aplay -D plughw:CARD=Device,DEV=0 ");
 
 	this->get_parameter("rdn",rdn);
 	this->get_parameter("volume",volume);
@@ -198,23 +220,21 @@ TTS::TTS(const std::string &node_name,const rclcpp::NodeOptions &options)
 	this->get_parameter<string>("appid",appid);
 	this->get_parameter<string>("voice_name",voice_name);
 	this->get_parameter<string>("tts_text",tts_text);
+	this->get_parameter<string>("tts_topic",tts_topic);
+	this->get_parameter<string>("audio_device",audio_device);
 }
 
 TTS::~TTS(){
+	if (logged_in) MSPLogout(); //退出登录
 	RCLCPP_INFO(this->get_logger(),"tts_node over!\n");
-} 
+}
 
 int main(int argc,char **argv)
 {
 	rclcpp::init(argc,argv);
-	TTS tts_make("tts_node",rclcpp::NodeOptions());
-	if (tts_make.init() == 0){
-		RCLCPP_INFO(rclcpp::get_logger("tts_node"),
-				"tts_node done!");
-		}
-	else{
-		RCLCPP_INFO(rclcpp::get_logger("tts_node"),
-				"tts_node Interrupted!");
-		}
+	auto tts_make = std::make_shared<TTS>("tts_node",rclcpp::NodeOptions());
+	tts_make->start();
+	rclcpp::spin(tts_make);
+	rclcpp::shutdown();
 	return 0;
 }
