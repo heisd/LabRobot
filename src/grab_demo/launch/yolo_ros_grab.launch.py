@@ -141,6 +141,9 @@ def generate_launch_description():
     # 相机内参发布
     camera_info = Node(package="grab_demo", executable="camera_info_node", name="camera_info")
 
+    # 抓取仲裁: 手动优先, 可随时打断自动抓取(Dashboard 的"手动接管"通过它生效)
+    arm_arbiter = Node(package="grab_demo", executable="arm_arbiter_node.py", name="arm_arbiter")
+
     # ---- 闭环抓取服务 (替代开环的 grab_service_node) ----
     closed_loop_grab = Node(
         package="grab_demo",
@@ -163,6 +166,7 @@ def generate_launch_description():
         center_mode_arg, conf_threshold_arg,
         camera_launch,      # 相机
         camera_info,        # 相机内参
+        arm_arbiter,        # 抓取仲裁(手动优先)
         lebai_lm3,          # 机械臂
         yolo_ros_launch,    # 官方 yolo_ros 识别
         yolo_ros_bridge,    # 检测结果 -> target_frame

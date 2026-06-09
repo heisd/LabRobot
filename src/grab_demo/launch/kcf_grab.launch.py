@@ -87,6 +87,10 @@ def generate_launch_description():
     camera_info = Node(
         package="grab_demo", executable="camera_info_node", name="camera_info",
     )
+    # 抓取仲裁: 手动优先, 可随时打断自动抓取
+    arm_arbiter = Node(
+        package="grab_demo", executable="arm_arbiter_node.py", name="arm_arbiter",
+    )
     # 闭环(PBVS)抓取: 与 yolo_ros_grab 同一思路, 看-动-再看-修正后再抓。
     # KCF 持续跟踪并刷新 target_frame, 闭环节点据此反复修正机械臂位姿。
     # 想用回开环, 把 closed_loop_grab_node 换成 grab_service_node 即可(服务名一致)。
@@ -107,6 +111,7 @@ def generate_launch_description():
     return LaunchDescription([
         camera_launch,   # 启动相机
         camera_info,     # 相机内参发布
+        arm_arbiter,     # 抓取仲裁(手动优先)
         lebai_lm3,       # 启动机械臂
         kcf_track,       # KCF 跟踪节点
         delay_task,      # 闭环抓取服务

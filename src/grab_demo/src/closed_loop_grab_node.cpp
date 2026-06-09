@@ -29,7 +29,9 @@
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/pose.hpp>
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
+#include <std_msgs/msg/bool.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <memory>
@@ -97,6 +99,22 @@ public:
         "obj_grab_service",
         std::bind(&ClosedLoopGrab::onGrab, this, std::placeholders::_1, std::placeholders::_2));
 
+    // ---- 抓取仲裁(arm_arbiter): 手动优先, 可随时打断自动抓取 ----
+    // abort/manual_active 的订阅放在独立的 Reentrant 回调组, 配合 MultiThreadedExecutor,
+    // 这样即使抓取回调正阻塞在 move() 里, 打断回调仍能在另一线程跑并调用 move_group->stop()。
+    arbiter_cb_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+    rclcpp::SubscriptionOptions sub_opts;
+    sub_opts.callback_group = arbiter_cb_group_;
+    abort_sub_ = create_subscription<std_msgs::msg::Bool>(
+        "/arm_arbiter/abort", 10,
+        [this](std_msgs::msg::Bool::ConstSharedPtr m) { if (m->data) requestAbort(); },
+        sub_opts);
+    // manual_active 为 latched(transient_local), 晚启动也能拿到当前状态
+    manual_sub_ = create_subscription<std_msgs::msg::Bool>(
+        "/arm_arbiter/manual_active", rclcpp::QoS(1).transient_local(),
+        [this](std_msgs::msg::Bool::ConstSharedPtr m) { manual_active_ = m->data; },
+        sub_opts);
+
     // ---- 运行时动态调参 (ros2 param set 立即生效) ----
     // 重点是 grasp_z_offset / approach_height: 控制沿 Z 轴(竖直)下降抓取的深度,
     // 配合桥接节点的 z_offset(沿相机光轴的深度偏移), 即可抓取不同深度/厚度的物体。
@@ -137,6 +155,29 @@ private:
       }
     }
     return result;
+  }
+
+  // 收到打断请求(手动接管): 立刻停止当前运动, 置打断标志(在另一线程的回调组里执行)
+  void requestAbort()
+  {
+    abort_requested_ = true;
+    RCLCPP_WARN(get_logger(), "[闭环] 收到打断请求(手动接管), 正在停止机械臂运动");
+    if (move_group_) {
+      try { move_group_->stop(); }
+      catch (const std::exception &e) {
+        RCLCPP_ERROR(get_logger(), "[闭环] stop() 异常: %s", e.what());
+      }
+    }
+  }
+
+  // 若已被打断, 填好响应并返回 true(调用处据此立即结束抓取)
+  bool aborted(std::shared_ptr<grab_demo::srv::GrabObject::Response> res)
+  {
+    if (!abort_requested_) return false;
+    RCLCPP_WARN(get_logger(), "[闭环] 抓取被手动接管打断, 已让出机械臂");
+    res->success = false;
+    res->message = "preempted by manual takeover";
+    return true;
   }
 
   // 张开/闭合夹爪 (val: 100=张开, 0=闭合)
@@ -222,6 +263,15 @@ private:
       return;
     }
 
+    // 仲裁: 手动优先。手动接管期间拒绝自动抓取。
+    if (manual_active_) {
+      RCLCPP_WARN(get_logger(), "[闭环] 手动接管中, 拒绝自动抓取(请先在 Dashboard 释放控制权)");
+      res->success = false;
+      res->message = "rejected: manual control active";
+      return;
+    }
+    abort_requested_ = false;   // 进入新一次抓取, 清打断标志
+
     setGripper(100);  // 张开夹爪
 
     // 1. 先到观察点 look
@@ -230,6 +280,7 @@ private:
     if (move_group_->move() != moveit::core::MoveItErrorCode::SUCCESS) {
       RCLCPP_WARN(get_logger(), "移动到观察点失败, 继续尝试");
     }
+    if (aborted(res)) return;
 
     // 末端当前姿态(整个抓取过程保持此姿态, 与开环版一致)
     geometry_msgs::msg::Quaternion ori = move_group_->getCurrentPose(end_link_).pose.orientation;
@@ -243,6 +294,7 @@ private:
     for (int iter = 0; iter < max_iters_; ++iter) {
       // 等识别节点在当前视角下刷新 target_frame
       std::this_thread::sleep_for(std::chrono::duration<double>(settle_sec_));
+      if (aborted(res)) return;
 
       double wait = (iter == 0) ? tf_timeout_ : 1.0;
       if (!lookupTarget(target, tx, ty, tz, wait)) {
@@ -274,11 +326,13 @@ private:
 
       // 移动到目标正上方的预抓取点, 带着修正量靠近
       if (!moveTo(tx, ty, tz + approach_height_, ori)) {
+        if (aborted(res)) return;   // move 失败若因手动打断, 按打断返回
         RCLCPP_ERROR(get_logger(), "[闭环] 移动到预抓取点失败");
         res->success = false;
         res->message = "Pre-grasp planning/execution failed";
         return;
       }
+      if (aborted(res)) return;
       px = tx; py = ty; pz = tz;
       have_prev = true;
     }
@@ -300,13 +354,16 @@ private:
       RCLCPP_WARN(get_logger(), "[闭环] 最终查 TF 失败, 使用上一轮目标");
       tx = px; ty = py; tz = pz;
     }
+    if (aborted(res)) return;
     RCLCPP_INFO(get_logger(), "[闭环] 下降抓取: (%.3f, %.3f, %.3f)", tx, ty, tz + grasp_z_offset_);
     if (!moveTo(tx, ty, tz + grasp_z_offset_, ori)) {
+      if (aborted(res)) return;
       RCLCPP_ERROR(get_logger(), "[闭环] 下降到抓取点失败");
       res->success = false;
       res->message = "Final approach failed";
       return;
     }
+    if (aborted(res)) return;
 
     // 4. 闭合夹爪
     std::this_thread::sleep_for(800ms);
@@ -338,6 +395,13 @@ private:
   rclcpp::Service<grab_demo::srv::GrabObject>::SharedPtr grab_service_;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
 
+  // 仲裁(手动接管)相关
+  rclcpp::CallbackGroup::SharedPtr arbiter_cb_group_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr abort_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr manual_sub_;
+  std::atomic<bool> abort_requested_{false};
+  std::atomic<bool> manual_active_{false};
+
   std::string base_frame_, look_target_;
   int max_iters_;
   double pos_tolerance_, approach_height_, grasp_z_offset_, settle_sec_;
@@ -347,7 +411,12 @@ private:
 int main(int argc, char **argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<ClosedLoopGrab>());
+  // 多线程执行器: 抓取服务回调(默认互斥组)阻塞在 move() 时,
+  // 打断订阅(独立 Reentrant 组)仍能在另一线程触发 move_group->stop() 实现抢占。
+  auto node = std::make_shared<ClosedLoopGrab>();
+  rclcpp::executors::MultiThreadedExecutor exec;
+  exec.add_node(node);
+  exec.spin();
   rclcpp::shutdown();
   return 0;
 }

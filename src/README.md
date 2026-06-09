@@ -54,7 +54,8 @@
 其它关键节点 / 资源：
 
 - `grab_service_node` — 抓取服务（订阅 `target_frame`，驱动机械臂抓取，开环）
-- `closed_loop_grab_node` — 闭环（PBVS）抓取服务：看-动-再看-修正后再抓，接口与开环版一致（见 `YOLO_ROS_GUIDE.md`）
+- `closed_loop_grab_node` — 闭环（PBVS）抓取服务：看-动-再看-修正后再抓，接口与开环版一致；并接入抓取仲裁可被手动打断（见 `YOLO_ROS_GUIDE.md`）
+- `arm_arbiter_node.py` — 抓取仲裁：手动优先，可随时打断 YOLO/KCF/HSV/VLM 的自动抓取（见 `ARBITER_GUIDE.md`）
 - `start_grab` — 抓取流程入口
 - `hand_eye` / `charuco_dectet_node` — 手眼标定及 ChArUco 标定板识别（见 `point_cloud.md`、根目录 `serivce.md`）
 - `camera_info_node` / `point_cloud_node` — 相机内参与点云处理

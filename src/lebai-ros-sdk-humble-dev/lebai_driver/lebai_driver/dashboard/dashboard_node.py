@@ -46,7 +46,7 @@ from rclpy.node import Node
 
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32, String, Bool
-from std_srvs.srv import Empty
+from std_srvs.srv import Empty, Trigger
 from lebai_interfaces.msg import RobotStatus, IOStatus, GripperStatus
 from lebai_interfaces.srv import SetGripper, SetDO, SetAO, MoveJoint, MoveLine
 
@@ -336,6 +336,7 @@ class DashboardNode(Node):
             "gripper_status": (None, 0.0),
             "target_distance": (None, 0.0),
             "vlm_result": (None, 0.0),
+            "arbiter_state": (None, 0.0),
         }
 
         # ---- 订阅状态话题 ----
@@ -355,6 +356,9 @@ class DashboardNode(Node):
         self._vlm_confirm_pub = self.create_publisher(Bool, "/vlm/confirm", 10)
         self.create_subscription(String, "/vlm/result",
                                  lambda m: self._store("vlm_result", m), 10)
+        # 抓取仲裁状态(arm_arbiter): idle / manual
+        self.create_subscription(String, "/arm_arbiter/state",
+                                 lambda m: self._store("arbiter_state", m), 10)
 
         # ---- 服务客户端 ----
         self._sys_clients = {
@@ -369,6 +373,9 @@ class DashboardNode(Node):
         self._cli_set_ao = self.create_client(SetAO, f"{self.io_ns_}/set_robot_ao")
         self._cli_move_joint = self.create_client(MoveJoint, f"{self.motion_ns_}/move_joint")
         self._cli_move_line = self.create_client(MoveLine, f"{self.motion_ns_}/move_line")
+        # 抓取仲裁: 手动接管 / 释放
+        self._cli_arbiter_takeover = self.create_client(Trigger, "/arm_arbiter/manual_takeover")
+        self._cli_arbiter_release = self.create_client(Trigger, "/arm_arbiter/manual_release")
 
         # ---- 功能启动任务管理器(YOLO/HSV 抓取等一键启停) ----
         self.tasks_ = TaskManager(self.get_logger())
@@ -470,6 +477,10 @@ class DashboardNode(Node):
         if vr is not None:
             out["vlm_result"] = {"text": vr.data, "age": vr_age}
 
+        # 抓取仲裁状态(常驻显示): idle / manual; 无仲裁节点时为 unknown
+        ar, _, _ = fresh("arbiter_state", max_age=1e12)
+        out["arbiter"] = ar.data if ar is not None else "unknown"
+
         out["stamp"] = round(now, 3)
         return out
 
@@ -500,6 +511,8 @@ class DashboardNode(Node):
                 return self._set_param(payload)
             if cmd == "kcf_reinit":
                 return self._kcf_reinit()
+            if cmd == "arbiter":
+                return self._arbiter(payload.get("action", ""))
             return False, f"未知命令类型: {cmd}"
         except Exception as e:  # noqa: BLE001 - 网页错误需返回给前端
             self.get_logger().error(f"命令执行异常: {e}")
@@ -626,6 +639,20 @@ class DashboardNode(Node):
         self.get_logger().warn(f"设置参数失败 {node} {param}={value_str}: {out}")
         return False, f"设置失败: {out or '请确认对应抓取任务已启动'}"
 
+    def _arbiter(self, action):
+        """抓取仲裁: 手动接管(打断自动抓取) / 释放(交还自动)。"""
+        if action == "takeover":
+            cli, label = self._cli_arbiter_takeover, "手动接管"
+        elif action == "release":
+            cli, label = self._cli_arbiter_release, "释放控制权"
+        else:
+            return False, f"未知仲裁操作: {action}"
+        if not self._ready(cli, label):
+            return False, f"{label}失败: 仲裁节点 arm_arbiter 未就绪(抓取任务是否已启动?)"
+        cli.call_async(Trigger.Request())
+        return True, ("已手动接管, 正在打断自动抓取" if action == "takeover"
+                      else "已释放, 自动抓取可继续")
+
     def _kcf_reinit(self):
         """触发 KCF 重新播种(调用 /kcf_node/reinit, std_srvs/Trigger)。"""
         cmd = ["ros2", "service", "call", "/kcf_node/reinit", "std_srvs/srv/Trigger", "{}"]
@@ -644,6 +671,9 @@ class DashboardNode(Node):
     def _call_move_joint(self, payload):
         if not self._ready(self._cli_move_joint, "move_joint"):
             return False, "move_joint 服务未就绪 (motion 是否已启动?)"
+        # 手动关节运动属于"手动操作", 优先级最高: 先请求仲裁手动接管, 打断正在运行的自动抓取
+        if self._cli_arbiter_takeover.service_is_ready():
+            self._cli_arbiter_takeover.call_async(Trigger.Request())
         joints = payload.get("joint_pose", [])
         if not isinstance(joints, list) or len(joints) == 0:
             return False, "joint_pose 不能为空"
@@ -806,6 +836,17 @@ INDEX_HTML = """<!DOCTYPE html>
     <h2>当前目标距离 (/grab_target/distance)</h2>
     <div id="distance" style="font-size:34px; font-weight:700; color:#8b9bb0;">—</div>
     <small>相机到目标的深度(米), 由当前运行的视觉算法(HSV/YOLO/KCF)发布; 无目标时显示 —</small>
+  </div>
+
+  <div class="card" style="grid-column:1 / span 2;">
+    <h2>抓取仲裁 (手动优先, 可打断自动抓取)</h2>
+    <div class="row">
+      当前控制权: <b id="arbiter" style="font-size:16px;">—</b>
+      <button class="danger" onclick="setArbiter('takeover')">手动接管 (打断抓取)</button>
+      <button onclick="setArbiter('release')">释放 (交还自动)</button>
+    </div>
+    <small>优先级: 手动 > 自动(YOLO/KCF/HSV/VLM)。点【手动接管】会立刻打断正在运行的自动抓取,
+      并在【释放】前拒绝新的自动抓取; 手动关节运动也会自动接管。需先启动某个抓取任务(含 arm_arbiter)。</small>
   </div>
 
   <div class="card" style="grid-column:1 / span 2;">
@@ -1027,6 +1068,10 @@ function sendVlm(){
 function confirmVlm(ok){
   post({type:'vlm_confirm', confirm: ok});
 }
+function setArbiter(action){
+  if (action==='takeover' && !confirm('手动接管? 会立刻打断正在运行的自动抓取!')) return;
+  post({type:'arbiter', action: action});
+}
 function movej(){
   if (!confirm('确认执行关节运动? 机械臂会真实移动!')) return;
   const jp = [];
@@ -1061,6 +1106,15 @@ async function refresh(){
   const vr = document.getElementById('vlmresult');
   if (vr && s.vlm_result){
     vr.textContent = s.vlm_result.text + '  (' + s.vlm_result.age + 's前)';
+  }
+
+  // 抓取仲裁当前控制权
+  const arb = document.getElementById('arbiter');
+  if (arb){
+    const a = s.arbiter || 'unknown';
+    if (a === 'manual'){ arb.textContent = '手动 (manual) — 自动抓取已暂停'; arb.style.color = '#f0a020'; }
+    else if (a === 'idle'){ arb.textContent = '空闲 (idle) — 自动抓取可运行'; arb.style.color = '#3fb950'; }
+    else { arb.textContent = '未知 (仲裁节点未启动?)'; arb.style.color = '#8b9bb0'; }
   }
 
   // 目标距离(大字显示, 无目标/数据过期则显示 —)

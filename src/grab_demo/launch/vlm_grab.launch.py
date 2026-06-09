@@ -90,15 +90,28 @@ def generate_launch_description():
     )
 
     camera_info = Node(package="grab_demo", executable="camera_info_node", name="camera_info")
+    # 抓取仲裁: 手动优先, 可随时打断 VLM 触发的自动抓取
+    arm_arbiter = Node(package="grab_demo", executable="arm_arbiter_node.py", name="arm_arbiter")
+    # 闭环(PBVS)抓取: 与 yolo_ros/KCF/HSV 同一思路, 看-动-再看-修正后再抓。
+    # VLM 仍走 /obj_grab_service, 由闭环节点统一执行并受仲裁管控(手动接管会打断它)。
     grab_service = Node(
-        package="grab_demo", executable="grab_service_node", name="grab_service_n",
-        parameters=[robot_description_semantic]
+        package="grab_demo", executable="closed_loop_grab_node", name="grab_service_n",
+        parameters=[robot_description_semantic, {
+            "base_frame": "base_link",
+            "look_target": "look",
+            "max_iters": 4,
+            "pos_tolerance": 0.008,
+            "approach_height": 0.10,
+            "grasp_z_offset": 0.02,
+            "settle_sec": 0.6,
+        }]
     )
     delay_task = TimerAction(period=15.0, actions=[grab_service])
 
     return LaunchDescription([
         camera_launch,
         camera_info,
+        arm_arbiter,
         lebai_lm3,
         vlm_node,
         delay_task,

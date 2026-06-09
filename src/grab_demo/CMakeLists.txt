@@ -311,11 +311,14 @@ else()
   message(WARNING "未找到 OpenCV tracking 模块(opencv_contrib), 跳过 kcf_track_node 的编译")
 endif()
 
-# VLM(视觉语言模型)抓取节点 —— 纯 Python, 用 ros2 run grab_demo vlm_grab_node.py 运行
-# yolo_ros 桥接节点 —— 纯 Python, 把官方 yolo_ros 的检测接到统一 target_frame
+# 纯 Python 节点(用 ros2 run grab_demo <name>.py 运行):
+#   vlm_grab_node        —— VLM(视觉语言模型)抓取
+#   yolo_ros_detect_node —— 官方 yolo_ros 检测 -> 统一 target_frame 桥接
+#   arm_arbiter_node     —— 抓取仲裁(手动优先, 可打断自动抓取)
 install(PROGRAMS
   scripts/vlm_grab_node.py
   scripts/yolo_ros_detect_node.py
+  scripts/arm_arbiter_node.py
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
