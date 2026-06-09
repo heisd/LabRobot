@@ -40,23 +40,42 @@ def nothing(_):
 class PlainFollower(Node):
     def __init__(self):
         super().__init__('line_follow_plain')
+        # show_image: 本地 cv2 窗口(默认关, 机器人无显示器也能跑);
+        # publish_debug: 把巡线掩码发布成 Image 给 web_video_server(浏览器);
+        # line_color: 无本地 trackbar 时用哪种颜色(0:Red 1:Green 2:Blue 3:Yellow 4:Black).
+        self.declare_parameter('show_image', False)
+        self.declare_parameter('publish_debug', True)
+        self.declare_parameter('debug_topic', 'line_follow/debug_image')
+        self.declare_parameter('line_color', 0)
+        g = self.get_parameter
+        self.show_image = g('show_image').value
+        self.publish_debug = g('publish_debug').value
+        debug_topic = g('debug_topic').value
+        self.line_color = int(g('line_color').value)
+
         self.bridge = cv_bridge.CvBridge()
         qos = QoSProfile(depth=10)
         self.image_sub = self.create_subscription(
             Image, '/camera/color/image_raw', self.image_callback, qos)
         self.cmd_vel_pub = self.create_publisher(Twist, 'cmd_vel', qos)
+        self.debug_pub = (self.create_publisher(Image, debug_topic, qos)
+                          if self.publish_debug else None)
         self.twist = Twist()
         self.ui_inited = False
         self.cx_filtered = None
         self.last_erro = 0.0
 
     def _pick_color(self):
-        m = cv2.getTrackbarPos(Switch, 'Adjust_hsv')
+        # 有本地窗口时用 trackbar, 否则用 line_color 参数(headless 友好).
+        if self.show_image and self.ui_inited:
+            m = cv2.getTrackbarPos(Switch, 'Adjust_hsv')
+        else:
+            m = self.line_color
         table = {0: col_red, 1: col_green, 2: col_blue, 3: col_yellow, 4: col_black}
         return table.get(m, (0, 0, 0, 255, 255, 255))
 
     def image_callback(self, msg):
-        if not self.ui_inited:
+        if self.show_image and not self.ui_inited:
             cv2.namedWindow('Adjust_hsv', cv2.WINDOW_NORMAL)
             cv2.createTrackbar(Switch, 'Adjust_hsv', 0, 4, nothing)
             self.ui_inited = True
@@ -95,8 +114,18 @@ class PlainFollower(Node):
             self.twist.angular.z = 0.0
 
         self.cmd_vel_pub.publish(self.twist)
-        cv2.imshow('Adjust_hsv', mask)
-        cv2.waitKey(3)
+
+        # 把巡线掩码转发给浏览器(web_video_server), 并可选本地窗口.
+        if self.debug_pub is not None:
+            try:
+                out = self.bridge.cv2_to_imgmsg(mask, encoding='mono8')
+                out.header = msg.header
+                self.debug_pub.publish(out)
+            except Exception as err:  # noqa: BLE001 - 单帧发布失败不应崩溃
+                self.get_logger().warn(f'debug image publish failed: {err}')
+        if self.show_image:
+            cv2.imshow('Adjust_hsv', mask)
+            cv2.waitKey(3)
 
 
 def main(args=None):

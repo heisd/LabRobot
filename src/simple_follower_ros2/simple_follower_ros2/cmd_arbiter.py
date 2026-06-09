@@ -2,12 +2,19 @@
 # coding=utf-8
 """速度指令仲裁器 (优先级 MUX) + 二维码路径动作.
 
-优先级:  QR 事件  >  巡线 (line_follow)
+优先级:  键盘(最高)  >  {巡线 / KCF / YOLO}(三者平级, 谁更新鲜谁驱动)
 
 输入:
-  - ``line_follow/cmd_vel`` (geometry_msgs/Twist) 巡线节点输出的速度建议
-  - ``qr_code/detected``    (std_msgs/Bool)        是否检测到二维码
-  - ``qr_code/data``        (std_msgs/String)       二维码内容(用于路径选择)
+  - ``cmd_vel_keyboard``    (geometry_msgs/Twist)   键盘遥控, 最高优先; 一旦有新指令
+                            立即接管, 并在终端打印"键盘接管, 打断 X"
+  - ``line_follow/cmd_vel`` (geometry_msgs/Twist)   巡线速度(叠加下面 QR 路径动作)
+  - ``kcf/cmd_vel``         (geometry_msgs/Twist)   KCF 跟踪速度(直接透传)
+  - ``yolo/cmd_vel``        (geometry_msgs/Twist)   YOLO 跟随速度(直接透传)
+  - ``qr_code/detected``    (std_msgs/Bool)         是否检测到二维码(仅巡线模式用)
+  - ``qr_code/data``        (std_msgs/String)        二维码内容(仅巡线模式用)
+
+巡线 / KCF / YOLO 三者平级: 同一时刻通常只跑一个, 仲裁器按"最近收到"选驱动源;
+KCF / YOLO 直接透传, 巡线则叠加 QR 路径动作状态机. 键盘可随时打断三者(并打日志).
 
 输出:
   - ``cmd_vel`` (geometry_msgs/Twist)  最终下发底盘的速度
@@ -86,6 +93,12 @@ class CmdArbiter(Node):
         self.declare_parameter('use_odom_turn', True)       # 固定转角是否用里程计闭环
         self.declare_parameter('odom_topic', '/odom')       # 里程计话题
 
+        # 控制源仲裁: 键盘(最高) > {巡线 / KCF / YOLO 平级}
+        self.declare_parameter('keyboard_topic', 'cmd_vel_keyboard')  # 键盘遥控(最高优先)
+        self.declare_parameter('kcf_topic', 'kcf/cmd_vel')           # KCF 跟踪(透传)
+        self.declare_parameter('yolo_topic', 'yolo/cmd_vel')         # YOLO 跟随(透传)
+        self.declare_parameter('external_timeout', 0.5)              # 键盘/KCF/YOLO 新鲜判定(s, 与 detect_timeout 对齐)
+
         g = self.get_parameter
         self.decel_duration = g('decel_duration').value
         self.publish_rate = g('publish_rate').value
@@ -102,6 +115,10 @@ class CmdArbiter(Node):
         self.line_confirm = g('line_confirm').value
         self.use_odom_turn = g('use_odom_turn').value
         self.odom_topic = g('odom_topic').value
+        self.keyboard_topic = g('keyboard_topic').value
+        self.kcf_topic = g('kcf_topic').value
+        self.yolo_topic = g('yolo_topic').value
+        self.external_timeout = g('external_timeout').value
 
         # 防止非法频率导致除零 / 异常高频定时器
         if self.publish_rate is None or self.publish_rate < 1.0:
@@ -111,6 +128,8 @@ class CmdArbiter(Node):
 
         qos = QoSProfile(depth=10)
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', qos)
+        # 当前控制源状态(给仪表盘显示: 键盘/巡线/KCF/YOLO/停车)
+        self.status_pub = self.create_publisher(String, 'cmd_arbiter/status', qos)
         self.follow_sub = self.create_subscription(
             Twist, 'line_follow/cmd_vel', self.follow_callback, qos)
         self.detected_sub = self.create_subscription(
@@ -119,11 +138,27 @@ class CmdArbiter(Node):
             String, 'qr_code/data', self.data_callback, qos)
         self.odom_sub = self.create_subscription(
             Odometry, self.odom_topic, self.odom_callback, qos)
+        self.keyboard_sub = self.create_subscription(
+            Twist, self.keyboard_topic, self.keyboard_callback, qos)
+        self.kcf_sub = self.create_subscription(
+            Twist, self.kcf_topic, self.kcf_callback, qos)
+        self.yolo_sub = self.create_subscription(
+            Twist, self.yolo_topic, self.yolo_callback, qos)
 
         self.last_follow = Twist()        # 最近一次巡线速度
         self.last_follow_time = None      # 最近一次收到巡线速度的时间
         self.last_published = Twist()     # 最近一次实际下发的速度
         self.last_qr_data = ''            # 最近解码到的二维码内容
+        self.last_keyboard = Twist()      # 最近一次键盘速度
+        self.last_keyboard_time = None
+        self.last_kcf = Twist()           # 最近一次 KCF 速度
+        self.last_kcf_time = None
+        self.last_yolo = Twist()          # 最近一次 YOLO 速度
+        self.last_yolo_time = None
+        self.kb_engaged = False           # 当前是否键盘接管
+        self.active_peer = None           # 当前驱动源标签(巡线/KCF/YOLO), 供键盘打断日志
+        self.last_status = None           # 最近发布的控制源状态(给仪表盘)
+        self.last_status_time = -1e9
 
         self.qr_last_true = None          # 最近一次 detected=True 的时间(s)
         self.last_handled_data = ''       # 最近一次已处理的二维码内容
@@ -149,7 +184,9 @@ class CmdArbiter(Node):
         self.current_yaw = 0.0
 
         self.timer = self.create_timer(1.0 / self.publish_rate, self.update)
-        self.get_logger().info('cmd_arbiter started: QR priority > line_follow')
+        self.get_logger().info(
+            '速度仲裁器启动: 键盘(最高) > {巡线/KCF/YOLO 平级}; '
+            f'键盘={self.keyboard_topic} kcf={self.kcf_topic} yolo={self.yolo_topic}')
 
     # ------------------------------------------------------------------ utils
     def now(self):
@@ -166,6 +203,18 @@ class CmdArbiter(Node):
     def data_callback(self, msg):
         self.last_qr_data = msg.data
 
+    def keyboard_callback(self, msg):
+        self.last_keyboard = msg
+        self.last_keyboard_time = self.now()
+
+    def kcf_callback(self, msg):
+        self.last_kcf = msg
+        self.last_kcf_time = self.now()
+
+    def yolo_callback(self, msg):
+        self.last_yolo = msg
+        self.last_yolo_time = self.now()
+
     @staticmethod
     def _yaw_from_quat(q):
         siny = 2.0 * (q.w * q.z + q.x * q.y)
@@ -180,6 +229,18 @@ class CmdArbiter(Node):
         if self.qr_last_true is None:
             return False
         return (self.now() - self.qr_last_true) <= self.detect_timeout
+
+    def _fresh(self, t):
+        """某来源最近一次时间戳是否仍新鲜(在 external_timeout 内)."""
+        return t is not None and (self.now() - t) <= self.external_timeout
+
+    def _set_status(self, label):
+        """发布当前控制源状态(变化时即发, 否则 ~1Hz 心跳, 便于仪表盘显示与判活)."""
+        now = self.now()
+        if label != self.last_status or (now - self.last_status_time) > 1.0:
+            self.status_pub.publish(String(data=label))
+            self.last_status = label
+            self.last_status_time = now
 
     def in_cooldown(self):
         """同一内容的二维码是否处于冷却期(短时间内只识别一次)."""
@@ -265,6 +326,64 @@ class CmdArbiter(Node):
 
     # ------------------------------------------------------------------ loop
     def update(self):
+        # 1) 键盘最高优先: 一旦有新键盘指令立即接管, 并打印"打断了谁"
+        if self._fresh(self.last_keyboard_time):
+            if not self.kb_engaged:
+                self.kb_engaged = True
+                self.get_logger().warn(
+                    f'键盘接管 (cmd_vel_keyboard), 打断 {self.active_peer or "无"}')
+            self._set_status('键盘' if not self.active_peer
+                             else f'键盘 (打断 {self.active_peer})')
+            self.publish(self.last_keyboard)
+            return
+        if self.kb_engaged:
+            self.kb_engaged = False
+            self.state = STATE_FOLLOW
+            self.armed = True
+            self.get_logger().info('键盘释放, 交还 巡线/KCF/YOLO')
+
+        # 2) 巡线的 QR 路径动作(减速/停车/转向)一旦开始就必须自包含跑完, 不被巡线
+        #    短暂停发或 KCF/YOLO 抢占打断; 仅在没有进行中的动作时才在三源间按"最近收到"选
+        in_qr_action = self.state in (STATE_DECEL, STATE_STOPPED, STATE_TURNING)
+        if not in_qr_action:
+            # 巡线 / KCF / YOLO 三者平级: 选"最近收到"的那个作为当前驱动源
+            sources = []
+            if self._fresh(self.last_kcf_time):
+                sources.append((self.last_kcf_time, 'KCF'))
+            if self._fresh(self.last_yolo_time):
+                sources.append((self.last_yolo_time, 'YOLO'))
+            if self._fresh(self.last_follow_time):
+                sources.append((self.last_follow_time, '巡线'))
+            cur = max(sources)[1] if sources else None
+            if cur != self.active_peer:
+                if cur is not None:
+                    self.get_logger().info(f'控制源 -> {cur}')
+                self.active_peer = cur
+
+            # KCF / YOLO 直接透传, 旁路 QR 状态机
+            if cur == 'KCF':
+                self.state = STATE_FOLLOW
+                self._set_status('KCF')
+                self.publish(self.last_kcf)
+                return
+            if cur == 'YOLO':
+                self.state = STATE_FOLLOW
+                self._set_status('YOLO')
+                self.publish(self.last_yolo)
+                return
+            if cur is None:
+                self._set_status('停车 (无控制源)')
+                self.publish(Twist())   # 没有任何控制源: 停车
+                return
+            # cur == '巡线': 落到下面的状态机
+        else:
+            self.active_peer = '巡线'   # QR 动作进行中, 驱动源仍记为巡线
+
+        # 3) 巡线 / QR 路径动作状态机(FOLLOW/DECEL/STOPPED/TURNING)
+        self._set_status({
+            STATE_FOLLOW: '巡线', STATE_DECEL: '巡线·QR减速',
+            STATE_STOPPED: '巡线·QR停车', STATE_TURNING: '巡线·QR转向',
+        }.get(self.state, '巡线'))
         active = self.qr_active()
 
         if self.state == STATE_FOLLOW:

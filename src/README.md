@@ -32,6 +32,10 @@
 rosdep install --from-paths src --ignore-src -r -y
 ```
 
+> 外部依赖 `yolo_ros`（YOLO 检测 / 3D 跟随）不并入本仓库，用 vcstool 拉取：
+> `vcs import src < yolo_ros.repos`，再装 `ultralytics`。详见
+> [`wheeltec_yolo/README.md`](wheeltec_yolo/README.md)。
+
 ---
 
 ## 编译与运行
@@ -65,7 +69,7 @@ source install/setup.bash
 | `wheeltec_robot_keyboard` | 键盘遥控节点（`wheeltec_keyboard`） |
 | `wheeltec_joy` | USB 手柄遥控 |
 | `wheeltec_rviz2` | RViz2 可视化配置 |
-| `rm_description` / `wheeltec_dashboard` | 机器人模型描述 / Web 仪表盘（遥测、cmd_vel、参数调优，基于 rosbridge） |
+| `rm_description` / `wheeltec_dashboard` | 机器人模型描述 / Web 仪表盘（遥测、cmd_vel、参数调优、巡线/KCF/YOLO 视觉流转发与跟踪距离滑块，基于 rosbridge + web_video_server） |
 
 ### 传感器驱动
 
@@ -95,8 +99,9 @@ source install/setup.bash
 
 | 功能包 | 说明 |
 | --- | --- |
-| `simple_follower_ros2` | 简单跟随：雷达跟随、视觉巡线、视觉跟踪 |
-| `wheeltec_robot_kcf` | KCF 视觉目标跟随（需在 ROS 主机上运行） |
+| `simple_follower_ros2` | 简单跟随：雷达跟随、视觉巡线（含二维码路径选择）、视觉跟踪；`cmd_arbiter` 速度仲裁（键盘 > 巡线/KCF/YOLO 平级） |
+| `wheeltec_robot_kcf` | KCF 视觉目标跟随（需在 ROS 主机上运行）；跟踪距离 `targetDist_` 可实时调，可经 `cmd_arbiter` 仲裁 |
+| `wheeltec_yolo` | YOLO 检测 / 3D 跟随：集成 [yolo_ros](https://github.com/mgonzs13/yolo_ros)（vcs 拉取），保持设定距离，结果接入 Web 仪表盘 |
 | `aruco_ros-humble-devel` | ArUco 二维码识别（`aruco`、`aruco_msgs`、`aruco_ros`） |
 | `wheeltec_bodyreader` | 人体骨架识别、姿态控制与人体跟随（`bodyreader`、`bodyreader_msg`） |
 
@@ -150,11 +155,37 @@ ros2 launch wheeltec_joy wheeltec_joy.launch.py
 ros2 launch simple_follower_ros2 laser_follower.launch.py
 # 视觉巡线
 ros2 launch simple_follower_ros2 line_follower.launch.py
+# 视觉巡线 + 二维码路径选择（固定转角）
+ros2 launch simple_follower_ros2 line_follow_qr_fixed.launch.py
 # 视觉跟踪
 ros2 launch simple_follower_ros2 visual_follower.launch.py
 # KCF 跟随（需在 ROS 主机上运行）
 ros2 launch wheeltec_robot_kcf wheeltec_robot_kcf.launch.py
+
+# —— YOLO 检测 / 3D 跟随 —— 先拉取 yolo_ros 源码并装 ultralytics（见 wheeltec_yolo/README.md）
+vcs import src < yolo_ros.repos        # 仅首次：拉取 yolo_msgs / yolo_ros / yolo_bringup
+# 仅检测（结果给仪表盘 YOLO 页：/yolo/detections、/yolo/debug_image）
+ros2 launch wheeltec_yolo yolo.launch.py
+# 3D 跟随，保持 ~0.2m（需相机 depth_registration:=true 让深度与彩色对齐）
+ros2 launch wheeltec_yolo yolo_follow.launch.py desired_distance:=0.3 target_class:=person
 ```
+
+#### 经 cmd_arbiter 仲裁底盘
+
+多个控制源共存时不直接抢 `/cmd_vel`，优先级 **键盘（最高） > { 巡线 / KCF / YOLO 三者平级 }**，
+键盘打断时终端打印日志：
+
+```bash
+# YOLO 跟随经仲裁器（跟随 -> yolo/cmd_vel -> cmd_arbiter -> /cmd_vel）
+ros2 launch wheeltec_yolo yolo_follow_arbiter.launch.py
+# KCF 跟踪经仲裁器（KCF -> kcf/cmd_vel -> cmd_arbiter -> /cmd_vel）
+ros2 launch wheeltec_robot_kcf wheeltec_robot_kcf_arbiter.launch.py
+# 让键盘走仲裁器（最高优先，打断时打印 “键盘接管, 打断 X”）
+ros2 run wheeltec_robot_keyboard wheeltec_keyboard --ros-args -r cmd_vel:=cmd_vel_keyboard
+```
+
+> 跟踪 / 跟随距离可在 Web 仪表盘对应页用滑块实时调（YOLO `desired_distance`、
+> KCF `targetDist_`），无需重启节点。
 
 ### 4. 2D 建图与导航
 

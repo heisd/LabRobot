@@ -22,6 +22,13 @@ body {
   line-height: 1.5;
 }
 
+/* Header + nav share one sticky bar so the tabs never overlap content. */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
 header {
   display: flex;
   align-items: center;
@@ -29,15 +36,83 @@ header {
   padding: 12px 20px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  z-index: 10;
 }
 
 header h1 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
+}
+
+/* --------- Navigation tabs --------- */
+nav.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.tab-btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  padding: 11px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.tab-panel { display: none; }
+.tab-panel.active {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 16px;
+}
+
+/* --------- Sub-tabs (inside 功能模块) --------- */
+/* The function panel hosts its own sub-navigation, so it lays out as a
+   block; each sub-panel is the grid instead. */
+#panel-function.active { display: block; }
+.subtabs {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+}
+.subtab-btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.subtab-btn:hover { color: var(--text); }
+.subtab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+.subtab-panel { display: none; }
+.subtab-panel.active {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
 }
 
 .conn { display: flex; align-items: center; gap: 8px; }
@@ -68,10 +143,18 @@ header h1 {
 .status-on { background: rgba(63, 185, 80, 0.2); color: var(--ok); }
 .status-conn { background: rgba(210, 153, 34, 0.2); color: var(--warn); }
 
+/* cmd_arbiter control-source badge (header). */
+.ctrl-src {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.ctrl-src-idle { background: rgba(139, 148, 158, 0.18); color: var(--muted); }
+.ctrl-src-active { background: rgba(63, 185, 80, 0.2); color: var(--ok); }
+.ctrl-src-kbd { background: rgba(210, 153, 34, 0.25); color: var(--warn); font-weight: 600; }
+
 main {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-  gap: 16px;
   padding: 16px;
 }
 
@@ -219,6 +302,181 @@ main {
 
 .card-wide { grid-column: 1 / -1; }
 .muted { color: var(--muted); font-weight: 400; font-size: 12px; }
+
+/* --------- Contact author --------- */
+.contact { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+.contact-avatar {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent), #1f6feb);
+  color: #fff;
+  font-size: 30px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.contact-body { flex: 1; min-width: 240px; }
+.contact-name { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
+.contact-desc { color: var(--muted); margin: 0 0 14px; max-width: 640px; }
+.contact-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
+.contact-list li { display: flex; align-items: baseline; gap: 10px; }
+.contact-list .ck {
+  flex: 0 0 84px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.contact-list a { color: var(--accent); text-decoration: none; }
+.contact-list a:hover { text-decoration: underline; }
+
+/* --------- Lidar status config --------- */
+.lidar-cfg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+  margin-bottom: 10px;
+}
+.lidar-cfg label {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  color: var(--muted);
+}
+.lidar-cfg input {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-top: 2px;
+  width: 110px;
+  height: 28px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.lidar-cfg button {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  height: 28px;
+}
+.lidar-cfg button:hover { filter: brightness(1.15); }
+
+/* --------- Function-page MJPEG streams --------- */
+.fn-stream-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  margin-bottom: 10px;
+}
+.fn-stream-toolbar label {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  color: var(--muted);
+  flex: 1;
+  min-width: 160px;
+}
+.fn-stream-toolbar input {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-top: 2px;
+  height: 28px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.fn-stream-toolbar button {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  height: 28px;
+}
+.fn-stream-toolbar button:hover { filter: brightness(1.15); }
+.fn-frame { max-width: 720px; margin-bottom: 10px; }
+
+/* Two (or more) debug streams side by side, e.g. QR overlay + line mask. */
+.fn-streams {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+  margin-bottom: 10px;
+}
+.fn-stream-tile { display: flex; flex-direction: column; gap: 6px; }
+.fn-stream-tile .fn-frame { max-width: none; margin-bottom: 0; }
+.fn-stream-tile .fn-stream-toolbar { margin-bottom: 0; }
+.fn-cap { font-size: 12px; color: var(--text); font-weight: 600; }
+
+/* Live distance slider (YOLO follow / KCF tracking). */
+.dist-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+.dist-slider label { font-weight: 600; }
+.dist-slider .ds-range { flex: 1; min-width: 160px; }
+.dist-slider .ds-val {
+  min-width: 64px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------- YOLO detections list --------- */
+.yolo-det-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0;
+}
+.yolo-detections {
+  background: #0b0f14;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+.yolo-detections:empty::after {
+  content: "暂无检测（未连接 / 未部署 YOLO 节点）";
+  color: var(--muted);
+}
+.yolo-det-row {
+  display: grid;
+  grid-template-columns: 1fr 70px;
+  gap: 8px;
+  padding: 2px 4px;
+  border-bottom: 1px solid rgba(45, 56, 69, 0.4);
+}
+.yolo-det-row .yd-label { color: var(--text); word-break: break-word; }
+.yolo-det-row .yd-score { color: var(--accent); text-align: right; }
+.yolo-det-row .yd-track {
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid rgba(45, 56, 69, 0.8);
+  border-radius: 4px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
 
 .viewer {
   background: #000;
