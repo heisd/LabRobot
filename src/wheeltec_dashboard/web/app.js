@@ -218,6 +218,8 @@
     sub('/vla/status', 'std_msgs/msg/String', (msg) => {
       addVlaStatus(msg.data || '');
     });
+    // cmd_arbiter 当前控制源(键盘/巡线/KCF/YOLO/停车)
+    sub('/cmd_arbiter/status', 'std_msgs/msg/String', (msg) => updateCtrlSource(msg.data));
 
     // Voice subsystem status (wheeltec_mic + tts_make).
     sub('/voice_flag', 'std_msgs/msg/Int8', (msg) => {
@@ -603,6 +605,33 @@
     show(range.value);
   }
   document.querySelectorAll('.dist-slider').forEach(initDistanceSlider);
+
+  // cmd_arbiter control-source badge. The arbiter owns the semantics; we just
+  // render its string and color it (keyboard=alert, idle/stop=muted, else active).
+  let ctrlSrcTime = 0;
+  function updateCtrlSource(text) {
+    const el = $('ctrl-source');
+    if (!el) return;
+    ctrlSrcTime = Date.now();
+    const t = String(text || '').trim();
+    el.textContent = '控制源: ' + (t || '—');
+    el.classList.remove('ctrl-src-idle', 'ctrl-src-active', 'ctrl-src-kbd');
+    if (/键盘/.test(t)) el.classList.add('ctrl-src-kbd');
+    else if (!t || /停车|无控制源|idle/i.test(t)) el.classList.add('ctrl-src-idle');
+    else el.classList.add('ctrl-src-active');
+  }
+  // Arbiter heartbeats ~1Hz; if it goes quiet (not running/stopped), reset to "—".
+  setInterval(() => {
+    if (ctrlSrcTime && Date.now() - ctrlSrcTime > 2500) {
+      ctrlSrcTime = 0;
+      const el = $('ctrl-source');
+      if (el) {
+        el.textContent = '控制源: —';
+        el.classList.remove('ctrl-src-active', 'ctrl-src-kbd');
+        el.classList.add('ctrl-src-idle');
+      }
+    }
+  }, 1000);
 
   // Populate the node datalist from ros.getNodes() each time we connect.
   function refreshNodeList() {

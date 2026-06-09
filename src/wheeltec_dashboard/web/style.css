@@ -143,6 +143,17 @@ nav.tabs {
 .status-on { background: rgba(63, 185, 80, 0.2); color: var(--ok); }
 .status-conn { background: rgba(210, 153, 34, 0.2); color: var(--warn); }
 
+/* cmd_arbiter control-source badge (header). */
+.ctrl-src {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.ctrl-src-idle { background: rgba(139, 148, 158, 0.18); color: var(--muted); }
+.ctrl-src-active { background: rgba(63, 185, 80, 0.2); color: var(--ok); }
+.ctrl-src-kbd { background: rgba(210, 153, 34, 0.25); color: var(--warn); font-weight: 600; }
+
 main {
   padding: 16px;
 }

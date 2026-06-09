@@ -128,6 +128,8 @@ class CmdArbiter(Node):
 
         qos = QoSProfile(depth=10)
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', qos)
+        # 当前控制源状态(给仪表盘显示: 键盘/巡线/KCF/YOLO/停车)
+        self.status_pub = self.create_publisher(String, 'cmd_arbiter/status', qos)
         self.follow_sub = self.create_subscription(
             Twist, 'line_follow/cmd_vel', self.follow_callback, qos)
         self.detected_sub = self.create_subscription(
@@ -155,6 +157,8 @@ class CmdArbiter(Node):
         self.last_yolo_time = None
         self.kb_engaged = False           # 当前是否键盘接管
         self.active_peer = None           # 当前驱动源标签(巡线/KCF/YOLO), 供键盘打断日志
+        self.last_status = None           # 最近发布的控制源状态(给仪表盘)
+        self.last_status_time = -1e9
 
         self.qr_last_true = None          # 最近一次 detected=True 的时间(s)
         self.last_handled_data = ''       # 最近一次已处理的二维码内容
@@ -229,6 +233,14 @@ class CmdArbiter(Node):
     def _fresh(self, t):
         """某来源最近一次时间戳是否仍新鲜(在 external_timeout 内)."""
         return t is not None and (self.now() - t) <= self.external_timeout
+
+    def _set_status(self, label):
+        """发布当前控制源状态(变化时即发, 否则 ~1Hz 心跳, 便于仪表盘显示与判活)."""
+        now = self.now()
+        if label != self.last_status or (now - self.last_status_time) > 1.0:
+            self.status_pub.publish(String(data=label))
+            self.last_status = label
+            self.last_status_time = now
 
     def in_cooldown(self):
         """同一内容的二维码是否处于冷却期(短时间内只识别一次)."""
@@ -320,6 +332,8 @@ class CmdArbiter(Node):
                 self.kb_engaged = True
                 self.get_logger().warn(
                     f'键盘接管 (cmd_vel_keyboard), 打断 {self.active_peer or "无"}')
+            self._set_status('键盘' if not self.active_peer
+                             else f'键盘 (打断 {self.active_peer})')
             self.publish(self.last_keyboard)
             return
         if self.kb_engaged:
@@ -345,17 +359,24 @@ class CmdArbiter(Node):
         # KCF / YOLO 直接透传, 旁路 QR 状态机
         if cur == 'KCF':
             self.state = STATE_FOLLOW
+            self._set_status('KCF')
             self.publish(self.last_kcf)
             return
         if cur == 'YOLO':
             self.state = STATE_FOLLOW
+            self._set_status('YOLO')
             self.publish(self.last_yolo)
             return
         if cur is None:
+            self._set_status('停车 (无控制源)')
             self.publish(Twist())   # 没有任何控制源: 停车
             return
 
         # 3) cur == '巡线': 走原有 QR 路径动作状态机
+        self._set_status({
+            STATE_FOLLOW: '巡线', STATE_DECEL: '巡线·QR减速',
+            STATE_STOPPED: '巡线·QR停车', STATE_TURNING: '巡线·QR转向',
+        }.get(self.state, '巡线'))
         active = self.qr_active()
 
         if self.state == STATE_FOLLOW:
