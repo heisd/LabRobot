@@ -336,15 +336,33 @@
       <div class="subtab-panel active" id="subpanel-line">
         <section class="card card-wide">
           <h2>巡线 <span class="muted">(二维码 / simple_follower_ros2)</span></h2>
-          <div class="fn-stream-toolbar">
-            <label>相机话题
-              <input class="fn-topic" data-img="line-stream" type="text" value="/camera/color/image_raw" />
-            </label>
-            <button class="fn-reload" data-img="line-stream">刷新</button>
-          </div>
-          <div class="cam-frame fn-frame">
-            <img id="line-stream" class="cam-img fn-img" data-topic="/camera/color/image_raw" src="placeholder.svg" alt="line camera" />
-            <div class="cam-err" hidden>无法加载流</div>
+          <div class="fn-streams">
+            <div class="fn-stream-tile">
+              <div class="fn-cap">QR 检测画面 <span class="muted">(/qr_code/debug_image)</span></div>
+              <div class="cam-frame fn-frame">
+                <img id="line-stream" class="cam-img fn-img" data-topic="/qr_code/debug_image" src="placeholder.svg" alt="qr debug" />
+                <div class="cam-err" hidden>无法加载流</div>
+              </div>
+              <div class="fn-stream-toolbar">
+                <label>话题
+                  <input class="fn-topic" data-img="line-stream" type="text" value="/qr_code/debug_image" />
+                </label>
+                <button class="fn-reload" data-img="line-stream">刷新</button>
+              </div>
+            </div>
+            <div class="fn-stream-tile">
+              <div class="fn-cap">巡线掩码 <span class="muted">(/line_follow/debug_image)</span></div>
+              <div class="cam-frame fn-frame">
+                <img id="line-mask-stream" class="cam-img fn-img" data-topic="/line_follow/debug_image" src="placeholder.svg" alt="line mask" />
+                <div class="cam-err" hidden>无法加载流</div>
+              </div>
+              <div class="fn-stream-toolbar">
+                <label>话题
+                  <input class="fn-topic" data-img="line-mask-stream" type="text" value="/line_follow/debug_image" />
+                </label>
+                <button class="fn-reload" data-img="line-mask-stream">刷新</button>
+              </div>
+            </div>
           </div>
           <div class="grid">
             <div class="metric">
@@ -364,7 +382,7 @@
               <div id="line-cmd" class="metric-value">vx=0.00, wz=0.00</div>
             </div>
           </div>
-          <p class="hint">启动：<code>ros2 launch simple_follower_ros2 line_follow_qr_fixed.launch.py</code>。该版本用纯巡线节点 <code>line_follow_plain</code>（无随机分叉）+ <code>qr_detector</code> + <code>cmd_arbiter</code>：<code>line_follow_plain</code> 沿线给出 <code>/line_follow/cmd_vel</code>，<code>qr_detector</code> 解码二维码（内容如 <code>path:left30</code> / <code>path:right45</code> / <code>path:stop</code>）发布到 <code>/qr_code/data</code>，由 <code>cmd_arbiter</code> 在路口按二维码做定角转向并输出最终 <code>/cmd_vel</code>。本页预览相机并显示二维码与底盘状态。</p>
+          <p class="hint">启动：<code>ros2 launch simple_follower_ros2 line_follow_qr_fixed.launch.py</code>。纯巡线 <code>line_follow_plain</code>（无随机分叉）+ <code>qr_detector</code> + <code>cmd_arbiter</code>：二维码内容如 <code>path:left30</code> / <code>path:right45</code> / <code>path:stop</code> 经 <code>/qr_code/data</code> 让 <code>cmd_arbiter</code> 在路口定角转向，输出最终 <code>/cmd_vel</code>。<strong>OpenCV 窗口转发</strong>：节点把原本 <code>cv2.imshow</code> 的画面发布成 Image（<code>publish_debug</code> 默认开）——QR 检测 HUD → <code>/qr_code/debug_image</code>、巡线掩码 → <code>/line_follow/debug_image</code>，经 web_video_server 在此显示，机器人无显示器也能看。需本地窗口时启动加 <code>show_image:=true</code>；无 trackbar 时巡线颜色用参数 <code>line_color</code>(0红/1绿/2蓝/3黄/4黑)。</p>
         </section>
       </div>
 

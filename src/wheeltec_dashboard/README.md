@@ -65,9 +65,18 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 - **语音组件**：来自 `wheeltec_mic` 的麦克风初始化 `/voice_flag`、唤醒
   `/awake_flag`、声源角 `/awake_angle`、识别 `/voice_words`，并可向
   `/tts_text` 发文本播报（经 `tts_make`）。
-- **巡线**（`simple_follower_ros2`）：web_video_server 预览
-  `/camera/color/image_raw`，显示巡线节点输出的 `/cmd_vel`。颜色在机器人端
-  trackbar 选择。
+- **巡线**（二维码版 `line_follow_qr_fixed`）：显示二维码状态
+  （`/qr_code/detected`、`/qr_code/data`、`/qr_code/area_ratio`）与 `cmd_arbiter`
+  输出的 `/cmd_vel`，并预览两路调试画面（见下方"OpenCV 窗口转发"）。
+- **OpenCV 窗口转发**：视觉节点原本用 `cv2.imshow` 弹本地窗口，现可把那帧
+  发布成 ROS Image，经 web_video_server 在浏览器查看（机器人无显示器也能用）：
+  - `qr_detector` → `/qr_code/debug_image`（检测 HUD + 二维码框）
+  - `line_follow_plain` → `/line_follow/debug_image`（巡线掩码）
+  - `wheeltec_robot_kcf` → `/KCF_image`（跟踪框，本就发布）
+
+  由各节点参数 `publish_debug`（默认 `true`）控制；想保留本地 cv2 窗口/trackbar
+  加 `show_image:=true`；无 trackbar 时巡线颜色用参数 `line_color`
+  （0红/1绿/2蓝/3黄/4黑）。
 - **KCF 跟踪**（`wheeltec_robot_kcf`）：预览标注流 `/KCF_image`，并实时调节
   `/image_converter` 的距离/转向 PID 参数（`targetDist_`、`linear_K*_`、
   `angular_K*_`）。目标框需在机器人端 OpenCV 窗口鼠标框选。

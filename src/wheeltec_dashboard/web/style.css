@@ -398,6 +398,18 @@ main {
 .fn-stream-toolbar button:hover { filter: brightness(1.15); }
 .fn-frame { max-width: 720px; margin-bottom: 10px; }
 
+/* Two (or more) debug streams side by side, e.g. QR overlay + line mask. */
+.fn-streams {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+  margin-bottom: 10px;
+}
+.fn-stream-tile { display: flex; flex-direction: column; gap: 6px; }
+.fn-stream-tile .fn-frame { max-width: none; margin-bottom: 0; }
+.fn-stream-tile .fn-stream-toolbar { margin-bottom: 0; }
+.fn-cap { font-size: 12px; color: var(--text); font-weight: 600; }
+
 /* --------- YOLO detections list --------- */
 .yolo-det-head {
   display: flex;

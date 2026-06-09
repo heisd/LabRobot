@@ -1088,8 +1088,8 @@
   camPort.addEventListener('change', applyAllFnStreams);
   camQuality.addEventListener('change', applyAllFnStreams);
   if (camBase) camBase.addEventListener('change', applyAllFnStreams);
-  // Kick the default-visible line stream now; the rest start on tab switch.
-  applyFnStream($('line-stream'));
+  // Kick the default-visible sub-page's stream(s) now; others start on switch.
+  document.querySelectorAll('#subpanel-line .fn-img').forEach(applyFnStream);
 
   // ---------- Lidar status (double_lidar_fusion) ----------
   const LIDAR_SRC = [
@@ -1399,8 +1399,7 @@
     initTabGroup({
       btnSel: '.subtab-btn', key: 'subtab', panelSel: '.subtab-panel', prefix: 'subpanel-',
       onActivate: (val) => {
-        const img = document.querySelector('#subpanel-' + val + ' .fn-img');
-        if (img) applyFnStream(img);
+        document.querySelectorAll('#subpanel-' + val + ' .fn-img').forEach(applyFnStream);
       },
     });
 

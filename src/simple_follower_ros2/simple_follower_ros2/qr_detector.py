@@ -47,11 +47,15 @@ class QRDetector(Node):
         self.declare_parameter('detect_every_n', 3)          # 每 N 帧检测一次
         self.declare_parameter('detect_scale', 1.0)          # 检测前缩放(1.0=不缩放)
         self.declare_parameter('min_consecutive', 3)         # 连续确认帧数, 防误停
+        self.declare_parameter('publish_debug', True)        # 发布可视化图给 web_video_server(浏览器)
+        self.declare_parameter('debug_topic', 'qr_code/debug_image')
 
         g = self.get_parameter
         self.image_topic = g('image_topic').value
         self.min_area_ratio = g('min_area_ratio').value
         self.show_image = g('show_image').value
+        self.publish_debug = g('publish_debug').value
+        debug_topic = g('debug_topic').value
         self.detect_every_n = max(1, int(g('detect_every_n').value))
         self.detect_scale = g('detect_scale').value
         if not (0.1 <= self.detect_scale <= 1.0):
@@ -78,6 +82,9 @@ class QRDetector(Node):
         self.detected_pub = self.create_publisher(Bool, 'qr_code/detected', qos)
         self.data_pub = self.create_publisher(String, 'qr_code/data', qos)
         self.area_pub = self.create_publisher(Float32, 'qr_code/area_ratio', qos)
+        # 调试可视化图(给 web_video_server -> 浏览器仪表盘看). 不依赖本地显示器.
+        self.debug_pub = (self.create_publisher(Image, debug_topic, qos)
+                          if self.publish_debug else None)
 
         self.frame_idx = 0
         self.consec = 0          # 连续成功解码计数
@@ -196,11 +203,24 @@ class QRDetector(Node):
         elif self.consec == 0:
             self.last_data = ''
 
-        if self.show_image:
-            self._show_gui(image, points, data, area_ratio, valid_hit, confirmed)
+        if self.publish_debug or self.show_image:
+            vis = self._render_debug(image, points, data, area_ratio, valid_hit, confirmed)
+            if self.debug_pub is not None:
+                try:
+                    out = self.bridge.cv2_to_imgmsg(vis, encoding='bgr8')
+                    out.header = msg.header
+                    self.debug_pub.publish(out)
+                except Exception as err:  # noqa: BLE001 - 单帧发布失败不应崩溃
+                    self.get_logger().warn(f'debug image publish failed: {err}')
+            if self.show_image:
+                cv2.imshow('QR Check', vis)
+                cv2.waitKey(3)
 
-    def _show_gui(self, image, points, data, area_ratio, valid_hit, confirmed):
-        """QR 检测可视化窗口: 状态 / 解码内容 / 确认进度 / 检测框."""
+    def _render_debug(self, image, points, data, area_ratio, valid_hit, confirmed):
+        """在 image 上画 QR 检测可视化(状态/解码内容/确认进度/检测框), 返回该图.
+
+        既发布给 web_video_server(浏览器仪表盘), 也用于可选的本地 cv2 窗口.
+        """
         if confirmed:
             status, color = 'CONFIRMED', (0, 255, 0)      # 绿: 已确认
         elif valid_hit:
@@ -218,8 +238,7 @@ class QRDetector(Node):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
         cv2.putText(image, hud2, (10, 52),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-        cv2.imshow('QR Check', image)
-        cv2.waitKey(3)
+        return image
 
 
 def main(args=None):
