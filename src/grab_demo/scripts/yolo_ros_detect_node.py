@@ -32,6 +32,8 @@
 
 import math
 import threading
+import time
+import traceback
 
 import numpy as np
 import rclpy
@@ -128,9 +130,15 @@ class YoloRosDetectNode(Node):
         self._lock = threading.Lock()
         self._fx = self._fy = self._cx = self._cy = 0.0
         self._intrinsics_ready = False
-        self._target = None          # (x, y, z) 相机系下目标; None 表示当前无目标
+        self._target = None          # (x, y, dis) 相机系下目标; None 表示当前无目标
         self._last_dis = -1.0
         self._last_label = ""
+        # ---- 异常/健康监控状态 ----
+        self._last_det_time = 0.0    # 最近一次收到检测消息的时刻(秒); 0=从未收到
+        self._had_target = False     # 上一帧是否有有效目标(用于打印"丢失"日志)
+        self._cb_errors = 0          # 回调累计异常次数
+        self._warn_no_det = True     # 是否还需要提示"未收到检测"(收到后复位)
+        self._stale_warned = False   # 检测中断告警去抖
 
         # ---- 订阅 ----
         self.create_subscription(CameraInfo, self.info_topic, self._info_cb, 1)
@@ -156,6 +164,11 @@ class YoloRosDetectNode(Node):
 
         # 以 15Hz 持续广播最近一次的 target_frame + 距离, 保证抓取服务随时能查到 TF
         self.create_timer(1.0 / 15.0, self._publish_target)
+
+        # 检测健康监控: 若超过 det_timeout 秒收不到检测消息, 打印告警(便于排查
+        # yolo_ros 未启动 / 模型未加载 / 话题不匹配等异常)。
+        self.det_timeout = float(self.declare_parameter("det_timeout", 3.0).value)
+        self.create_timer(1.0, self._watchdog)
 
         # 运行时可动态调节的参数 (ros2 param set 立即生效), 重点是 z_offset:
         # 沿相机光轴的深度偏移, 调大=抓得更深(物体内部), 调小/负值=更靠近相机表面,
@@ -227,17 +240,43 @@ class YoloRosDetectNode(Node):
             pass
 
     def _sync_cb(self, det_msg, depth_msg: Image):
+        # 健康监控: 记录"确实收到了检测消息"(即便本帧无目标也说明 yolo_ros 在工作)
+        self._last_det_time = time.time()
+        if self._warn_no_det:
+            self.get_logger().info("已开始接收 yolo_ros 检测消息 (%s)" % self.detections_topic)
+            self._warn_no_det = False
+        self._stale_warned = False
+        # 任何未预料的异常都记录(含堆栈), 避免回调静默失效导致整条链路"假死"
+        try:
+            self._process_frame(det_msg, depth_msg)
+        except Exception as e:  # noqa: BLE001
+            self._cb_errors += 1
+            self.get_logger().error(
+                "检测处理回调异常(累计 %d 次): %s\n%s"
+                % (self._cb_errors, e, traceback.format_exc()),
+                throttle_duration_sec=2.0)
+
+    def _process_frame(self, det_msg, depth_msg: Image):
         if not self._intrinsics_ready:
             self.get_logger().warn("等待相机内参 %s ..." % self.info_topic, throttle_duration_sec=5.0)
             return
         try:
             depth = self.bridge.imgmsg_to_cv2(depth_msg, "16UC1")
         except Exception as e:  # noqa: BLE001
-            self.get_logger().error("深度图转换失败: %s" % e)
+            self.get_logger().error("深度图转换失败(编码是否为 16UC1?): %s" % e,
+                                    throttle_duration_sec=2.0)
             return
 
         img_h, img_w = depth.shape[:2]
         img_cx, img_cy = img_w / 2.0, img_h / 2.0
+
+        # mask 模式下掩码像素坐标基于彩色图, 与深度图分辨率不一致会错位, 这里给出告警
+        if self.center_mode == "mask" and self._rgb is not None:
+            rh, rw = self._rgb.shape[:2]
+            if (rh, rw) != (img_h, img_w):
+                self.get_logger().warn(
+                    "mask 模式下彩色(%dx%d)与深度(%dx%d)分辨率不一致, 掩码可能错位"
+                    % (rw, rh, img_w, img_h), throttle_duration_sec=5.0)
 
         # ---- 候选过滤 + 选目标 ----
         # 每个候选都按 center_mode 算出抓取中心像素 (px,py) 和该中心深度 dis,
@@ -269,7 +308,16 @@ class YoloRosDetectNode(Node):
                 best = (metric, det, px, py, dis)
 
         if best is None:
-            self.get_logger().info("未检测到目标物体", throttle_duration_sec=2.0)
+            # 区分"画面里啥都没有" vs "有检测但都被类别/置信度过滤掉了", 便于排查
+            if len(det_msg.detections) == 0:
+                self.get_logger().info("画面中未检测到任何物体", throttle_duration_sec=2.0)
+            else:
+                self.get_logger().info(
+                    "检测到 %d 个物体, 但无一满足筛选(target_class=%d/label='%s'/conf>=%.2f)"
+                    % (len(det_msg.detections), self.target_class,
+                       self.target_label, self.conf_threshold),
+                    throttle_duration_sec=2.0)
+            self._lose_target()
             if self.publish_debug_image:
                 self._publish_debug(det_msg, None, None, -1.0)
             return
@@ -290,15 +338,46 @@ class YoloRosDetectNode(Node):
                 self._target = None
             self.get_logger().warn("目标 [%s] 无法定位: %s" % (label, why),
                                    throttle_duration_sec=2.0)
+            self._lose_target()
             return
 
+        # 成功定位: 首次锁定时打一条 info, 之后节流
+        if not self._had_target:
+            self.get_logger().info("已锁定目标 [%s] conf=%.2f dis=%.3fm" % (label, target.score, dis))
+        self._had_target = True
         if candidate_count > 1:
             self.get_logger().info(
                 "检测到 %d 个候选, 按 %s 选中 [%s] conf=%.2f dis=%.3fm"
-                % (candidate_count, self.select_mode, label, target.score, dis))
+                % (candidate_count, self.select_mode, label, target.score, dis),
+                throttle_duration_sec=1.0)
         else:
             self.get_logger().info("检测到 [%s] conf=%.2f dis=%.3fm"
                                    % (label, target.score, dis), throttle_duration_sec=1.0)
+
+    def _lose_target(self):
+        """目标从"有"变"无"时打一条告警(只打一次)。"""
+        if self._had_target:
+            self.get_logger().warn("目标丢失, 已停止刷新 target_frame")
+        self._had_target = False
+
+    def _watchdog(self):
+        """1Hz 健康检查: 检测流中断时告警, 并停止广播过期目标(闭环安全)。"""
+        if not self._intrinsics_ready:
+            return
+        if self._last_det_time == 0.0:
+            self.get_logger().warn(
+                "尚未收到任何 yolo_ros 检测 (%s): 确认已启动 yolo_ros 且 input_image_topic 正确"
+                % self.detections_topic, throttle_duration_sec=5.0)
+            return
+        gap = time.time() - self._last_det_time
+        if gap > self.det_timeout and not self._stale_warned:
+            self.get_logger().error(
+                "已 %.1fs 未收到检测消息(>%.1fs): yolo_ros 崩溃 / 相机掉线 / 话题不匹配?"
+                % (gap, self.det_timeout))
+            self._stale_warned = True
+            with self._lock:        # 停止广播过期目标, 让抓取端及时发现 TF 失效
+                self._target = None
+            self._lose_target()
 
     # ------------------------------------------------------------------
     # 工具

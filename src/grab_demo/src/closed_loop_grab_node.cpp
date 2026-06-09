@@ -78,7 +78,18 @@ public:
     // ---- 夹爪 ----
     gripper_client_ = create_client<lebai_interfaces::srv::SetGripper>(
         "/io_service/set_gripper_position");
-    gripper_client_->wait_for_service();
+    // 带超时等待, 避免 io_service 没起来时构造函数无限阻塞(只告警, 不退出)
+    int waited = 0;
+    while (!gripper_client_->wait_for_service(2s)) {
+      if (!rclcpp::ok()) {
+        RCLCPP_ERROR(get_logger(), "等待夹爪服务时被中断, 退出");
+        throw std::runtime_error("interrupted while waiting for gripper service");
+      }
+      waited += 2;
+      RCLCPP_WARN(get_logger(),
+                  "夹爪服务 /io_service/set_gripper_position 未就绪(已等待 %ds), "
+                  "io_service 是否已启动?", waited);
+    }
     gripper_req_ = std::make_shared<lebai_interfaces::srv::SetGripper::Request>();
 
     // ---- 抓取服务 (默认名与开环版一致, 便于直接替换) ----
@@ -174,11 +185,42 @@ private:
     return move_group_->execute(plan) == moveit::core::MoveItErrorCode::SUCCESS;
   }
 
+  // 服务入口: 捕获一切异常, 保证服务始终返回(不让 MoveIt/TF 异常打挂节点)
   void onGrab(const std::shared_ptr<grab_demo::srv::GrabObject::Request> req,
               std::shared_ptr<grab_demo::srv::GrabObject::Response> res)
   {
+    try {
+      runGrab(req, res);
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR(get_logger(), "[闭环] 抓取过程异常: %s", e.what());
+      res->success = false;
+      res->message = std::string("exception: ") + e.what();
+      // 异常后尽量张爪并退回观察点, 避免停在危险位姿
+      try {
+        setGripper(100);
+        move_group_->setNamedTarget(look_target_);
+        move_group_->move();
+      } catch (const std::exception &e2) {
+        RCLCPP_ERROR(get_logger(), "[闭环] 异常恢复(退回观察点)也失败: %s", e2.what());
+      }
+    } catch (...) {
+      RCLCPP_ERROR(get_logger(), "[闭环] 抓取过程发生未知异常");
+      res->success = false;
+      res->message = "unknown exception";
+    }
+  }
+
+  void runGrab(const std::shared_ptr<grab_demo::srv::GrabObject::Request> req,
+               std::shared_ptr<grab_demo::srv::GrabObject::Response> res)
+  {
     const std::string target = req->obj_link;
     RCLCPP_INFO(get_logger(), "[闭环] 开始抓取, 目标 TF: %s", target.c_str());
+    if (target.empty()) {
+      RCLCPP_ERROR(get_logger(), "[闭环] 请求的 obj_link 为空, 拒绝抓取");
+      res->success = false;
+      res->message = "empty obj_link";
+      return;
+    }
 
     setGripper(100);  // 张开夹爪
 

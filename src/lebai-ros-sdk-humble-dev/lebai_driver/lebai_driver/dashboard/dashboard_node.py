@@ -70,6 +70,43 @@ SYSTEM_COMMANDS = [
 DANGEROUS_COMMANDS = {"power_off", "emergency_stop", "turn_off_robot", "disable"}
 
 
+# YOLO 识别 / 闭环抓取 运行时可调参数(白名单, 不接受网页传入任意 node/param)。
+# 网页据此渲染滑条/下拉/输入框, 后端用 `ros2 param set` 设置到对应节点(均带默认值)。
+# node 名来自 yolo_ros_grab.launch.py: 桥接节点=/yolo_ros_node, 闭环抓取=/grab_service_n。
+#   kind: number(数值, 带 min/max/step) / choice(下拉) / text(文本)
+#   ptype: double / int / string —— 决定发给 ros2 param set 的字面量格式, 避免类型不匹配
+PARAM_CONTROLS = [
+    {"id": "z_offset", "node": "/yolo_ros_node", "param": "z_offset",
+     "label": "Z 偏移(沿相机光轴, 越大抓得越深)", "kind": "number", "ptype": "double",
+     "min": -0.05, "max": 0.30, "step": 0.01, "default": 0.07, "unit": "m"},
+    {"id": "conf_threshold", "node": "/yolo_ros_node", "param": "conf_threshold",
+     "label": "抓取置信度门槛(≥才抓)", "kind": "number", "ptype": "double",
+     "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.0, "unit": ""},
+    {"id": "select_mode", "node": "/yolo_ros_node", "param": "select_mode",
+     "label": "多目标选择策略", "kind": "choice", "ptype": "string",
+     "choices": ["confidence", "nearest", "center", "largest"], "default": "confidence"},
+    {"id": "center_mode", "node": "/yolo_ros_node", "param": "center_mode",
+     "label": "抓取中心(不规则物体用 mask)", "kind": "choice", "ptype": "string",
+     "choices": ["bbox", "mask"], "default": "bbox"},
+    {"id": "target_class", "node": "/yolo_ros_node", "param": "target_class",
+     "label": "目标类别 COCO id (-1=不限)", "kind": "number", "ptype": "int",
+     "min": -1, "max": 79, "step": 1, "default": -1, "unit": ""},
+    {"id": "target_label", "node": "/yolo_ros_node", "param": "target_label",
+     "label": "目标类名(非空时优先, 如 cup)", "kind": "text", "ptype": "string",
+     "default": ""},
+    {"id": "grasp_z_offset", "node": "/grab_service_n", "param": "grasp_z_offset",
+     "label": "下降抓取补偿(竖直)", "kind": "number", "ptype": "double",
+     "min": -0.02, "max": 0.10, "step": 0.005, "default": 0.02, "unit": "m"},
+    {"id": "approach_height", "node": "/grab_service_n", "param": "approach_height",
+     "label": "预抓取悬停高度", "kind": "number", "ptype": "double",
+     "min": 0.04, "max": 0.20, "step": 0.01, "default": 0.10, "unit": "m"},
+    {"id": "max_iters", "node": "/grab_service_n", "param": "max_iters",
+     "label": "闭环最大修正轮数", "kind": "number", "ptype": "int",
+     "min": 1, "max": 8, "step": 1, "default": 4, "unit": ""},
+]
+PARAM_BY_KEY = {(c["node"], c["param"]): c for c in PARAM_CONTROLS}
+
+
 # 功能启动页可一键启动/停止的任务(固定白名单, 不接受网页传入任意命令)。
 # 每项通过 ros2 launch 启动一整套功能, 由 Dashboard 以子进程方式管理。
 #
@@ -83,8 +120,11 @@ DANGEROUS_COMMANDS = {"power_off", "emergency_stop", "turn_off_robot", "disable"
 # 所以它们占用上述几乎所有资源, 互相之间以及与驱动/MoveIt 单独启动都会冲突。
 LAUNCH_TASKS = [
     # ---- 视觉抓取(各自包含相机 + 机械臂驱动 + MoveIt + 抓取服务) ----
-    {"id": "yolo_grab", "label": "YOLO 抓取", "group": "视觉抓取",
+    {"id": "yolo_grab", "label": "YOLO 抓取 (TensorRT)", "group": "视觉抓取",
      "cmd": ["ros2", "launch", "grab_demo", "yolo_grab.launch.py"],
+     "resources": ["camera", "robot_state", "motion", "io_service", "system_service", "moveit", "grab"]},
+    {"id": "yolo_ros_grab", "label": "YOLO 抓取 (yolo_ros + 闭环)", "group": "视觉抓取",
+     "cmd": ["ros2", "launch", "grab_demo", "yolo_ros_grab.launch.py"],
      "resources": ["camera", "robot_state", "motion", "io_service", "system_service", "moveit", "grab"]},
     {"id": "color_grab", "label": "HSV/颜色 抓取", "group": "视觉抓取",
      "cmd": ["ros2", "launch", "grab_demo", "color_grab.launch.py"],
@@ -419,6 +459,8 @@ class DashboardNode(Node):
                 return self._send_vlm(payload)
             if cmd == "vlm_confirm":
                 return self._send_vlm_confirm(payload)
+            if cmd == "set_param":
+                return self._set_param(payload)
             return False, f"未知命令类型: {cmd}"
         except Exception as e:  # noqa: BLE001 - 网页错误需返回给前端
             self.get_logger().error(f"命令执行异常: {e}")
@@ -498,6 +540,51 @@ class DashboardNode(Node):
         self._vlm_confirm_pub.publish(msg)
         return True, ("已确认抓取" if ok else "已取消抓取")
 
+    def _set_param(self, payload):
+        """运行时设置 YOLO 识别 / 闭环抓取 的参数(白名单 + `ros2 param set`)。"""
+        node = str(payload.get("node", ""))
+        param = str(payload.get("param", ""))
+        ctrl = PARAM_BY_KEY.get((node, param))
+        if ctrl is None:
+            return False, f"不允许设置的参数: {node} {param}"
+
+        raw = payload.get("value", "")
+        # 按类型格式化字面量, 避免 ros2 param set 把 double 当成 int 等类型不匹配
+        try:
+            ptype = ctrl["ptype"]
+            if ptype == "int":
+                value_str = str(int(round(float(raw))))
+            elif ptype == "double":
+                v = float(raw)
+                if ctrl.get("kind") == "number":
+                    lo, hi = ctrl.get("min"), ctrl.get("max")
+                    if lo is not None and hi is not None and not (lo <= v <= hi):
+                        return False, f"{param} 超出范围 [{lo}, {hi}]"
+                value_str = "{:.6f}".format(v)   # 始终带小数点 -> 识别为 double
+            else:  # string (choice / text)
+                value_str = str(raw)
+                if ctrl.get("kind") == "choice" and value_str not in ctrl.get("choices", []):
+                    return False, f"{param} 取值非法: {value_str}"
+        except (TypeError, ValueError) as e:
+            return False, f"{param} 取值无法解析: {e}"
+
+        cmd = ["ros2", "param", "set", node, param, value_str]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               timeout=6.0, env=os.environ.copy())
+        except FileNotFoundError:
+            return False, "未找到 ros2 (PATH/source 是否正确?)"
+        except subprocess.TimeoutExpired:
+            self.get_logger().warn(f"ros2 param set 超时: {' '.join(cmd)}")
+            return False, f"设置超时: {node} {param} (节点是否在运行?)"
+        out = (r.stdout + r.stderr).strip()
+        if r.returncode == 0 and "successful" in out.lower():
+            self.get_logger().info(f"设置参数 {node} {param} = {value_str}")
+            return True, f"已设置 {param} = {value_str}"
+        # 常见失败: 节点未启动 / 参数未声明 / 类型不匹配
+        self.get_logger().warn(f"设置参数失败 {node} {param}={value_str}: {out}")
+        return False, f"设置失败: {out or '请确认对应抓取任务已启动'}"
+
     def _call_move_joint(self, payload):
         if not self._ready(self._cli_move_joint, "move_joint"):
             return False, "move_joint 服务未就绪 (motion 是否已启动?)"
@@ -524,6 +611,8 @@ class DashboardNode(Node):
         html = INDEX_HTML.replace(
             "__SYS_COMMANDS__", json.dumps(SYSTEM_COMMANDS, ensure_ascii=False))
         html = html.replace("__DANGER__", json.dumps(sorted(DANGEROUS_COMMANDS)))
+        html = html.replace("__PARAM_CONTROLS__",
+                            json.dumps(PARAM_CONTROLS, ensure_ascii=False))
         self._index_html = html.encode("utf-8")
 
         class Handler(BaseHTTPRequestHandler):
@@ -679,6 +768,13 @@ INDEX_HTML = """<!DOCTYPE html>
     <small>安全机制: 默认 require_confirm, 节点理解到目标后会等你点【确认抓取】才动机械臂。</small>
   </div>
 
+  <div class="card" style="grid-column:1 / span 2;">
+    <h2>YOLO 识别 / 闭环抓取 参数 (运行时可调)</h2>
+    <div id="paramctrls"></div>
+    <small>需先在"功能启动"页启动【YOLO 抓取 (yolo_ros + 闭环)】。改动通过 ros2 param set 即时下发;
+      闭环抓取的参数会在下次抓取生效。target 类名优先于类别 id。</small>
+  </div>
+
   <div class="card">
     <h2>机器人状态</h2>
     <table id="robot"><tr><td class="k">等待 /robot_status ...</td></tr></table>
@@ -786,6 +882,42 @@ for (let i=0;i<6;i++){
   const inp = document.createElement('input');
   inp.id = 'j'+i; inp.type='number'; inp.step='0.01'; inp.value='0.0';
   ji.appendChild(inp);
+}
+
+// YOLO 识别 / 闭环抓取 参数控件(由后端白名单渲染)
+const PARAMS = __PARAM_CONTROLS__;
+const pc = document.getElementById('paramctrls');
+PARAMS.forEach(c => {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const lab = document.createElement('span');
+  lab.style.minWidth = '260px';
+  lab.innerHTML = c.label + ' <small class="cmd">' + c.node + ' ' + c.param + '</small>';
+  row.appendChild(lab);
+  let el;
+  if (c.kind === 'choice'){
+    el = document.createElement('select');
+    c.choices.forEach(o => { const op=document.createElement('option'); op.value=o; op.textContent=o; el.appendChild(op); });
+    el.value = c.default;
+  } else {
+    el = document.createElement('input');
+    el.type = (c.kind === 'text') ? 'text' : 'number';
+    if (c.kind === 'number'){ el.min=c.min; el.max=c.max; el.step=c.step; el.style.width='90px'; }
+    el.value = c.default;
+  }
+  el.id = 'p_' + c.id;
+  row.appendChild(el);
+  if (c.unit) { const u=document.createElement('small'); u.textContent=c.unit; row.appendChild(u); }
+  const btn = document.createElement('button');
+  btn.textContent = '应用';
+  btn.onclick = () => setParam(c);
+  row.appendChild(btn);
+  pc.appendChild(row);
+});
+
+function setParam(c){
+  const v = document.getElementById('p_'+c.id).value;
+  post({type:'set_param', node:c.node, param:c.param, value:v});
 }
 
 function toast(msg, ok=true){

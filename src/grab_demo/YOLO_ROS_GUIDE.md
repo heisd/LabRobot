@@ -231,3 +231,38 @@ ros2 param list /grab_service_n
 | 跟踪 | 无 | yolo_ros 自带 ByteTrack（`use_tracking:=True`） |
 | 输出接口 | `target_frame` + `/grab_target/distance` | **完全相同** |
 | 抓取 | 开环 `grab_service_node` | 闭环 `closed_loop_grab_node` |
+
+## 十、Dashboard 集成
+
+Web Dashboard（`lebai_driver` 的 `dashboard_node`）已接入本方案：
+
+- **功能启动页**新增一键任务【YOLO 抓取 (yolo_ros + 闭环)】，等价于
+  `ros2 launch grab_demo yolo_ros_grab.launch.py`，启动/停止/看日志都在网页上完成。
+- **监控页**新增卡片【YOLO 识别 / 闭环抓取 参数 (运行时可调)】，用滑条/下拉/输入框在线调：
+  `z_offset`、`conf_threshold`、`select_mode`、`center_mode`、`target_class`、`target_label`
+  （以上 → `/yolo_ros_node`）和 `grasp_z_offset`、`approach_height`、`max_iters`
+  （以上 → `/grab_service_n`）。点【应用】即通过 `ros2 param set` 即时下发。
+- 距离实时显示沿用既有的 `/grab_target/distance` 卡片。
+
+> 启动 Dashboard：`ros2 launch lebai_driver dashboard.launch.py`，浏览器开 `http://<设备IP>:8080`。
+> 参数面板是后端**白名单**渲染的，网页只能调这些预定义参数，不能设置任意节点/参数。
+
+## 十一、异常日志与健康监控
+
+为便于排障，识别与抓取两端都加了清晰的异常日志：
+
+**桥接节点 `yolo_ros_node`：**
+- 回调里任何未预料异常都打印**异常信息 + 堆栈**（节流 2s），并累计次数，不会静默失效；
+- **检测流看门狗**（1Hz）：长时间（默认 `det_timeout=3s`）收不到 `/yolo/detections` 时
+  打 `ERROR`，提示「yolo_ros 崩溃 / 相机掉线 / 话题不匹配」，并**停止广播过期 target_frame**，
+  让抓取端及时发现 TF 失效（闭环安全）；
+- 区分「画面里没有物体」与「有物体但被 `target_class/label/conf` 过滤掉」，分别给出提示；
+- 目标**锁定/丢失**会各打一条日志；深度编码非 16UC1、mask 模式下彩色/深度分辨率不一致也会告警。
+
+**闭环抓取 `grab_service_n`：**
+- 整个抓取流程包在 `try/catch` 里，MoveIt/TF 等异常会被捕获并记录，服务**始终返回**，
+  并在异常后尽量**张爪 + 退回观察点**，避免停在危险位姿；
+- 夹爪服务（`io_service`）未就绪时带超时**循环告警**，而不是无限静默阻塞；
+- TF 不可用、规划失败、执行失败、`obj_link` 为空等都有针对性日志。
+
+查看日志：在 Dashboard 任务页点【日志】，或终端 `ros2 launch ...` 的输出里直接看。
