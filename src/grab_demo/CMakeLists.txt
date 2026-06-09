@@ -143,8 +143,31 @@ install(TARGETS hsv_range
 
 rosidl_get_typesupport_target(cpp_typesupport_target
     ${PROJECT_NAME} rosidl_typesupport_cpp)
- 
+
 target_link_libraries(grab_service_node "${cpp_typesupport_target}")
+
+
+
+# ---------------------------------------------------------------------------
+# 闭环 (PBVS) 抓取服务节点: grab_service_node 的"看-动-再看-修正"闭环版,
+# 对外接口完全一致(同样订阅 target_frame / 提供 obj_grab_service)。
+# ---------------------------------------------------------------------------
+add_executable(closed_loop_grab_node src/closed_loop_grab_node.cpp)
+ament_target_dependencies(closed_loop_grab_node
+  rclcpp
+  geometry_msgs
+  tf2_geometry_msgs
+  tf2_ros
+  moveit_ros_planning_interface
+  lebai_interfaces
+)
+install(TARGETS closed_loop_grab_node
+  DESTINATION lib/${PROJECT_NAME})
+
+rosidl_get_typesupport_target(cpp_typesupport_target
+  ${PROJECT_NAME} rosidl_typesupport_cpp)
+
+target_link_libraries(closed_loop_grab_node "${cpp_typesupport_target}")
 
 
 
@@ -289,7 +312,11 @@ else()
 endif()
 
 # VLM(视觉语言模型)抓取节点 —— 纯 Python, 用 ros2 run grab_demo vlm_grab_node.py 运行
-install(PROGRAMS scripts/vlm_grab_node.py DESTINATION lib/${PROJECT_NAME})
+# yolo_ros 桥接节点 —— 纯 Python, 把官方 yolo_ros 的检测接到统一 target_frame
+install(PROGRAMS
+  scripts/vlm_grab_node.py
+  scripts/yolo_ros_detect_node.py
+  DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 if(BUILD_TESTING)

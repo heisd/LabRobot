@@ -45,20 +45,22 @@
 | 方案 | 节点 | 说明 | 指南 |
 |------|------|------|------|
 | HSV 颜色 | `hsv_range` | 按 HSV 阈值找最大色块，最轻量 | `HSV_GUIDE.md` |
-| YOLO 检测 | `yolo_detect_node` | 基于 TensorRT 的 YOLOv8 目标检测 | `YOLO_GUIDE.md` |
+| YOLO 检测 (TensorRT) | `yolo_detect_node` | 自研 TensorRT 版 YOLOv8（需 CUDA+TensorRT，仅 Jetson） | `YOLO_GUIDE.md` |
+| YOLO 检测 (yolo_ros) | `yolo_ros_detect_node.py` | 官方 [yolo_ros](https://github.com/mgonzs13/yolo_ros)（ultralytics）+ 闭环抓取，CPU/GPU 皆可 | `YOLO_ROS_GUIDE.md` |
 | KCF 跟踪 | `kcf_track_node` | KCF 相关滤波跟踪，需初始框（可由 HSV 自动播种） | `KCF_GUIDE.md` |
 | ArUco | `aruco_dectet` | ArUco 标记识别 | — |
 | VLM 自然语言 | `vlm_grab_node.py` | 视觉语言模型，按一句自然语言选物抓取 | `VLM_GUIDE.md` |
 
 其它关键节点 / 资源：
 
-- `grab_service_node` — 抓取服务（订阅 `target_frame`，驱动机械臂抓取）
+- `grab_service_node` — 抓取服务（订阅 `target_frame`，驱动机械臂抓取，开环）
+- `closed_loop_grab_node` — 闭环（PBVS）抓取服务：看-动-再看-修正后再抓，接口与开环版一致（见 `YOLO_ROS_GUIDE.md`）
 - `start_grab` — 抓取流程入口
 - `hand_eye` / `charuco_dectet_node` — 手眼标定及 ChArUco 标定板识别（见 `point_cloud.md`、根目录 `serivce.md`）
 - `camera_info_node` / `point_cloud_node` — 相机内参与点云处理
 - `nav_grab` — 导航 + 抓取（移动底盘联动）
 - `srv/GrabObject.srv` — 抓取服务接口
-- `launch/` — 各方案的启动文件：`color_grab` / `yolo_grab` / `kcf_grab` / `aruco_grab` / `vlm_grab` / `hand_eye` / `start_grab`
+- `launch/` — 各方案的启动文件：`color_grab` / `yolo_grab` / `yolo_ros_grab`（yolo_ros + 闭环）/ `kcf_grab` / `aruco_grab` / `vlm_grab` / `hand_eye` / `start_grab`
 - 调试参见 `DEBUG_GUIDE.md`
 
 ### arm_demo — 运动学示例
@@ -82,7 +84,8 @@ ros2 launch lebai_gazebo gazebo_grab.launch.py   # 仿真 + 抓取
 
 - **ROS 2 Humble**（Ubuntu 22.04）
 - **OpenCV / cv_bridge**（视觉处理）
-- YOLO 方案需 **TensorRT**；VLM 方案需可访问的视觉语言模型（OpenAI 兼容 / Anthropic）
+- YOLO（TensorRT 版）需 **TensorRT**；YOLO（yolo_ros 版）需 **ultralytics**（`pip install ultralytics`，CPU/GPU 皆可，见 `grab_demo/YOLO_ROS_GUIDE.md`）；VLM 方案需可访问的视觉语言模型（OpenAI 兼容 / Anthropic）
+- yolo_ros 以 **git submodule** 形式置于 `src/yolo_ros`，克隆后需 `git submodule update --init --recursive`
 - 仿真需 **Gazebo Classic 11** 及 `gazebo_ros2_control` 等插件（见 `GAZEBO_GUIDE.md`）
 
 > 编译大包（如含 TensorRT / MoveIt）时若内存不足，请参考 `VirtualMemory.md` 增加交换分区。
