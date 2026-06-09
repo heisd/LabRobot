@@ -22,6 +22,7 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <cv_bridge/cv_bridge.h>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <opencv2/opencv.hpp>
 #include <message_filters/subscriber.h>
 #include <message_filters/sync_policies/approximate_time.h>
@@ -29,6 +30,8 @@
 #include "grab_demo/target_tf_publisher.hpp"  // 统一接口: 像素中心 -> target_frame TF
 
 #include <algorithm>
+#include <chrono>
+#include <exception>
 #include <memory>
 #include <string>
 #include <vector>
@@ -84,6 +87,15 @@ public:
       setupTuningWindow();  // 仅在显式开启时弹出带滑动条的调参窗口
     }
 
+    // 帧流健康监控: 长时间收不到图像就告警(便于排查相机掉线/话题不匹配)
+    watchdog_ = create_wall_timer(std::chrono::seconds(1),
+                                  std::bind(&HsvRangeNode::watchdog, this));
+
+    // 运行时动态调参(ros2 param set 即时生效), 重点是 z_offset(抓取深度) 与 HSV 阈值
+    // —— 与 YOLO/KCF 同一思路。
+    param_cb_ = add_on_set_parameters_callback(
+        std::bind(&HsvRangeNode::onSetParams, this, std::placeholders::_1));
+
     RCLCPP_INFO(get_logger(),
                 "hsv_range_node 已启动 (H[%d,%d] S[%d,%d] V[%d,%d], min_area=%d)",
                 hue_min_, hue_max_, sat_min_, sat_max_, val_min_, val_max_, min_area_);
@@ -105,8 +117,69 @@ private:
     cv::createTrackbar("Val Max", "HSV Tuning", &val_max_, 255);
   }
 
+  // 动态参数回调: 运行中用 `ros2 param set /color_node <name> <value>` 调整
+  rcl_interfaces::msg::SetParametersResult
+  onSetParams(const std::vector<rclcpp::Parameter> &params)
+  {
+    rcl_interfaces::msg::SetParametersResult result;
+    result.successful = true;
+    for (const auto &p : params) {
+      const std::string &n = p.get_name();
+      if (n == "z_offset") {
+        tf_pub_.setZOffset(p.as_double());      // 抓取深度(沿相机光轴)
+        RCLCPP_INFO(get_logger(), "z_offset -> %.3f m", p.as_double());
+      } else if (n == "hue_min") { hue_min_ = static_cast<int>(p.as_int());
+      } else if (n == "hue_max") { hue_max_ = static_cast<int>(p.as_int());
+      } else if (n == "sat_min") { sat_min_ = static_cast<int>(p.as_int());
+      } else if (n == "sat_max") { sat_max_ = static_cast<int>(p.as_int());
+      } else if (n == "val_min") { val_min_ = static_cast<int>(p.as_int());
+      } else if (n == "val_max") { val_max_ = static_cast<int>(p.as_int());
+      } else if (n == "min_area") { min_area_ = static_cast<int>(p.as_int());
+      }
+    }
+    return result;
+  }
+
+  // 帧流健康监控: 长时间收不到图像帧时告警
+  void watchdog()
+  {
+    if (last_frame_count_ == 0) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                           "尚未收到图像帧 (%s): 相机是否启动? 话题是否匹配?",
+                           rgb_topic_.c_str());
+      return;
+    }
+    if (last_frame_count_ == prev_frame_count_) {  // 1s 内无新帧
+      if (!stale_warned_) {
+        RCLCPP_ERROR(get_logger(), "图像帧中断(>1s无新帧): 相机掉线 / 节点卡死?");
+        stale_warned_ = true;
+      }
+    } else {
+      stale_warned_ = false;
+    }
+    prev_frame_count_ = last_frame_count_;
+  }
+
+  // 同步回调: 记录帧到达(健康监控) + 捕获一切异常, 避免回调静默失效
   void imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &rgb_msg,
                      const sensor_msgs::msg::Image::ConstSharedPtr &depth_msg)
+  {
+    ++last_frame_count_;
+    try {
+      processFrame(rgb_msg, depth_msg);
+    } catch (const cv::Exception &e) {
+      ++cb_errors_;
+      RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000,
+                            "OpenCV 异常(累计 %d): %s", cb_errors_, e.what());
+    } catch (const std::exception &e) {
+      ++cb_errors_;
+      RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000,
+                            "检测回调异常(累计 %d): %s", cb_errors_, e.what());
+    }
+  }
+
+  void processFrame(const sensor_msgs::msg::Image::ConstSharedPtr &rgb_msg,
+                    const sensor_msgs::msg::Image::ConstSharedPtr &depth_msg)
   {
     if (!tf_pub_.intrinsicsReady()) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "等待相机内参 %s ...",
@@ -215,6 +288,14 @@ private:
   std::shared_ptr<message_filters::Synchronizer<SyncPolicy>> sync_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_pub_;
+  rclcpp::TimerBase::SharedPtr watchdog_;
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_;
+
+  // 健康监控状态
+  uint64_t last_frame_count_ = 0;   // 收到的帧计数(watchdog 据此判断帧流是否中断)
+  uint64_t prev_frame_count_ = 0;
+  bool stale_warned_ = false;
+  int cb_errors_ = 0;
 
   // 参数
   std::string rgb_topic_, depth_topic_, info_topic_;

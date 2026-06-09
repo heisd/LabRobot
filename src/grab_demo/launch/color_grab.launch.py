@@ -108,12 +108,21 @@ def generate_launch_description():
             executable="camera_info_node",
             name="camera_info",
         )
-    # 提供抓取服务节点,参数是机器人描述文件
+    # 提供抓取服务节点: 闭环(PBVS)版, 与 yolo_ros_grab / kcf_grab 同一思路
+    # (看-动-再看-修正后再抓)。想用回开环把 closed_loop_grab_node 换成 grab_service_node。
     grab_service=Node(
             package="grab_demo",
-            executable="grab_service_node",
+            executable="closed_loop_grab_node",
             name="grab_service_n",
-            parameters=[robot_description_semantic]
+            parameters=[robot_description_semantic, {
+                "base_frame": "base_link",
+                "look_target": "look",
+                "max_iters": 4,
+                "pos_tolerance": 0.008,
+                "approach_height": 0.10,
+                "grasp_z_offset": 0.02,
+                "settle_sec": 0.6,
+            }]
         )
     # 延迟15秒后启动抓取服务节点，确保其他节点先初始化完成
     delay_task = TimerAction(period=15.0, actions=[grab_service])
