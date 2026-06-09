@@ -97,7 +97,7 @@ class CmdArbiter(Node):
         self.declare_parameter('keyboard_topic', 'cmd_vel_keyboard')  # 键盘遥控(最高优先)
         self.declare_parameter('kcf_topic', 'kcf/cmd_vel')           # KCF 跟踪(透传)
         self.declare_parameter('yolo_topic', 'yolo/cmd_vel')         # YOLO 跟随(透传)
-        self.declare_parameter('external_timeout', 0.4)              # 键盘/KCF/YOLO 新鲜判定(s)
+        self.declare_parameter('external_timeout', 0.5)              # 键盘/KCF/YOLO 新鲜判定(s, 与 detect_timeout 对齐)
 
         g = self.get_parameter
         self.decel_duration = g('decel_duration').value
@@ -342,37 +342,44 @@ class CmdArbiter(Node):
             self.armed = True
             self.get_logger().info('键盘释放, 交还 巡线/KCF/YOLO')
 
-        # 2) 巡线 / KCF / YOLO 三者平级: 选"最近收到"的那个作为当前驱动源
-        sources = []
-        if self._fresh(self.last_kcf_time):
-            sources.append((self.last_kcf_time, 'KCF'))
-        if self._fresh(self.last_yolo_time):
-            sources.append((self.last_yolo_time, 'YOLO'))
-        if self._fresh(self.last_follow_time):
-            sources.append((self.last_follow_time, '巡线'))
-        cur = max(sources)[1] if sources else None
-        if cur != self.active_peer:
-            if cur is not None:
-                self.get_logger().info(f'控制源 -> {cur}')
-            self.active_peer = cur
+        # 2) 巡线的 QR 路径动作(减速/停车/转向)一旦开始就必须自包含跑完, 不被巡线
+        #    短暂停发或 KCF/YOLO 抢占打断; 仅在没有进行中的动作时才在三源间按"最近收到"选
+        in_qr_action = self.state in (STATE_DECEL, STATE_STOPPED, STATE_TURNING)
+        if not in_qr_action:
+            # 巡线 / KCF / YOLO 三者平级: 选"最近收到"的那个作为当前驱动源
+            sources = []
+            if self._fresh(self.last_kcf_time):
+                sources.append((self.last_kcf_time, 'KCF'))
+            if self._fresh(self.last_yolo_time):
+                sources.append((self.last_yolo_time, 'YOLO'))
+            if self._fresh(self.last_follow_time):
+                sources.append((self.last_follow_time, '巡线'))
+            cur = max(sources)[1] if sources else None
+            if cur != self.active_peer:
+                if cur is not None:
+                    self.get_logger().info(f'控制源 -> {cur}')
+                self.active_peer = cur
 
-        # KCF / YOLO 直接透传, 旁路 QR 状态机
-        if cur == 'KCF':
-            self.state = STATE_FOLLOW
-            self._set_status('KCF')
-            self.publish(self.last_kcf)
-            return
-        if cur == 'YOLO':
-            self.state = STATE_FOLLOW
-            self._set_status('YOLO')
-            self.publish(self.last_yolo)
-            return
-        if cur is None:
-            self._set_status('停车 (无控制源)')
-            self.publish(Twist())   # 没有任何控制源: 停车
-            return
+            # KCF / YOLO 直接透传, 旁路 QR 状态机
+            if cur == 'KCF':
+                self.state = STATE_FOLLOW
+                self._set_status('KCF')
+                self.publish(self.last_kcf)
+                return
+            if cur == 'YOLO':
+                self.state = STATE_FOLLOW
+                self._set_status('YOLO')
+                self.publish(self.last_yolo)
+                return
+            if cur is None:
+                self._set_status('停车 (无控制源)')
+                self.publish(Twist())   # 没有任何控制源: 停车
+                return
+            # cur == '巡线': 落到下面的状态机
+        else:
+            self.active_peer = '巡线'   # QR 动作进行中, 驱动源仍记为巡线
 
-        # 3) cur == '巡线': 走原有 QR 路径动作状态机
+        # 3) 巡线 / QR 路径动作状态机(FOLLOW/DECEL/STOPPED/TURNING)
         self._set_status({
             STATE_FOLLOW: '巡线', STATE_DECEL: '巡线·QR减速',
             STATE_STOPPED: '巡线·QR停车', STATE_TURNING: '巡线·QR转向',

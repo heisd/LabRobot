@@ -588,9 +588,12 @@
     range.addEventListener('input', () => {
       show(range.value);
       if (timer) clearTimeout(timer);     // debounce while dragging
-      timer = setTimeout(() => sendDist(range.value), 120);
+      timer = setTimeout(() => { timer = null; sendDist(range.value); }, 120);
     });
-    range.addEventListener('change', () => sendDist(range.value));
+    range.addEventListener('change', () => {
+      if (timer) { clearTimeout(timer); timer = null; }   // release: send once, drop pending
+      sendDist(range.value);
+    });
     if (getBtn) getBtn.addEventListener('click', () => {
       if (!ros) { alert('未连接 rosbridge'); return; }
       const req = new ROSLIB.ServiceRequest({ names: [param] });

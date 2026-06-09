@@ -48,7 +48,8 @@ class YoloFollower(Node):
         d('kp_angular', 1.5)
         d('max_linear', 0.15)          # m/s
         d('max_angular', 0.6)          # rad/s
-        d('lost_timeout', 0.5)         # 秒, 丢目标多久后停车
+        d('lost_timeout', 0.5)         # 秒, 丢目标多久后彻底丢失(清锁定)
+        d('coast_grace', 0.15)         # 秒, 只在检测新鲜过此值才驱动; 之后到 lost_timeout 间停车等待
         d('control_rate', 20.0)        # Hz
 
         g = self.get_parameter
@@ -63,6 +64,9 @@ class YoloFollower(Node):
         self.v_max = float(g('max_linear').value)
         self.w_max = float(g('max_angular').value)
         self.lost_timeout = float(g('lost_timeout').value)
+        self.coast_grace = max(0.0, float(g('coast_grace').value))
+        # 期望距离不得小于有效深度下限, 否则永远 x>=min_range>desired -> 一直前冲撞上去
+        self.desired = max(self.min_range, self.desired)
         rate = max(1.0, float(g('control_rate').value))
 
         qos = QoSProfile(depth=10)
@@ -86,28 +90,38 @@ class YoloFollower(Node):
             f'(丢失{self.lost_timeout}s后停车)')
 
     def _on_set_params(self, params):
-        """在线改参: 让仪表盘滑块等能实时调 desired_distance 等, 无需重启."""
-        setters = {
-            'desired_distance': lambda v: setattr(self, 'desired', float(v)),
-            'distance_deadband': lambda v: setattr(self, 'dist_db', float(v)),
-            'yaw_deadband': lambda v: setattr(self, 'yaw_db', float(v)),
-            'min_range': lambda v: setattr(self, 'min_range', float(v)),
-            'kp_linear': lambda v: setattr(self, 'kp_lin', float(v)),
-            'kp_angular': lambda v: setattr(self, 'kp_ang', float(v)),
-            'max_linear': lambda v: setattr(self, 'v_max', float(v)),
-            'max_angular': lambda v: setattr(self, 'w_max', float(v)),
-            'lost_timeout': lambda v: setattr(self, 'lost_timeout', float(v)),
-            'target_class': lambda v: setattr(self, 'target_class', (v or '').strip()),
+        """在线改参: 让仪表盘滑块等能实时调 desired_distance 等, 无需重启.
+
+        先全部校验+转换, 全部通过后再一次性应用; 任一非法即整批拒绝, 避免"半套用"
+        导致节点内部状态与参数存储不一致. desired_distance 会被夹到 >= min_range.
+        """
+        # name -> (attr, converter)
+        spec = {
+            'desired_distance': ('desired', lambda v: max(self.min_range, float(v))),
+            'distance_deadband': ('dist_db', float),
+            'yaw_deadband': ('yaw_db', float),
+            'min_range': ('min_range', float),
+            'kp_linear': ('kp_lin', float),
+            'kp_angular': ('kp_ang', float),
+            'max_linear': ('v_max', float),
+            'max_angular': ('w_max', float),
+            'lost_timeout': ('lost_timeout', float),
+            'coast_grace': ('coast_grace', float),
+            'target_class': ('target_class', lambda v: (v or '').strip()),
         }
+        pending = []
         for p in params:
-            fn = setters.get(p.name)
-            if fn is None:
+            s = spec.get(p.name)
+            if s is None:
                 continue
+            attr, conv = s
             try:
-                fn(p.value)
+                pending.append((attr, conv(p.value), p.name))
             except (TypeError, ValueError) as err:
-                return SetParametersResult(successful=False, reason=str(err))
-            if p.name == 'desired_distance':
+                return SetParametersResult(successful=False, reason=f'{p.name}: {err}')
+        for attr, val, name in pending:
+            setattr(self, attr, val)
+            if name == 'desired_distance':
                 self.get_logger().info(f'desired_distance 在线更新 -> {self.desired:.2f}m')
         return SetParametersResult(successful=True)
 
@@ -172,9 +186,14 @@ class YoloFollower(Node):
             self.get_logger().error(f'处理检测帧出错: {err}')
 
     def on_timer(self):
-        """固定频率输出速度: 有近期目标则跟随, 否则停车; 同时打印状态/异常."""
+        """固定频率输出速度. 两段式, 避免对着过期位置盲走/盲倒:
+          - 检测新鲜(<= coast_grace): 正常跟随;
+          - 短暂丢帧(coast_grace ~ lost_timeout): 停车等待(保留锁定), 不再运动;
+          - 彻底丢失(> lost_timeout): 停车并清锁定, 警告一次.
+        """
         tw = Twist()
-        if self._recent() and self.lock_xy is not None:
+        since = None if self.last_seen is None else (self._now() - self.last_seen)
+        if since is not None and since <= self.coast_grace and self.lock_xy is not None:
             x, y = self.lock_xy
             err = x - self.desired                       # >0 太远前进, <0 太近后退
             if abs(err) > self.dist_db:
@@ -188,6 +207,9 @@ class YoloFollower(Node):
                 f'w={tw.angular.z:+.2f}',
                 throttle_duration_sec=1.0)
             self.was_following = True
+        elif since is not None and since <= self.lost_timeout:
+            # 短暂丢帧: 停车等待目标回来(tw 保持 0), 不对过期位置继续运动
+            pass
         else:
             if self.was_following:                       # 跟随中 -> 丢失, 只警告一次
                 self.get_logger().warn('目标丢失, 停车')
