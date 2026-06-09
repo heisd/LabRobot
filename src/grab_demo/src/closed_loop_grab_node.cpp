@@ -289,6 +289,14 @@ private:
 
     // 3. 最终下降到抓取点 (再查一次 TF, 用最新结果)
     if (!lookupTarget(target, tx, ty, tz, 1.0)) {
+      if (!have_prev) {
+        // 从未取得过有效目标(例如 max_iters<=0 且本次查 TF 又失败),
+        // 绝不能用未初始化的 (0,0,0) 去运动, 否则会撞向 base 原点。
+        RCLCPP_ERROR(get_logger(), "[闭环] 始终未获得有效目标, 放弃抓取");
+        res->success = false;
+        res->message = "no valid target";
+        return;
+      }
       RCLCPP_WARN(get_logger(), "[闭环] 最终查 TF 失败, 使用上一轮目标");
       tx = px; ty = py; tz = pz;
     }

@@ -405,20 +405,52 @@ class YoloRosDetectNode(Node):
         img_h, img_w = depth.shape[:2]
         if self.center_mode == "mask" and cv2 is not None \
                 and getattr(det, "mask", None) is not None and len(det.mask.data) >= 3:
-            pts = np.array([[p.x, p.y] for p in det.mask.data], dtype=np.int32)
-            m = cv2.moments(pts)
-            if m["m00"] > 0:                       # 多边形质心(面积加权)
-                px = int(round(m["m10"] / m["m00"]))
-                py = int(round(m["m01"] / m["m00"]))
-            else:                                  # 退化(共线)时用边界点均值
-                px = int(round(float(np.mean(pts[:, 0]))))
-                py = int(round(float(np.mean(pts[:, 1]))))
-            px = max(0, min(px, img_w - 1))
-            py = max(0, min(py, img_h - 1))
-            return px, py, self._mask_depth(depth, pts)
+            pts = np.array([[p.x, p.y] for p in det.mask.data], dtype=np.float64)
+            # 1) 填充掩码(一次), 后续质心校验与深度都复用它
+            m = np.zeros((img_h, img_w), dtype=np.uint8)
+            cv2.fillPoly(m, [pts.astype(np.int32)], 255)
+            # 2) 面积加权质心(精确公式; 避免 cv2.moments 把 (N,2) 点集误当成图像)
+            cx, cy = self._polygon_centroid(pts)
+            px = max(0, min(int(round(cx)), img_w - 1))
+            py = max(0, min(int(round(cy)), img_h - 1))
+            # 3) 凹形/带孔物体的质心可能落在物体之外(掩码值为0),
+            #    此时取掩码内"最深"的点(距离变换峰值), 保证抓取中心确实落在物体上。
+            if m[py, px] == 0:
+                ipx, ipy = self._deepest_mask_point(m)
+                if ipx is not None:
+                    px, py = ipx, ipy
+            # 4) 深度: 掩码区域内非零深度中值(比单点更稳)
+            vals = depth[(m > 0) & (depth > 0)]
+            dis = float(np.median(vals)) / 1000.0 if vals.size else 0.0  # mm -> m
+            return px, py, dis
         # 默认 / 回退: bbox 中心
         px, py = self._center_px(det, img_w, img_h)
         return px, py, self._median_depth(depth, px, py)
+
+    @staticmethod
+    def _polygon_centroid(pts):
+        """多边形面积加权质心(shoelace 公式)。pts: Nx2 float。退化时回退顶点均值。"""
+        x = pts[:, 0]
+        y = pts[:, 1]
+        x1 = np.roll(x, -1)
+        y1 = np.roll(y, -1)
+        cross = x * y1 - x1 * y
+        area = cross.sum() / 2.0
+        if abs(area) < 1e-6:                 # 共线/重合点 -> 面积为 0, 用顶点均值
+            return float(x.mean()), float(y.mean())
+        cx = ((x + x1) * cross).sum() / (6.0 * area)
+        cy = ((y + y1) * cross).sum() / (6.0 * area)
+        return float(cx), float(cy)
+
+    @staticmethod
+    def _deepest_mask_point(m):
+        """掩码内距边界最远的点(距离变换峰值), 用作凹形物体的稳妥抓取中心。"""
+        try:
+            dist = cv2.distanceTransform(m, cv2.DIST_L2, 5)
+        except Exception:  # noqa: BLE001
+            return None, None
+        _, _, _, maxloc = cv2.minMaxLoc(dist)
+        return int(maxloc[0]), int(maxloc[1])
 
     def _median_depth(self, depth, px, py, r=5):
         h, w = depth.shape[:2]
@@ -426,15 +458,6 @@ class YoloRosDetectNode(Node):
         py = max(0, min(py, h - 1))
         patch = depth[max(0, py - r):min(h, py + r + 1), max(0, px - r):min(w, px + r + 1)]
         vals = patch[patch > 0]
-        if vals.size == 0:
-            return 0.0
-        return float(np.median(vals)) / 1000.0  # mm -> m
-
-    def _mask_depth(self, depth, pts):
-        """掩码区域内非零深度的中值(米); 无有效深度返回 0。"""
-        m = np.zeros(depth.shape[:2], dtype=np.uint8)
-        cv2.fillPoly(m, [pts], 255)
-        vals = depth[(m > 0) & (depth > 0)]
         if vals.size == 0:
             return 0.0
         return float(np.median(vals)) / 1000.0  # mm -> m
