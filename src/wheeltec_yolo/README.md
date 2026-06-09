@@ -114,6 +114,23 @@ ros2 launch wheeltec_yolo yolo_follow.launch.py cmd_vel_topic:=follow/cmd_vel
 控制：前后让 `bbox3d.center.position.x` 收敛到 `desired_distance`，转向让方位角
 `atan2(y, x)` 归零（目标居中）；单帧漏检在 `lost_timeout` 内沿用上次目标，丢失后停车。
 
+### 日志 / 排查
+
+节点会打印诊断日志，出问题时按提示定位：
+
+| 日志 | 含义 / 处理 |
+|---|---|
+| `锁定目标: class=… 距离=…m` | 已开始跟随某物体 |
+| `跟随 … 距离=…m 方位=…° -> v=… w=…` | 跟随中（每秒一条） |
+| `目标丢失, 停车` | 超过 `lost_timeout` 没看到目标 |
+| `未检测到任何物体` | YOLO 没检到东西（光线/距离/模型） |
+| `检测到 N 个物体, 但没有类别 "X"` | `target_class` 设的类别没出现 |
+| **`N 个候选都没有有效 3D 深度 …`** | **最常见**：深度没和彩色对齐 → 相机加 `depth_registration:=true`，并确认深度话题在发布 |
+| `尚未收到 /yolo/detections_3d …` | 3D 检测没起来：确认用的是 `yolo_follow.launch.py`（已开 `use_3d`） |
+| `/yolo/detections_3d 超过 2s 未更新` | 检测中断：查相机 / 深度 / yolo 节点 |
+
+把日志等级调高看更多：`ros2 run`/`launch` 时加 `--ros-args --log-level yolo_follow:=debug`。
+
 > 距离在 `base_link`（车体中心）下测量。相机有前向安装偏移时，**车头**到物体的实际
 > 间隙 ≈ `desired_distance − 相机前向偏移`，可据此把 `desired_distance` 调到让车头
 > 真正离物体约 20cm。
