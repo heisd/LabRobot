@@ -15,7 +15,9 @@
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
-  
+  <!-- 经仲裁器路由的启动(wheeltec_robot_kcf_arbiter.launch.py)用 cmd_arbiter -->
+  <exec_depend>simple_follower_ros2</exec_depend>
+
 
   <export>
     <build_type>ament_cmake</build_type>

@@ -94,9 +94,31 @@ ros2 launch astra_camera <你的相机>.launch.xml depth_registration:=true
 ros2 launch wheeltec_yolo yolo_follow.launch.py
 # 只跟人、保持 0.3m：
 ros2 launch wheeltec_yolo yolo_follow.launch.py target_class:=person desired_distance:=0.3
-# 速度交给仲裁器而不是直接给底盘：
-ros2 launch wheeltec_yolo yolo_follow.launch.py cmd_vel_topic:=follow/cmd_vel
 ```
+
+`desired_distance` 也能在 **仪表盘 YOLO 页用滑块实时调**（在线改 `/yolo_follow`
+参数，无需重启）。
+
+### 经 cmd_arbiter 仲裁底盘（推荐：与巡线/KCF/键盘共存）
+
+不直接抢 `/cmd_vel`，而是经速度仲裁器下发。优先级：
+
+> **键盘（最高）  >  { 巡线 / KCF / YOLO 三者平级 }**
+
+```bash
+ros2 launch wheeltec_yolo yolo_follow_arbiter.launch.py
+ros2 launch wheeltec_yolo yolo_follow_arbiter.launch.py target_class:=person desired_distance:=0.3
+```
+
+跟随速度发到 `yolo/cmd_vel`，`cmd_arbiter` 仲裁后下发 `/cmd_vel`。键盘随时打断
+（终端打印 `键盘接管, 打断 YOLO`）。让键盘走仲裁器（另开终端）：
+
+```bash
+ros2 run wheeltec_robot_keyboard wheeltec_keyboard --ros-args -r cmd_vel:=cmd_vel_keyboard
+```
+
+> KCF 同理：`ros2 launch wheeltec_robot_kcf wheeltec_robot_kcf_arbiter.launch.py`
+> （走 `kcf/cmd_vel`）。三种模式通常一次只跑一个，仲裁器按"最近收到"选驱动源。
 
 ### `yolo_follow` 参数
 

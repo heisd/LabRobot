@@ -15,6 +15,9 @@
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>rcl_interfaces</exec_depend>
+  <!-- cmd_arbiter(经仲裁器路由 yolo_follow_arbiter.launch.py 用) -->
+  <exec_depend>simple_follower_ros2</exec_depend>
   <!-- 上游 yolo_ros 提供 (vcs import 后存在): 消息/启动/节点 -->
   <exec_depend>yolo_msgs</exec_depend>
   <exec_depend>yolo_bringup</exec_depend>

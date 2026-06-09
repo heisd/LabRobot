@@ -563,6 +563,47 @@
 
   document.querySelectorAll('.param-group').forEach(initParamGroup);
 
+  // Live "distance" slider: drag -> set_parameters(double) on a node, no restart.
+  // Drives YOLO follow (/yolo_follow desired_distance) and KCF (/image_converter
+  // targetDist_). Reuses paramService + buildParameterValue above.
+  function initDistanceSlider(root) {
+    const param = root.dataset.param;
+    const range = root.querySelector('.ds-range');
+    const valEl = root.querySelector('.ds-val');
+    const getBtn = root.querySelector('.ds-get');
+    if (!param || !range) return;
+    const node = () => (root.dataset.node || '').trim();
+    const show = (v) => { if (valEl) valEl.textContent = Number(v).toFixed(2) + ' m'; };
+    const sendDist = (v) => {
+      if (!ros) return;
+      const value = buildParameterValue('double', String(v));
+      if (!value) return;
+      const req = new ROSLIB.ServiceRequest({ parameters: [{ name: param, value }] });
+      paramService(node(), 'set_parameters').callService(req, () => {},
+        (err) => console.error(`set ${param} failed`, err));
+    };
+    let timer = null;
+    range.addEventListener('input', () => {
+      show(range.value);
+      if (timer) clearTimeout(timer);     // debounce while dragging
+      timer = setTimeout(() => sendDist(range.value), 120);
+    });
+    range.addEventListener('change', () => sendDist(range.value));
+    if (getBtn) getBtn.addEventListener('click', () => {
+      if (!ros) { alert('未连接 rosbridge'); return; }
+      const req = new ROSLIB.ServiceRequest({ names: [param] });
+      paramService(node(), 'get_parameters').callService(req, (res) => {
+        const val = res.values && res.values[0];
+        if (val && (val.type === PT_DOUBLE || val.type === PT_INTEGER)) {
+          const v = val.type === PT_DOUBLE ? val.double_value : val.integer_value;
+          range.value = v; show(v);
+        }
+      }, (err) => alert('读取失败：' + err));
+    });
+    show(range.value);
+  }
+  document.querySelectorAll('.dist-slider').forEach(initDistanceSlider);
+
   // Populate the node datalist from ros.getNodes() each time we connect.
   function refreshNodeList() {
     if (!ros || !ros.getNodes) return;

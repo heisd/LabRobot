@@ -410,6 +410,22 @@ main {
 .fn-stream-tile .fn-stream-toolbar { margin-bottom: 0; }
 .fn-cap { font-size: 12px; color: var(--text); font-weight: 600; }
 
+/* Live distance slider (YOLO follow / KCF tracking). */
+.dist-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+.dist-slider label { font-weight: 600; }
+.dist-slider .ds-range { flex: 1; min-width: 160px; }
+.dist-slider .ds-val {
+  min-width: 64px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
 /* --------- YOLO detections list --------- */
 .yolo-det-head {
   display: flex;

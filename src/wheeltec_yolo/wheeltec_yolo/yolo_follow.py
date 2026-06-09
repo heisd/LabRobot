@@ -28,6 +28,7 @@ import math
 
 import rclpy
 from geometry_msgs.msg import Twist
+from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
 from yolo_msgs.msg import DetectionArray
@@ -38,7 +39,6 @@ class YoloFollower(Node):
         super().__init__('yolo_follow')
         d = self.declare_parameter
         d('detections_topic', '/yolo/detections_3d')
-        d('cmd_vel_topic', 'cmd_vel')
         d('target_class', '')          # 空 = 任意类别
         d('desired_distance', 0.20)    # 米, 期望保持的距离(启动参数可调)
         d('distance_deadband', 0.03)   # 米, 距离误差死区内不前后动
@@ -68,7 +68,10 @@ class YoloFollower(Node):
         qos = QoSProfile(depth=10)
         self.sub = self.create_subscription(
             DetectionArray, self.det_topic, self.on_dets, qos)
-        self.cmd_pub = self.create_publisher(Twist, g('cmd_vel_topic').value, qos)
+        # 发布到相对 'cmd_vel'(默认 -> /cmd_vel); launch 可重映射到 yolo/cmd_vel 交给仲裁器
+        self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', qos)
+        # 在线改参: 仪表盘滑块改 desired_distance 等无需重启
+        self.add_on_set_parameters_callback(self._on_set_params)
 
         self.lock_xy = None            # 当前锁定目标的 (x, y), 米
         self.lock_class = ''           # 锁定目标类别(日志用)
@@ -81,6 +84,32 @@ class YoloFollower(Node):
             f'yolo_follow 启动: topic={self.det_topic} class="{self.target_class or "*"}" '
             f'保持距离={self.desired:.2f}m  限速 v<={self.v_max} w<={self.w_max}  '
             f'(丢失{self.lost_timeout}s后停车)')
+
+    def _on_set_params(self, params):
+        """在线改参: 让仪表盘滑块等能实时调 desired_distance 等, 无需重启."""
+        setters = {
+            'desired_distance': lambda v: setattr(self, 'desired', float(v)),
+            'distance_deadband': lambda v: setattr(self, 'dist_db', float(v)),
+            'yaw_deadband': lambda v: setattr(self, 'yaw_db', float(v)),
+            'min_range': lambda v: setattr(self, 'min_range', float(v)),
+            'kp_linear': lambda v: setattr(self, 'kp_lin', float(v)),
+            'kp_angular': lambda v: setattr(self, 'kp_ang', float(v)),
+            'max_linear': lambda v: setattr(self, 'v_max', float(v)),
+            'max_angular': lambda v: setattr(self, 'w_max', float(v)),
+            'lost_timeout': lambda v: setattr(self, 'lost_timeout', float(v)),
+            'target_class': lambda v: setattr(self, 'target_class', (v or '').strip()),
+        }
+        for p in params:
+            fn = setters.get(p.name)
+            if fn is None:
+                continue
+            try:
+                fn(p.value)
+            except (TypeError, ValueError) as err:
+                return SetParametersResult(successful=False, reason=str(err))
+            if p.name == 'desired_distance':
+                self.get_logger().info(f'desired_distance 在线更新 -> {self.desired:.2f}m')
+        return SetParametersResult(successful=True)
 
     def _now(self):
         return self.get_clock().now().nanoseconds * 1e-9
