@@ -1146,6 +1146,34 @@
     logView.innerHTML = '';
   });
 
+  // ---------- Navigation tabs ----------
+  // Group cards into the five top-nav sections. Switching just toggles a
+  // CSS class; every card stays in the DOM so all ROS wiring (which looks
+  // elements up by id) keeps working whether or not its tab is visible.
+  (function initTabs() {
+    const navBtns = Array.from(document.querySelectorAll('.tab-btn'));
+    const panels = Array.from(document.querySelectorAll('.tab-panel'));
+
+    function activate(tab) {
+      if (!navBtns.some((b) => b.dataset.tab === tab)) return;
+      navBtns.forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+      panels.forEach((p) => p.classList.toggle('active', p.id === 'panel-' + tab));
+      // Chart.js canvases and the three.js viewer size to their container,
+      // which reads as 0×0 while the panel is display:none. Nudging a resize
+      // once the panel is visible makes them re-measure and fill the space.
+      window.dispatchEvent(new Event('resize'));
+    }
+
+    navBtns.forEach((b) => b.addEventListener('click', () => {
+      activate(b.dataset.tab);
+      try { history.replaceState(null, '', '#' + b.dataset.tab); } catch (_) { /* ignore */ }
+    }));
+
+    // Allow deep-linking to a tab via #hash (e.g. .../#control).
+    const initial = (location.hash || '').replace(/^#/, '');
+    if (initial) activate(initial);
+  })();
+
   // Auto-connect on load.
   connect();
 })();

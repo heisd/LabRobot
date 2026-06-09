@@ -47,6 +47,17 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 
 ## 功能
 
+页面顶部为导航栏，把所有功能分为五个板块，点击切换（也支持 `#overview`、
+`#components`、`#control`、`#function`、`#contact` 锚点深链）：
+
+- **系统总览**：3D 视图、实时遥测、电压 / cmd_vel 折线图
+- **各组件状态**：超声波测距、`/rosout` 日志面板
+- **控制模块**：速度控制（遥控）、参数调节
+- **功能模块**：VLA 语音导航、相机预览
+- **联系作者**：项目仓库与反馈渠道
+
+各板块明细：
+
 - 实时遥测：`/PowerVoltage`、`/robot_charging_flag`、`/robot_charging_current`、
   `/robot_red_flag`、`/self_check_data`、`/odom`、`/imu/data_raw`、`/Distance`
 - 速度控制：方向按键 + 线/角速度上限滑块 + 键盘 WASD/空格 (停)

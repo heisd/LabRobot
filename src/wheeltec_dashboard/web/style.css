@@ -22,6 +22,13 @@ body {
   line-height: 1.5;
 }
 
+/* Header + nav share one sticky bar so the tabs never overlap content. */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
 header {
   display: flex;
   align-items: center;
@@ -29,15 +36,47 @@ header {
   padding: 12px 20px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  z-index: 10;
 }
 
 header h1 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
+}
+
+/* --------- Navigation tabs --------- */
+nav.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.tab-btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  padding: 11px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.tab-panel { display: none; }
+.tab-panel.active {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 16px;
 }
 
 .conn { display: flex; align-items: center; gap: 8px; }
@@ -69,9 +108,6 @@ header h1 {
 .status-conn { background: rgba(210, 153, 34, 0.2); color: var(--warn); }
 
 main {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-  gap: 16px;
   padding: 16px;
 }
 
@@ -219,6 +255,36 @@ main {
 
 .card-wide { grid-column: 1 / -1; }
 .muted { color: var(--muted); font-weight: 400; font-size: 12px; }
+
+/* --------- Contact author --------- */
+.contact { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+.contact-avatar {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent), #1f6feb);
+  color: #fff;
+  font-size: 30px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.contact-body { flex: 1; min-width: 240px; }
+.contact-name { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
+.contact-desc { color: var(--muted); margin: 0 0 14px; max-width: 640px; }
+.contact-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
+.contact-list li { display: flex; align-items: baseline; gap: 10px; }
+.contact-list .ck {
+  flex: 0 0 84px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.contact-list a { color: var(--accent); text-decoration: none; }
+.contact-list a:hover { text-decoration: underline; }
 
 .viewer {
   background: #000;

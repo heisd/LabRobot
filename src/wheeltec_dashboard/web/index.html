@@ -12,272 +12,315 @@
   <script src="https://cdn.jsdelivr.net/npm/three@0.118.3/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body>
-  <header>
-    <h1>Wheeltec S300 Dashboard</h1>
-    <div class="conn">
-      <label for="ws-url">rosbridge</label>
-      <input id="ws-url" type="text" />
-      <button id="ws-connect">连接</button>
-      <span id="ws-status" class="status status-off">未连接</span>
-    </div>
-  </header>
+  <div class="topbar">
+    <header>
+      <h1>Wheeltec S300 Dashboard</h1>
+      <div class="conn">
+        <label for="ws-url">rosbridge</label>
+        <input id="ws-url" type="text" />
+        <button id="ws-connect">连接</button>
+        <span id="ws-status" class="status status-off">未连接</span>
+      </div>
+    </header>
+
+    <nav class="tabs" id="main-nav">
+      <button class="tab-btn active" data-tab="overview">系统总览</button>
+      <button class="tab-btn" data-tab="components">各组件状态</button>
+      <button class="tab-btn" data-tab="control">控制模块</button>
+      <button class="tab-btn" data-tab="function">功能模块</button>
+      <button class="tab-btn" data-tab="contact">联系作者</button>
+    </nav>
+  </div>
 
   <main>
-    <section class="card card-wide">
-      <h2>3D 视图 <span class="muted">(three.js)</span></h2>
-      <div class="viewer-controls">
-        <label>Fixed frame
-          <input id="vw-fixed" type="text" value="odom_combined" />
-        </label>
-        <label>/scan
-          <input id="vw-scan" type="text" value="/scan" />
-        </label>
-        <label>/odom
-          <input id="vw-odom" type="text" value="/odom" />
-        </label>
-        <button id="vw-apply">应用</button>
-        <button id="vw-clear-path">清空轨迹</button>
-      </div>
-      <div id="viewer" class="viewer"></div>
-      <div id="viewer-status" class="viewer-status"></div>
-      <p class="hint">图层：Grid / 坐标轴 / LaserScan(<code>/scan</code>) / Odom 轨迹。TF 直接订阅 <code>/tf</code>+<code>/tf_static</code>，无需 tf2_web_republisher。双雷达单台故障时可把 <code>/scan</code> 改成 <code>/scan2</code> 看单雷达。</p>
-    </section>
-
-    <section class="card">
-      <h2>遥测</h2>
-      <div class="grid">
-        <div class="metric">
-          <div class="metric-label">电池电压</div>
-          <div id="m-voltage" class="metric-value">— V</div>
-        </div>
-        <div class="metric">
-          <div class="metric-label">充电中</div>
-          <div id="m-charging" class="metric-value">—</div>
-        </div>
-        <div class="metric">
-          <div class="metric-label">充电电流</div>
-          <div id="m-charge-current" class="metric-value">— A</div>
-        </div>
-        <div class="metric">
-          <div class="metric-label">急停 (red flag)</div>
-          <div id="m-red" class="metric-value">—</div>
-        </div>
-        <div class="metric">
-          <div class="metric-label">自检数据</div>
-          <div id="m-selfcheck" class="metric-value">—</div>
-        </div>
-        <div class="metric">
-          <div class="metric-label">里程计 X / Y</div>
-          <div id="m-odom-xy" class="metric-value">—</div>
-        </div>
-        <div class="metric">
-          <div class="metric-label">里程计 Yaw</div>
-          <div id="m-odom-yaw" class="metric-value">— °</div>
-        </div>
-        <div class="metric">
-          <div class="metric-label">IMU R / P / Y</div>
-          <div id="m-imu-rpy" class="metric-value">—</div>
-        </div>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>超声波 (m)</h2>
-      <div id="sonar-grid" class="sonar-grid">
-        <div class="sonar"><span class="sl">A</span><span id="s-a" class="sv">—</span></div>
-        <div class="sonar"><span class="sl">B</span><span id="s-b" class="sv">—</span></div>
-        <div class="sonar"><span class="sl">C</span><span id="s-c" class="sv">—</span></div>
-        <div class="sonar"><span class="sl">D</span><span id="s-d" class="sv">—</span></div>
-        <div class="sonar"><span class="sl">E</span><span id="s-e" class="sv">—</span></div>
-        <div class="sonar"><span class="sl">F</span><span id="s-f" class="sv">—</span></div>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>速度控制 (/cmd_vel)</h2>
-      <div class="teleop">
-        <div class="teleop-grid">
-          <button class="tk" data-vx="1" data-wz="0">▲</button>
-          <button class="tk" data-vx="1" data-wz="1">↖</button>
-          <button class="tk" data-vx="0" data-wz="1">◀</button>
-          <button class="tk" data-stop="1">■</button>
-          <button class="tk" data-vx="0" data-wz="-1">▶</button>
-          <button class="tk" data-vx="-1" data-wz="0">▼</button>
-          <button class="tk" data-vx="1" data-wz="-1">↗</button>
-          <button class="tk" data-vx="-1" data-wz="1">↙</button>
-          <button class="tk" data-vx="-1" data-wz="-1">↘</button>
-        </div>
-        <div class="teleop-sliders">
-          <label>线速度上限 <span id="lin-val">0.30</span> m/s
-            <input id="lin-max" type="range" min="0" max="1.5" step="0.05" value="0.3" />
+    <!-- ============ 系统总览 ============ -->
+    <div class="tab-panel active" id="panel-overview">
+      <section class="card card-wide">
+        <h2>3D 视图 <span class="muted">(three.js)</span></h2>
+        <div class="viewer-controls">
+          <label>Fixed frame
+            <input id="vw-fixed" type="text" value="odom_combined" />
           </label>
-          <label>角速度上限 <span id="ang-val">1.00</span> rad/s
-            <input id="ang-max" type="range" min="0" max="3" step="0.1" value="1.0" />
+          <label>/scan
+            <input id="vw-scan" type="text" value="/scan" />
           </label>
-          <label>
-            <input id="hold-mode" type="checkbox" checked />
-            连发 (松开停)
+          <label>/odom
+            <input id="vw-odom" type="text" value="/odom" />
           </label>
-          <div class="cmd-readout">
-            当前指令: <span id="cmd-current">vx=0.00, wz=0.00</span>
-          </div>
-          <button id="e-stop" class="e-stop" type="button" title="立即发送 (0,0) 到 /cmd_vel">急停 STOP</button>
+          <button id="vw-apply">应用</button>
+          <button id="vw-clear-path">清空轨迹</button>
         </div>
-      </div>
-    </section>
+        <div id="viewer" class="viewer"></div>
+        <div id="viewer-status" class="viewer-status"></div>
+        <p class="hint">图层：Grid / 坐标轴 / LaserScan(<code>/scan</code>) / Odom 轨迹。TF 直接订阅 <code>/tf</code>+<code>/tf_static</code>，无需 tf2_web_republisher。双雷达单台故障时可把 <code>/scan</code> 改成 <code>/scan2</code> 看单雷达。</p>
+      </section>
 
-    <section class="card card-wide">
-      <h2>VLA 语音导航 <span class="muted">(/vla)</span></h2>
-      <div class="vla">
-        <div class="vla-row">
-          <input id="vla-instr" type="text" placeholder="输入导航指令，如：去厨房 / 向前一米然后左转" />
-          <button id="vla-send">发送指令</button>
-        </div>
-        <div class="vla-quick">
-          <button class="vla-q" data-instr="去厨房">去厨房</button>
-          <button class="vla-q" data-instr="去充电桩">去充电桩</button>
-          <button class="vla-q" data-instr="去门口">去门口</button>
-          <button class="vla-q" data-instr="去原点">去原点</button>
-          <button class="vla-q vla-q-stop" data-instr="停">停</button>
-        </div>
+      <section class="card">
+        <h2>遥测</h2>
         <div class="grid">
           <div class="metric">
-            <div class="metric-label">最近识别 (/voice_words)</div>
-            <div id="vla-heard" class="metric-value">—</div>
+            <div class="metric-label">电池电压</div>
+            <div id="m-voltage" class="metric-value">— V</div>
           </div>
           <div class="metric">
-            <div class="metric-label">语音播报 (/tts_text)</div>
-            <div id="vla-say" class="metric-value">—</div>
+            <div class="metric-label">充电中</div>
+            <div id="m-charging" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">充电电流</div>
+            <div id="m-charge-current" class="metric-value">— A</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">急停 (red flag)</div>
+            <div id="m-red" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">自检数据</div>
+            <div id="m-selfcheck" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">里程计 X / Y</div>
+            <div id="m-odom-xy" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">里程计 Yaw</div>
+            <div id="m-odom-yaw" class="metric-value">— °</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">IMU R / P / Y</div>
+            <div id="m-imu-rpy" class="metric-value">—</div>
           </div>
         </div>
-        <div class="vla-row">
-          <input id="tts-input" type="text" placeholder="让小车说话…（发布到 /tts_text）" />
-          <button id="tts-send">播报</button>
-        </div>
-        <div class="vla-timeline-head">
-          <span>VLA 时间线 <span class="muted">(/vla/status)</span></span>
-          <button id="vla-clear">清空</button>
-        </div>
-        <div id="vla-timeline" class="vla-timeline"></div>
-      </div>
-      <p class="hint">指令发布到 <code>/vla/instruction</code>；麦克风识别走 <code>/voice_words</code>。决策与导航状态来自 <code>/vla/status</code>，目标点见 RViz 或 <code>/goal_pose</code>。需先启动 <code>vla_navigator</code> 节点与 rosbridge。</p>
-    </section>
+      </section>
 
-    <section class="card">
-      <h2>参数 (/wheeltec_robot)</h2>
-      <div class="params">
-        <div class="param-row">
-          <label>节点</label>
-          <input id="param-node" type="text" value="/wheeltec_robot" list="node-list" />
-          <button id="param-refresh">读取当前值</button>
+      <section class="card">
+        <h2>图表</h2>
+        <div class="charts">
+          <div class="chart-wrap"><canvas id="chart-voltage"></canvas></div>
+          <div class="chart-wrap"><canvas id="chart-cmdvel"></canvas></div>
         </div>
-        <datalist id="node-list"></datalist>
-        <div id="param-list">
-          <div class="param-row" data-param="odom_x_scale" data-type="double">
-            <label>odom_x_scale</label>
-            <input type="number" step="0.01" />
-            <button class="param-apply">应用</button>
-            <span class="param-current">—</span>
-          </div>
-          <div class="param-row" data-param="odom_y_scale" data-type="double">
-            <label>odom_y_scale</label>
-            <input type="number" step="0.01" />
-            <button class="param-apply">应用</button>
-            <span class="param-current">—</span>
-          </div>
-          <div class="param-row" data-param="odom_z_scale_positive" data-type="double">
-            <label>odom_z_scale_positive</label>
-            <input type="number" step="0.01" />
-            <button class="param-apply">应用</button>
-            <span class="param-current">—</span>
-          </div>
-          <div class="param-row" data-param="odom_z_scale_negative" data-type="double">
-            <label>odom_z_scale_negative</label>
-            <input type="number" step="0.01" />
-            <button class="param-apply">应用</button>
-            <span class="param-current">—</span>
-          </div>
-        </div>
-        <p class="hint">提示：参数对静态变量生效需要重启机器人节点；odom_*_scale 在运行中可即时使用。节点下拉来自 <code>ros.getNodes()</code>，连接后自动填充。</p>
-      </div>
-    </section>
+      </section>
+    </div>
 
-    <section class="card card-wide">
-      <h2>相机 <span class="muted">(web_video_server MJPEG)</span></h2>
-      <div class="cam-toolbar">
-        <label>video_server 端口
-          <input id="cam-port" type="number" value="8081" min="1" max="65535" />
-        </label>
-        <label>画质 (1-100)
-          <input id="cam-quality" type="number" value="60" min="1" max="100" />
-        </label>
-        <label class="cam-base-wrap">Base URL (覆盖端口)
-          <input id="cam-base" type="text" placeholder="例如 https://robot.example/video" />
-        </label>
-        <button id="cam-reload">刷新</button>
-      </div>
-      <div class="cam-grid">
-        <div class="cam-tile">
-          <div class="cam-head">
-            <span>车上相机</span>
-            <input class="cam-topic" data-slot="car" type="text" value="/camera/color/image_raw" />
-            <label class="cam-check"><input type="checkbox" class="cam-enable" data-slot="car" checked /> 启用</label>
+    <!-- ============ 各组件状态 ============ -->
+    <div class="tab-panel" id="panel-components">
+      <section class="card">
+        <h2>超声波 (m)</h2>
+        <div id="sonar-grid" class="sonar-grid">
+          <div class="sonar"><span class="sl">A</span><span id="s-a" class="sv">—</span></div>
+          <div class="sonar"><span class="sl">B</span><span id="s-b" class="sv">—</span></div>
+          <div class="sonar"><span class="sl">C</span><span id="s-c" class="sv">—</span></div>
+          <div class="sonar"><span class="sl">D</span><span id="s-d" class="sv">—</span></div>
+          <div class="sonar"><span class="sl">E</span><span id="s-e" class="sv">—</span></div>
+          <div class="sonar"><span class="sl">F</span><span id="s-f" class="sv">—</span></div>
+        </div>
+      </section>
+
+      <section class="card card-wide">
+        <h2>日志 <span class="muted">(/rosout)</span></h2>
+        <div class="log-toolbar">
+          <label>等级
+            <select id="log-level">
+              <option value="10">DEBUG</option>
+              <option value="20" selected>INFO</option>
+              <option value="30">WARN</option>
+              <option value="40">ERROR</option>
+              <option value="50">FATAL</option>
+            </select>
+          </label>
+          <label>节点过滤
+            <input id="log-filter" type="text" placeholder="子串匹配, 留空=全部" />
+          </label>
+          <label>缓冲行数
+            <input id="log-buffer" type="number" min="50" max="5000" step="50" value="500" />
+          </label>
+          <label class="log-check">
+            <input id="log-autoscroll" type="checkbox" checked /> 自动滚动
+          </label>
+          <button id="log-pause">暂停</button>
+          <button id="log-clear">清空</button>
+          <span class="log-stats"><span id="log-count">0</span> 行 · 丢弃 <span id="log-dropped">0</span></span>
+        </div>
+        <div id="log-view" class="log-view"></div>
+      </section>
+    </div>
+
+    <!-- ============ 控制模块 ============ -->
+    <div class="tab-panel" id="panel-control">
+      <section class="card">
+        <h2>速度控制 (/cmd_vel)</h2>
+        <div class="teleop">
+          <div class="teleop-grid">
+            <button class="tk" data-vx="1" data-wz="0">▲</button>
+            <button class="tk" data-vx="1" data-wz="1">↖</button>
+            <button class="tk" data-vx="0" data-wz="1">◀</button>
+            <button class="tk" data-stop="1">■</button>
+            <button class="tk" data-vx="0" data-wz="-1">▶</button>
+            <button class="tk" data-vx="-1" data-wz="0">▼</button>
+            <button class="tk" data-vx="1" data-wz="-1">↗</button>
+            <button class="tk" data-vx="-1" data-wz="1">↙</button>
+            <button class="tk" data-vx="-1" data-wz="-1">↘</button>
           </div>
-          <div class="cam-frame">
-            <img class="cam-img" data-slot="car" src="placeholder.svg" alt="car camera" />
-            <div class="cam-err" data-slot="car" hidden>无法加载流</div>
+          <div class="teleop-sliders">
+            <label>线速度上限 <span id="lin-val">0.30</span> m/s
+              <input id="lin-max" type="range" min="0" max="1.5" step="0.05" value="0.3" />
+            </label>
+            <label>角速度上限 <span id="ang-val">1.00</span> rad/s
+              <input id="ang-max" type="range" min="0" max="3" step="0.1" value="1.0" />
+            </label>
+            <label>
+              <input id="hold-mode" type="checkbox" checked />
+              连发 (松开停)
+            </label>
+            <div class="cmd-readout">
+              当前指令: <span id="cmd-current">vx=0.00, wz=0.00</span>
+            </div>
+            <button id="e-stop" class="e-stop" type="button" title="立即发送 (0,0) 到 /cmd_vel">急停 STOP</button>
           </div>
         </div>
-        <div class="cam-tile">
-          <div class="cam-head">
-            <span>机械臂相机</span>
-            <input class="cam-topic" data-slot="arm" type="text" value="/camera_arm/color/image_raw" />
-            <label class="cam-check"><input type="checkbox" class="cam-enable" data-slot="arm" checked /> 启用</label>
+      </section>
+
+      <section class="card card-wide">
+        <h2>参数 (/wheeltec_robot)</h2>
+        <div class="params">
+          <div class="param-row">
+            <label>节点</label>
+            <input id="param-node" type="text" value="/wheeltec_robot" list="node-list" />
+            <button id="param-refresh">读取当前值</button>
           </div>
-          <div class="cam-frame">
-            <img class="cam-img" data-slot="arm" src="placeholder.svg" alt="arm camera" />
-            <div class="cam-err" data-slot="arm" hidden>无法加载流</div>
+          <datalist id="node-list"></datalist>
+          <div id="param-list">
+            <div class="param-row" data-param="odom_x_scale" data-type="double">
+              <label>odom_x_scale</label>
+              <input type="number" step="0.01" />
+              <button class="param-apply">应用</button>
+              <span class="param-current">—</span>
+            </div>
+            <div class="param-row" data-param="odom_y_scale" data-type="double">
+              <label>odom_y_scale</label>
+              <input type="number" step="0.01" />
+              <button class="param-apply">应用</button>
+              <span class="param-current">—</span>
+            </div>
+            <div class="param-row" data-param="odom_z_scale_positive" data-type="double">
+              <label>odom_z_scale_positive</label>
+              <input type="number" step="0.01" />
+              <button class="param-apply">应用</button>
+              <span class="param-current">—</span>
+            </div>
+            <div class="param-row" data-param="odom_z_scale_negative" data-type="double">
+              <label>odom_z_scale_negative</label>
+              <input type="number" step="0.01" />
+              <button class="param-apply">应用</button>
+              <span class="param-current">—</span>
+            </div>
+          </div>
+          <p class="hint">提示：参数对静态变量生效需要重启机器人节点；odom_*_scale 在运行中可即时使用。节点下拉来自 <code>ros.getNodes()</code>，连接后自动填充。</p>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ 功能模块 ============ -->
+    <div class="tab-panel" id="panel-function">
+      <section class="card card-wide">
+        <h2>VLA 语音导航 <span class="muted">(/vla)</span></h2>
+        <div class="vla">
+          <div class="vla-row">
+            <input id="vla-instr" type="text" placeholder="输入导航指令，如：去厨房 / 向前一米然后左转" />
+            <button id="vla-send">发送指令</button>
+          </div>
+          <div class="vla-quick">
+            <button class="vla-q" data-instr="去厨房">去厨房</button>
+            <button class="vla-q" data-instr="去充电桩">去充电桩</button>
+            <button class="vla-q" data-instr="去门口">去门口</button>
+            <button class="vla-q" data-instr="去原点">去原点</button>
+            <button class="vla-q vla-q-stop" data-instr="停">停</button>
+          </div>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">最近识别 (/voice_words)</div>
+              <div id="vla-heard" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">语音播报 (/tts_text)</div>
+              <div id="vla-say" class="metric-value">—</div>
+            </div>
+          </div>
+          <div class="vla-row">
+            <input id="tts-input" type="text" placeholder="让小车说话…（发布到 /tts_text）" />
+            <button id="tts-send">播报</button>
+          </div>
+          <div class="vla-timeline-head">
+            <span>VLA 时间线 <span class="muted">(/vla/status)</span></span>
+            <button id="vla-clear">清空</button>
+          </div>
+          <div id="vla-timeline" class="vla-timeline"></div>
+        </div>
+        <p class="hint">指令发布到 <code>/vla/instruction</code>；麦克风识别走 <code>/voice_words</code>。决策与导航状态来自 <code>/vla/status</code>，目标点见 RViz 或 <code>/goal_pose</code>。需先启动 <code>vla_navigator</code> 节点与 rosbridge。</p>
+      </section>
+
+      <section class="card card-wide">
+        <h2>相机 <span class="muted">(web_video_server MJPEG)</span></h2>
+        <div class="cam-toolbar">
+          <label>video_server 端口
+            <input id="cam-port" type="number" value="8081" min="1" max="65535" />
+          </label>
+          <label>画质 (1-100)
+            <input id="cam-quality" type="number" value="60" min="1" max="100" />
+          </label>
+          <label class="cam-base-wrap">Base URL (覆盖端口)
+            <input id="cam-base" type="text" placeholder="例如 https://robot.example/video" />
+          </label>
+          <button id="cam-reload">刷新</button>
+        </div>
+        <div class="cam-grid">
+          <div class="cam-tile">
+            <div class="cam-head">
+              <span>车上相机</span>
+              <input class="cam-topic" data-slot="car" type="text" value="/camera/color/image_raw" />
+              <label class="cam-check"><input type="checkbox" class="cam-enable" data-slot="car" checked /> 启用</label>
+            </div>
+            <div class="cam-frame">
+              <img class="cam-img" data-slot="car" src="placeholder.svg" alt="car camera" />
+              <div class="cam-err" data-slot="car" hidden>无法加载流</div>
+            </div>
+          </div>
+          <div class="cam-tile">
+            <div class="cam-head">
+              <span>机械臂相机</span>
+              <input class="cam-topic" data-slot="arm" type="text" value="/camera_arm/color/image_raw" />
+              <label class="cam-check"><input type="checkbox" class="cam-enable" data-slot="arm" checked /> 启用</label>
+            </div>
+            <div class="cam-frame">
+              <img class="cam-img" data-slot="arm" src="placeholder.svg" alt="arm camera" />
+              <div class="cam-err" data-slot="arm" hidden>无法加载流</div>
+            </div>
           </div>
         </div>
-      </div>
-      <p class="hint">流从 <code>http://&lt;host&gt;:&lt;port&gt;/stream?topic=...</code> 拉取。若没启动 <code>astra_camera</code> 节点，画面会显示加载失败。深度流也支持，把 topic 换成 <code>/camera/depth/image_raw</code> 即可。</p>
-    </section>
+        <p class="hint">流从 <code>http://&lt;host&gt;:&lt;port&gt;/stream?topic=...</code> 拉取。若没启动 <code>astra_camera</code> 节点，画面会显示加载失败。深度流也支持，把 topic 换成 <code>/camera/depth/image_raw</code> 即可。</p>
+      </section>
+    </div>
 
-    <section class="card">
-      <h2>图表</h2>
-      <div class="charts">
-        <div class="chart-wrap"><canvas id="chart-voltage"></canvas></div>
-        <div class="chart-wrap"><canvas id="chart-cmdvel"></canvas></div>
-      </div>
-    </section>
-
-    <section class="card card-wide">
-      <h2>日志 <span class="muted">(/rosout)</span></h2>
-      <div class="log-toolbar">
-        <label>等级
-          <select id="log-level">
-            <option value="10">DEBUG</option>
-            <option value="20" selected>INFO</option>
-            <option value="30">WARN</option>
-            <option value="40">ERROR</option>
-            <option value="50">FATAL</option>
-          </select>
-        </label>
-        <label>节点过滤
-          <input id="log-filter" type="text" placeholder="子串匹配, 留空=全部" />
-        </label>
-        <label>缓冲行数
-          <input id="log-buffer" type="number" min="50" max="5000" step="50" value="500" />
-        </label>
-        <label class="log-check">
-          <input id="log-autoscroll" type="checkbox" checked /> 自动滚动
-        </label>
-        <button id="log-pause">暂停</button>
-        <button id="log-clear">清空</button>
-        <span class="log-stats"><span id="log-count">0</span> 行 · 丢弃 <span id="log-dropped">0</span></span>
-      </div>
-      <div id="log-view" class="log-view"></div>
-    </section>
+    <!-- ============ 联系作者 ============ -->
+    <div class="tab-panel" id="panel-contact">
+      <section class="card card-wide contact-card">
+        <h2>联系作者</h2>
+        <div class="contact">
+          <div class="contact-avatar">W</div>
+          <div class="contact-body">
+            <div class="contact-name">Wheeltec S300 Dashboard</div>
+            <p class="contact-desc">面向 Wheeltec S300 机器人的轻量级 Web 仪表盘：实时遥测、底盘控制、参数调节、3D 视图、相机预览、日志与 VLA 语音导航，全部通过 rosbridge 与 ROS 2 通信。</p>
+            <ul class="contact-list">
+              <li><span class="ck">项目仓库</span><a href="https://github.com/heisd/wheeltec_s300" target="_blank" rel="noopener">github.com/heisd/wheeltec_s300</a></li>
+              <li><span class="ck">维护者</span><span>heisd</span></li>
+              <li><span class="ck">问题反馈</span><a href="https://github.com/heisd/wheeltec_s300/issues" target="_blank" rel="noopener">GitHub Issues</a></li>
+              <li><span class="ck">许可证</span><span>Apache-2.0</span></li>
+            </ul>
+            <p class="hint">有问题或建议？欢迎在 GitHub 提交 Issue 或 Pull Request，一起把这个仪表盘做得更好。</p>
+          </div>
+        </div>
+      </section>
+    </div>
   </main>
 
   <script src="app.js"></script>
