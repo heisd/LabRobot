@@ -76,31 +76,49 @@ DANGEROUS_COMMANDS = {"power_off", "emergency_stop", "turn_off_robot", "disable"
 #   kind: number(数值, 带 min/max/step) / choice(下拉) / text(文本)
 #   ptype: double / int / string —— 决定发给 ros2 param set 的字面量格式, 避免类型不匹配
 PARAM_CONTROLS = [
-    {"id": "z_offset", "node": "/yolo_ros_node", "param": "z_offset",
+    # ---- YOLO (yolo_ros) 识别 ----
+    {"id": "z_offset", "group": "YOLO 识别", "node": "/yolo_ros_node", "param": "z_offset",
      "label": "Z 偏移(沿相机光轴, 越大抓得越深)", "kind": "number", "ptype": "double",
      "min": -0.05, "max": 0.30, "step": 0.01, "default": 0.07, "unit": "m"},
-    {"id": "conf_threshold", "node": "/yolo_ros_node", "param": "conf_threshold",
+    {"id": "conf_threshold", "group": "YOLO 识别", "node": "/yolo_ros_node", "param": "conf_threshold",
      "label": "抓取置信度门槛(≥才抓)", "kind": "number", "ptype": "double",
      "min": 0.0, "max": 1.0, "step": 0.05, "default": 0.0, "unit": ""},
-    {"id": "select_mode", "node": "/yolo_ros_node", "param": "select_mode",
+    {"id": "select_mode", "group": "YOLO 识别", "node": "/yolo_ros_node", "param": "select_mode",
      "label": "多目标选择策略", "kind": "choice", "ptype": "string",
      "choices": ["confidence", "nearest", "center", "largest"], "default": "confidence"},
-    {"id": "center_mode", "node": "/yolo_ros_node", "param": "center_mode",
+    {"id": "center_mode", "group": "YOLO 识别", "node": "/yolo_ros_node", "param": "center_mode",
      "label": "抓取中心(不规则物体用 mask)", "kind": "choice", "ptype": "string",
      "choices": ["bbox", "mask"], "default": "bbox"},
-    {"id": "target_class", "node": "/yolo_ros_node", "param": "target_class",
+    {"id": "target_class", "group": "YOLO 识别", "node": "/yolo_ros_node", "param": "target_class",
      "label": "目标类别 COCO id (-1=不限)", "kind": "number", "ptype": "int",
      "min": -1, "max": 79, "step": 1, "default": -1, "unit": ""},
-    {"id": "target_label", "node": "/yolo_ros_node", "param": "target_label",
+    {"id": "target_label", "group": "YOLO 识别", "node": "/yolo_ros_node", "param": "target_label",
      "label": "目标类名(非空时优先, 如 cup)", "kind": "text", "ptype": "string",
      "default": ""},
-    {"id": "grasp_z_offset", "node": "/grab_service_n", "param": "grasp_z_offset",
+    # ---- KCF 跟踪 (同一思路: 运行时可调 Z 深度 + HSV 播种阈值) ----
+    {"id": "kcf_z_offset", "group": "KCF 跟踪", "node": "/kcf_node", "param": "z_offset",
+     "label": "Z 偏移(沿相机光轴, 越大抓得越深)", "kind": "number", "ptype": "double",
+     "min": -0.05, "max": 0.30, "step": 0.01, "default": 0.07, "unit": "m"},
+    {"id": "kcf_hue_min", "group": "KCF 跟踪", "node": "/kcf_node", "param": "hue_min",
+     "label": "HSV 播种 Hue 下限", "kind": "number", "ptype": "int",
+     "min": 0, "max": 179, "step": 1, "default": 0, "unit": ""},
+    {"id": "kcf_hue_max", "group": "KCF 跟踪", "node": "/kcf_node", "param": "hue_max",
+     "label": "HSV 播种 Hue 上限", "kind": "number", "ptype": "int",
+     "min": 0, "max": 179, "step": 1, "default": 10, "unit": ""},
+    {"id": "kcf_min_area", "group": "KCF 跟踪", "node": "/kcf_node", "param": "min_area",
+     "label": "HSV 播种最小色块面积", "kind": "number", "ptype": "int",
+     "min": 50, "max": 20000, "step": 50, "default": 400, "unit": "px"},
+    {"id": "kcf_reinit_on_loss", "group": "KCF 跟踪", "node": "/kcf_node", "param": "reinit_on_loss",
+     "label": "跟丢后自动重新播种", "kind": "choice", "ptype": "bool",
+     "choices": ["true", "false"], "default": "true"},
+    # ---- 闭环抓取(YOLO/KCF 共用) ----
+    {"id": "grasp_z_offset", "group": "闭环抓取", "node": "/grab_service_n", "param": "grasp_z_offset",
      "label": "下降抓取补偿(竖直)", "kind": "number", "ptype": "double",
      "min": -0.02, "max": 0.10, "step": 0.005, "default": 0.02, "unit": "m"},
-    {"id": "approach_height", "node": "/grab_service_n", "param": "approach_height",
+    {"id": "approach_height", "group": "闭环抓取", "node": "/grab_service_n", "param": "approach_height",
      "label": "预抓取悬停高度", "kind": "number", "ptype": "double",
      "min": 0.04, "max": 0.20, "step": 0.01, "default": 0.10, "unit": "m"},
-    {"id": "max_iters", "node": "/grab_service_n", "param": "max_iters",
+    {"id": "max_iters", "group": "闭环抓取", "node": "/grab_service_n", "param": "max_iters",
      "label": "闭环最大修正轮数", "kind": "number", "ptype": "int",
      "min": 1, "max": 8, "step": 1, "default": 4, "unit": ""},
 ]
@@ -461,6 +479,8 @@ class DashboardNode(Node):
                 return self._send_vlm_confirm(payload)
             if cmd == "set_param":
                 return self._set_param(payload)
+            if cmd == "kcf_reinit":
+                return self._kcf_reinit()
             return False, f"未知命令类型: {cmd}"
         except Exception as e:  # noqa: BLE001 - 网页错误需返回给前端
             self.get_logger().error(f"命令执行异常: {e}")
@@ -561,6 +581,8 @@ class DashboardNode(Node):
                     if lo is not None and hi is not None and not (lo <= v <= hi):
                         return False, f"{param} 超出范围 [{lo}, {hi}]"
                 value_str = "{:.6f}".format(v)   # 始终带小数点 -> 识别为 double
+            elif ptype == "bool":
+                value_str = "true" if str(raw).lower() in ("true", "1", "yes", "on") else "false"
             else:  # string (choice / text)
                 value_str = str(raw)
                 if ctrl.get("kind") == "choice" and value_str not in ctrl.get("choices", []):
@@ -584,6 +606,21 @@ class DashboardNode(Node):
         # 常见失败: 节点未启动 / 参数未声明 / 类型不匹配
         self.get_logger().warn(f"设置参数失败 {node} {param}={value_str}: {out}")
         return False, f"设置失败: {out or '请确认对应抓取任务已启动'}"
+
+    def _kcf_reinit(self):
+        """触发 KCF 重新播种(调用 /kcf_node/reinit, std_srvs/Trigger)。"""
+        cmd = ["ros2", "service", "call", "/kcf_node/reinit", "std_srvs/srv/Trigger", "{}"]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               timeout=6.0, env=os.environ.copy())
+        except FileNotFoundError:
+            return False, "未找到 ros2 (PATH/source 是否正确?)"
+        except subprocess.TimeoutExpired:
+            return False, "KCF 重新播种超时 (KCF 抓取任务是否已启动?)"
+        if r.returncode == 0 and "success=True" in (r.stdout + r.stderr).replace(" ", ""):
+            self.get_logger().info("已触发 KCF 重新播种")
+            return True, "已触发 KCF 重新播种"
+        return False, "KCF 重新播种失败 (KCF 抓取任务是否已启动?)"
 
     def _call_move_joint(self, payload):
         if not self._ready(self._cli_move_joint, "move_joint"):
@@ -769,10 +806,11 @@ INDEX_HTML = """<!DOCTYPE html>
   </div>
 
   <div class="card" style="grid-column:1 / span 2;">
-    <h2>YOLO 识别 / 闭环抓取 参数 (运行时可调)</h2>
+    <h2>YOLO / KCF 识别 + 闭环抓取 参数 (运行时可调)</h2>
     <div id="paramctrls"></div>
-    <small>需先在"功能启动"页启动【YOLO 抓取 (yolo_ros + 闭环)】。改动通过 ros2 param set 即时下发;
-      闭环抓取的参数会在下次抓取生效。target 类名优先于类别 id。</small>
+    <small>需先在"功能启动"页启动对应抓取任务(YOLO 调 /yolo_ros_node, KCF 调 /kcf_node,
+      闭环抓取调 /grab_service_n)。改动通过 ros2 param set 即时下发; 闭环抓取的参数会在下次抓取生效。
+      KCF 改了 HSV/面积阈值后点【KCF 重新播种】立即按新阈值重新选目标。</small>
   </div>
 
   <div class="card">
@@ -884,10 +922,25 @@ for (let i=0;i<6;i++){
   ji.appendChild(inp);
 }
 
-// YOLO 识别 / 闭环抓取 参数控件(由后端白名单渲染)
+// YOLO 识别 / KCF 跟踪 / 闭环抓取 参数控件(由后端白名单渲染, 按 group 分组)
 const PARAMS = __PARAM_CONTROLS__;
 const pc = document.getElementById('paramctrls');
+let curGroup = null;
 PARAMS.forEach(c => {
+  if (c.group && c.group !== curGroup){
+    curGroup = c.group;
+    const h = document.createElement('div');
+    h.innerHTML = '<b style="color:#9db4cc;">▸ ' + c.group + '</b>';
+    h.style.margin = '8px 0 2px';
+    pc.appendChild(h);
+    if (c.group === 'KCF 跟踪'){   // KCF 组顶部放一个重新播种按钮
+      const rb = document.createElement('button');
+      rb.textContent = 'KCF 重新播种';
+      rb.onclick = () => post({type:'kcf_reinit'});
+      h.appendChild(document.createTextNode('  '));
+      h.appendChild(rb);
+    }
+  }
   const row = document.createElement('div');
   row.className = 'row';
   const lab = document.createElement('span');

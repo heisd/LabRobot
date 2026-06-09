@@ -87,9 +87,20 @@ def generate_launch_description():
     camera_info = Node(
         package="grab_demo", executable="camera_info_node", name="camera_info",
     )
+    # 闭环(PBVS)抓取: 与 yolo_ros_grab 同一思路, 看-动-再看-修正后再抓。
+    # KCF 持续跟踪并刷新 target_frame, 闭环节点据此反复修正机械臂位姿。
+    # 想用回开环, 把 closed_loop_grab_node 换成 grab_service_node 即可(服务名一致)。
     grab_service = Node(
-        package="grab_demo", executable="grab_service_node", name="grab_service_n",
-        parameters=[robot_description_semantic]
+        package="grab_demo", executable="closed_loop_grab_node", name="grab_service_n",
+        parameters=[robot_description_semantic, {
+            "base_frame": "base_link",
+            "look_target": "look",
+            "max_iters": 4,
+            "pos_tolerance": 0.008,
+            "approach_height": 0.10,
+            "grasp_z_offset": 0.02,
+            "settle_sec": 0.6,
+        }]
     )
     delay_task = TimerAction(period=15.0, actions=[grab_service])
 
@@ -98,5 +109,5 @@ def generate_launch_description():
         camera_info,     # 相机内参发布
         lebai_lm3,       # 启动机械臂
         kcf_track,       # KCF 跟踪节点
-        delay_task,
+        delay_task,      # 闭环抓取服务
     ])

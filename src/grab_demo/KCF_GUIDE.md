@@ -22,11 +22,17 @@
 | 深度话题 | `/camera_arm/depth/image_raw` (16UC1, mm) |
 | 内参话题 | `/gemini_info` |
 | 输出 TF | `camera_arm_depth_optical_frame → target_frame` |
-| 反投影 | 针孔模型 + Z 补偿 0.07m |
+| 反投影 | 针孔模型 + Z 补偿 0.07m（`z_offset` 运行时可调） |
 | 距离 | 发布到 `/grab_target/distance` (std_msgs/Float32, 米)，并叠加到调试图 `dis=…m` |
 
 三种算法都通过共享的 **`grab_demo::TargetTFPublisher`**（`include/grab_demo/target_tf_publisher.hpp`）
-把"目标像素中心"统一转换成 `target_frame`，所以 `grab_service_node` 对 HSV/YOLO/KCF 一视同仁，无需改动。
+把"目标像素中心"统一转换成 `target_frame`，所以抓取服务对 HSV/YOLO/KCF 一视同仁，无需改动。
+
+> 本节点已按 **yolo_ros 方案的同一思路** 升级（详见 `YOLO_ROS_GUIDE.md`）：
+> ① 抓取改为**闭环**（`kcf_grab.launch.py` 默认用 `closed_loop_grab_node`，看-动-再看-修正）；
+> ② 关键参数（尤其 `z_offset` 抓取深度、HSV 播种阈值）**运行时可调**（`ros2 param set` 即时生效）；
+> ③ 加了**异常与帧流健康日志**（回调异常捕获、长时间无帧告警并停跟踪）；
+> ④ 接入 **Dashboard 参数面板**（`/kcf_node` 分组 + 一键【KCF 重新播种】）。
 
 > KCF 默认 **不弹窗**（`show_image=false`）；可用 `rqt_image_view` 订阅 `/kcf_node/tracking_image` 看跟踪框。
 
@@ -68,16 +74,34 @@ ros2 service call /kcf_node/reinit std_srvs/srv/Trigger
 |------|------|------|
 | `rgb_topic` / `depth_topic` / `camera_info_topic` | 同 HSV/YOLO | 相机话题 |
 | `camera_frame` / `target_frame` | `camera_arm_depth_optical_frame` / `target_frame` | TF 坐标系 |
-| `z_offset` | `0.07` | Z 补偿（m），与 HSV/YOLO 一致 |
+| `z_offset` | `0.07` | Z 补偿（m），沿相机光轴；**运行时可调**，越大抓得越深 |
 | `init_bbox` | `[0,0,0,0]` | 初始框 `[x,y,w,h]`，全 0 表示用 HSV 自动播种 |
-| `hue_min/max`、`sat_min/max`、`val_min/max` | 偏红 | HSV 自动播种阈值 |
-| `min_area` | `400` | HSV 播种时色块最小面积（像素） |
-| `reinit_on_loss` | `true` | 跟丢时是否自动用 HSV 重新播种 |
+| `hue_min/max`、`sat_min/max`、`val_min/max` | 偏红 | HSV 自动播种阈值；**运行时可调** |
+| `min_area` | `400` | HSV 播种时色块最小面积（像素）；**运行时可调** |
+| `reinit_on_loss` | `true` | 跟丢时是否自动用 HSV 重新播种；**运行时可调** |
 | `show_image` | `false` | 是否弹 OpenCV 窗口（默认否，headless 安全） |
 | `publish_debug_image` | `true` | 是否发布跟踪可视化到 `~/tracking_image` |
 
-## 六、在 Dashboard 里使用
+> 运行时调参示例（改完 HSV/面积后, 调 `~/reinit` 立即按新阈值重新选目标）：
+> ```bash
+> ros2 param set /kcf_node z_offset 0.10        # 抓更深
+> ros2 param set /kcf_node hue_min 100          # 改成抓蓝色物体
+> ros2 param set /kcf_node hue_max 130
+> ros2 param set /kcf_node min_area 800
+> ros2 service call /kcf_node/reinit std_srvs/srv/Trigger
+> ```
 
-打开 Dashboard 的"功能启动"页，**视觉抓取**分组里新增了 **KCF 跟踪抓取**，
-点"启动"即可。它和 YOLO/HSV/ArUco 互斥（共享相机+机械臂+MoveIt），
-启动其一后其余会自动禁用，换算法时先停掉当前的即可。
+## 六、闭环抓取 与 健康日志
+
+- `kcf_grab.launch.py` 默认启动**闭环抓取** `closed_loop_grab_node`（看-动-再看-修正后再抓，
+  参数 `max_iters/approach_height/grasp_z_offset` 见 `YOLO_ROS_GUIDE.md` 第六节）。
+  KCF 在机械臂靠近过程中视角变化较大可能跟丢，已配合 `reinit_on_loss=true` 自动用 HSV 重新播种，
+  闭环节点据最新 `target_frame` 持续修正；想要更稳也可改用开环 `grab_service_node`。
+- 节点对回调异常做了捕获（OpenCV/一般异常都会打印并计数，不会静默失效）；
+  **帧流看门狗**：长时间收不到图像帧会 `ERROR` 告警并暂停跟踪输出，便于发现相机掉线/话题不匹配。
+
+## 七、在 Dashboard 里使用
+
+- **功能启动**页 → **视觉抓取**分组里的 **KCF 跟踪抓取**，点"启动"即可（与 YOLO/HSV/ArUco 互斥）。
+- **监控**页 → 【YOLO / KCF 识别 + 闭环抓取 参数】卡片的 **KCF 跟踪** 分组，可在线调
+  `z_offset` / HSV `hue_min`、`hue_max` / `min_area` / `reinit_on_loss`，并有一键【KCF 重新播种】按钮。

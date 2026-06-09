@@ -63,6 +63,10 @@ public:
 
   bool intrinsicsReady() const { return ready_; }
 
+  // 运行时调整 Z 轴(沿相机光轴)补偿; 供 ros2 param set 动态改抓取深度。
+  void setZOffset(double z) { z_offset_ = z; }
+  double zOffset() const { return z_offset_; }
+
   // 中心 (2r+1)x(2r+1) 窗口内非零深度的中值, 单位米; 无有效深度返回 0
   static double medianDepth(const cv::Mat &depth, int px, int py, int r = 5)
   {
