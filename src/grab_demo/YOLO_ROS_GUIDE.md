@@ -133,6 +133,38 @@ ros2 run tf2_ros tf2_echo camera_arm_depth_optical_frame target_frame
 
 > 想用回开环抓取，直接用 `yolo_grab.launch.py` 或把 launch 里的 `closed_loop_grab_node` 换成 `grab_service_node` 即可（二者服务名都是 `obj_grab_service`）。
 
+### 运行时调节 Z 轴 / 抓取深度（抓不同深度的物体）
+
+有两个 Z 偏移共同决定"抓多深"，都支持 **运行中用 `ros2 param set` 即时调整，无需重启**：
+
+| 参数 | 节点 | 方向 | 作用 |
+|------|------|------|------|
+| `z_offset` | 桥接 `yolo_ros_node` | 沿**相机光轴**（深度方向） | `z = 实测深度 + z_offset`。调大 → 目标点更深入物体内部；调小 / 负值 → 更靠近物体表面。适配不同**厚度/远近**的物体 |
+| `grasp_z_offset` | 闭环 `grab_service_n` | 沿 **base_link 的 Z**（竖直） | 最终下降到 `目标z + grasp_z_offset`。调它控制夹爪竖直方向"压"多深 |
+| `approach_height` | 闭环 `grab_service_n` | 沿 base_link Z（竖直） | 预抓取悬停高度，越大越安全、越小越快 |
+
+示例（抓更深 / 更浅的物体）：
+
+```bash
+# 让目标点沿相机视线再往里 3cm(抓更靠后的厚物体)
+ros2 param set /yolo_ros_node z_offset 0.10
+
+# 抓很薄的物体, 几乎贴表面
+ros2 param set /yolo_ros_node z_offset 0.02
+
+# 最终竖直下降再多压 1cm
+ros2 param set /grab_service_n grasp_z_offset 0.03
+
+# 预抓取悬停降到 6cm(物体矮、空间紧时)
+ros2 param set /grab_service_n approach_height 0.06
+
+# 查看当前值
+ros2 param get /yolo_ros_node z_offset
+ros2 param list /grab_service_n
+```
+
+> 提示：闭环抓取节点在**一次抓取进行中**会阻塞参数服务，请在两次抓取之间设置参数（设置会在下次抓取生效）。桥接节点的 `z_offset` 则任何时候都即时生效。
+
 ## 七、桥接节点（yolo_ros_detect_node.py）参数
 
 | 参数 | 默认值 | 说明 |
@@ -147,10 +179,49 @@ ros2 run tf2_ros tf2_echo camera_arm_depth_optical_frame target_frame
 | `target_class` | `-1` | 只抓某 COCO id，`-1`=不限（瓶子=39，杯子=41） |
 | `target_label` | `""` | 只抓某类名（不区分大小写），非空时优先于 `target_class` |
 | `select_mode` | `confidence` | 多目标选择：`confidence`/`nearest`/`center`/`largest` |
+| `center_mode` | `bbox` | 抓取中心：`bbox`=检测框几何中心；`mask`=分割掩码质心（不规则物体，需 `-seg` 模型） |
+| `conf_threshold` | `0.0` | 桥接端**额外**置信度门槛，低于它的检测不抓；`0`=只用 yolo 的 `threshold` |
 | `min_dist` / `max_dist` | `0.1` / `2.0` | 允许的目标距离范围（m），越界视为无效 |
 | `publish_debug_image` | `True` | 发布带框+距离的调试图到 `~/detection_image` |
 
-## 八、和旧 TensorRT 版（yolo_detect_node）的对照
+> 上表参数全部支持运行时 `ros2 param set /yolo_ros_node <名> <值>` 即时调整，并都有默认值。
+
+## 八、抓取中心怎么算 & 不规则物体 & 置信度门槛
+
+### 抓取中心怎么算
+
+默认（`center_mode:=bbox`）：取**检测框的几何中心** `bbox.center`，再在该像素周围 11×11 邻域里取**非零深度的中值**作为距离，最后用针孔模型反投影成相机系 3D 点。取中值而不是单点，是为了抗深度噪声/空洞。
+
+### 遇到不规则物体怎么办
+
+对 L 形、环形、香蕉等不规则物体，检测框中心可能**不落在物体上**。这时用分割模型 + 掩码质心：
+
+1. 模型换成分割版（文件名带 `-seg`），它会额外输出每个实例的掩码：
+   ```bash
+   ros2 launch grab_demo yolo_ros_grab.launch.py model:=yolov8n-seg.pt center_mode:=mask
+   ```
+2. 桥接节点会改用**掩码多边形的质心**作为抓取中心（保证落在物体上），并用**整个掩码区域内的深度中值**作为距离（比固定小窗更稳）。
+3. 若某个检测没有掩码（用的是普通检测模型），会**自动回退**到 bbox 中心，不会报错。
+4. 调试图里会把掩码轮廓也画出来，方便确认。
+
+> 进一步（可选）：若需要更贴合“可抓取点”，后续可在掩码上做最小外接矩形/主轴分析来给出抓取朝向，目前先给出质心位置（姿态仍由抓取服务保持竖直下压）。
+
+### 置信度门槛（只有足够确信才抓）
+
+有两道门槛，**都可用 ROS 参数传入且都有默认值**：
+
+1. **yolo_ros 自身的 `threshold`**（默认 `0.5`）——低于它的目标根本不会出现在 `/yolo/detections`：
+   ```bash
+   ros2 launch grab_demo yolo_ros_grab.launch.py threshold:=0.6
+   ```
+2. **桥接端的 `conf_threshold`**（默认 `0.0`，即只听 yolo 的）——再加一道“抓取门槛”，只有 `score ≥ conf_threshold` 才会被选为抓取目标，可运行时改：
+   ```bash
+   ros2 param set /yolo_ros_node conf_threshold 0.7
+   ```
+
+两者关系：`threshold` 决定“显示哪些框”，`conf_threshold` 决定“这些框里达到多少分才允许抓”。一般把 `threshold` 设低一点看全，再用 `conf_threshold` 卡抓取。
+
+## 九、和旧 TensorRT 版（yolo_detect_node）的对照
 
 | 项目 | 旧 `yolo_detect_node` | 新 `yolo_ros` + 桥接 |
 |------|----------------------|---------------------|

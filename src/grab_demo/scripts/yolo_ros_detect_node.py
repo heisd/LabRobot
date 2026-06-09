@@ -40,6 +40,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo
 from std_msgs.msg import Float32
 from geometry_msgs.msg import TransformStamped
+from rcl_interfaces.msg import SetParametersResult
 from tf2_ros import TransformBroadcaster
 import message_filters
 
@@ -91,6 +92,15 @@ class YoloRosDetectNode(Node):
         if self.select_mode not in ("confidence", "nearest", "center", "largest"):
             self.get_logger().warn("未知 select_mode='%s', 回退为 confidence" % self.select_mode)
             self.select_mode = "confidence"
+
+        # ---- 抓取中心的计算方式 ----
+        #   bbox = 检测框几何中心(默认, 适合规则物体)
+        #   mask = 分割掩码的质心 + 掩码内深度中值(适合不规则物体, 需 -seg 分割模型)
+        # 用 mask 时若该检测没有掩码(用的是检测模型而非分割模型), 自动回退到 bbox。
+        self.center_mode = str(self.declare_parameter("center_mode", "bbox").value)
+        if self.center_mode not in ("bbox", "mask"):
+            self.get_logger().warn("未知 center_mode='%s', 回退为 bbox" % self.center_mode)
+            self.center_mode = "bbox"
 
         # ---- 安全 / 距离约束 ----
         self.min_dist = float(self.declare_parameter("min_dist", 0.1).value)
@@ -147,10 +157,55 @@ class YoloRosDetectNode(Node):
         # 以 15Hz 持续广播最近一次的 target_frame + 距离, 保证抓取服务随时能查到 TF
         self.create_timer(1.0 / 15.0, self._publish_target)
 
+        # 运行时可动态调节的参数 (ros2 param set 立即生效), 重点是 z_offset:
+        # 沿相机光轴的深度偏移, 调大=抓得更深(物体内部), 调小/负值=更靠近相机表面,
+        # 从而适配不同深度/不同厚度的物体。
+        self.add_on_set_parameters_callback(self._on_set_params)
+
         self.get_logger().info(
             "yolo_ros_detect_node 已启动: 订阅 %s, select_mode=%s, "
-            "target_class=%d, target_label='%s'"
-            % (self.detections_topic, self.select_mode, self.target_class, self.target_label))
+            "target_class=%d, target_label='%s', z_offset=%.3f"
+            % (self.detections_topic, self.select_mode, self.target_class,
+               self.target_label, self.z_offset))
+
+    # 动态参数回调: 允许运行中用 `ros2 param set /yolo_ros_node <name> <value>` 调整
+    def _on_set_params(self, params):
+        for p in params:
+            try:
+                if p.name == "z_offset":
+                    with self._lock:
+                        self.z_offset = float(p.value)
+                    self.get_logger().info("z_offset -> %.3f m" % self.z_offset)
+                elif p.name == "min_dist":
+                    self.min_dist = float(p.value)
+                elif p.name == "max_dist":
+                    self.max_dist = float(p.value)
+                elif p.name == "conf_threshold":
+                    self.conf_threshold = float(p.value)
+                    self.get_logger().info("conf_threshold -> %.2f" % self.conf_threshold)
+                elif p.name == "center_mode":
+                    mode = str(p.value)
+                    if mode not in ("bbox", "mask"):
+                        return SetParametersResult(
+                            successful=False, reason="center_mode 取值非法(bbox/mask)")
+                    self.center_mode = mode
+                    self.get_logger().info("center_mode -> %s" % self.center_mode)
+                elif p.name == "target_class":
+                    self.target_class = int(p.value)
+                    self.get_logger().info("target_class -> %d" % self.target_class)
+                elif p.name == "target_label":
+                    self.target_label = str(p.value).strip().lower()
+                    self.get_logger().info("target_label -> '%s'" % self.target_label)
+                elif p.name == "select_mode":
+                    mode = str(p.value)
+                    if mode not in ("confidence", "nearest", "center", "largest"):
+                        return SetParametersResult(
+                            successful=False, reason="select_mode 取值非法")
+                    self.select_mode = mode
+                    self.get_logger().info("select_mode -> %s" % self.select_mode)
+            except (TypeError, ValueError) as e:  # noqa: PERF203
+                return SetParametersResult(successful=False, reason=str(e))
+        return SetParametersResult(successful=True)
 
     # ------------------------------------------------------------------
     # 回调
@@ -185,9 +240,9 @@ class YoloRosDetectNode(Node):
         img_cx, img_cy = img_w / 2.0, img_h / 2.0
 
         # ---- 候选过滤 + 选目标 ----
-        target = None        # 被选中的检测
-        target_dis = 0.0
-        best_metric = None
+        # 每个候选都按 center_mode 算出抓取中心像素 (px,py) 和该中心深度 dis,
+        # 再按 select_mode 比较。这样 mask/bbox 两种中心方式对所有策略都一致生效。
+        best = None          # (metric, det, px, py, dis)
         candidate_count = 0
 
         for det in det_msg.detections:
@@ -197,44 +252,38 @@ class YoloRosDetectNode(Node):
                 continue
             candidate_count += 1
 
-            px, py = self._center_px(det, img_w, img_h)
+            px, py, dis = self._object_center(det, depth)
 
             if self.select_mode == "nearest":
-                dd = self._median_depth(depth, px, py)
-                if dd <= 0.0:
+                if dis <= 0.0:
                     continue                # 无有效深度的候选跳过
-                metric = -dd                # 越近越优
+                metric = -dis               # 越近越优
             elif self.select_mode == "center":
                 metric = -((px - img_cx) ** 2 + (py - img_cy) ** 2)
-                dd = 0.0
             elif self.select_mode == "largest":
                 metric = float(det.bbox.size.x * det.bbox.size.y)
-                dd = 0.0
             else:  # confidence
                 metric = float(det.score)
-                dd = 0.0
 
-            if best_metric is None or metric > best_metric:
-                best_metric = metric
-                target = det
-                target_dis = dd
+            if best is None or metric > best[0]:
+                best = (metric, det, px, py, dis)
 
-        if target is None:
+        if best is None:
             self.get_logger().info("未检测到目标物体", throttle_duration_sec=2.0)
             if self.publish_debug_image:
-                self._publish_debug(det_msg, None, -1.0)
+                self._publish_debug(det_msg, None, None, -1.0)
             return
 
-        # ---- 取检测框中心 -> 中心邻域深度中值 -> 针孔反投影 ----
-        px, py = self._center_px(target, img_w, img_h)
-        ok, dis, why = self._compute_target(px, py, depth)
+        # ---- 抓取中心(像素) + 深度 -> 针孔反投影 ----
+        _, target, px, py, dis_sel = best
+        ok, dis, why = self._set_target(px, py, dis_sel)
         label = target.class_name or ("id_%d" % target.class_id)
         with self._lock:
             self._last_label = label
             self._last_dis = dis if ok else -1.0
 
         if self.publish_debug_image:
-            self._publish_debug(det_msg, target, dis if ok else -1.0)
+            self._publish_debug(det_msg, target, (px, py), dis if ok else -1.0)
 
         if not ok:
             with self._lock:
@@ -267,6 +316,31 @@ class YoloRosDetectNode(Node):
         py = int(min(max(det.bbox.center.position.y, 0), img_h - 1))
         return px, py
 
+    def _object_center(self, det, depth):
+        """按 center_mode 计算物体抓取中心像素与深度, 返回 (px, py, dis米)。
+
+        - bbox: 检测框几何中心 + 中心 11x11 邻域深度中值 (规则物体足够)。
+        - mask: 分割掩码的质心 + 掩码内深度中值 (不规则物体更准, 质心落在物体上,
+                深度取整个物体表面的中值, 抗噪更强)。掩码缺失时自动回退到 bbox。
+        """
+        img_h, img_w = depth.shape[:2]
+        if self.center_mode == "mask" and cv2 is not None \
+                and getattr(det, "mask", None) is not None and len(det.mask.data) >= 3:
+            pts = np.array([[p.x, p.y] for p in det.mask.data], dtype=np.int32)
+            m = cv2.moments(pts)
+            if m["m00"] > 0:                       # 多边形质心(面积加权)
+                px = int(round(m["m10"] / m["m00"]))
+                py = int(round(m["m01"] / m["m00"]))
+            else:                                  # 退化(共线)时用边界点均值
+                px = int(round(float(np.mean(pts[:, 0]))))
+                py = int(round(float(np.mean(pts[:, 1]))))
+            px = max(0, min(px, img_w - 1))
+            py = max(0, min(py, img_h - 1))
+            return px, py, self._mask_depth(depth, pts)
+        # 默认 / 回退: bbox 中心
+        px, py = self._center_px(det, img_w, img_h)
+        return px, py, self._median_depth(depth, px, py)
+
     def _median_depth(self, depth, px, py, r=5):
         h, w = depth.shape[:2]
         px = max(0, min(px, w - 1))
@@ -277,9 +351,22 @@ class YoloRosDetectNode(Node):
             return 0.0
         return float(np.median(vals)) / 1000.0  # mm -> m
 
-    def _compute_target(self, px, py, depth):
-        """计算并(若合法)设置目标点。返回 (ok, dis, reason)。"""
-        dis = self._median_depth(depth, px, py, 5)
+    def _mask_depth(self, depth, pts):
+        """掩码区域内非零深度的中值(米); 无有效深度返回 0。"""
+        m = np.zeros(depth.shape[:2], dtype=np.uint8)
+        cv2.fillPoly(m, [pts], 255)
+        vals = depth[(m > 0) & (depth > 0)]
+        if vals.size == 0:
+            return 0.0
+        return float(np.median(vals)) / 1000.0  # mm -> m
+
+    def _set_target(self, px, py, dis):
+        """用给定的抓取中心像素 + 深度 dis(米)反投影并缓存目标。返回 (ok, dis, reason)。
+
+        注意: 这里只缓存与 z_offset 无关的量 (相机系 x, y 和实测深度 dis),
+        z = dis + z_offset 推迟到广播时实时计算, 这样运行中 ros2 param set z_offset
+        能立刻生效, 无需等待下一帧检测。
+        """
         if dis <= 0:
             return False, 0.0, "中心深度无效"
         if not (self.min_dist <= dis <= self.max_dist):
@@ -287,20 +374,21 @@ class YoloRosDetectNode(Node):
                 dis, self.min_dist, self.max_dist)
         x = (px - self._cx) / self._fx * dis
         y = (py - self._cy) / self._fy * dis
-        z = dis + self.z_offset
-        if not all(math.isfinite(v) for v in (x, y, z)):
+        if not all(math.isfinite(v) for v in (x, y, dis)):
             return False, dis, "投影坐标非法(NaN/Inf)"
         with self._lock:
-            self._target = (x, y, z)
+            self._target = (x, y, dis)   # 存原始量, z 偏移广播时再加
         return True, dis, ""
 
     def _publish_target(self):
         with self._lock:
             target = self._target
             dis = self._last_dis
+            z_off = self.z_offset
         if target is None:
             return
-        x, y, z = target
+        x, y, raw_dis = target
+        z = raw_dis + z_off            # 沿相机光轴(深度方向)实时施加 Z 偏移
         tf = TransformStamped()
         tf.header.stamp = self.get_clock().now().to_msg()
         tf.header.frame_id = self.camera_frame
@@ -315,7 +403,7 @@ class YoloRosDetectNode(Node):
             d.data = float(dis)
             self.dist_pub.publish(d)
 
-    def _publish_debug(self, det_msg, target, dis):
+    def _publish_debug(self, det_msg, target, center, dis):
         if cv2 is None or self._rgb is None:
             return
         vis = self._rgb.copy()
@@ -329,12 +417,17 @@ class YoloRosDetectNode(Node):
             is_target = target is not None and det is target
             color = (0, 0, 255) if is_target else (0, 255, 0)
             cv2.rectangle(vis, (x0, y0), (x1, y1), color, 3 if is_target else 2)
+            # 有分割掩码时把轮廓也画出来, 便于确认不规则物体的范围
+            if cv2 is not None and getattr(det, "mask", None) is not None \
+                    and len(det.mask.data) >= 3:
+                poly = np.array([[int(p.x), int(p.y)] for p in det.mask.data], dtype=np.int32)
+                cv2.polylines(vis, [poly], True, color, 1)
             label = "%s %.2f" % (det.class_name or det.class_id, det.score)
             cv2.putText(vis, label, (x0, max(0, y0 - 5)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-        if target is not None:
-            cx = int(target.bbox.center.position.x)
-            cy = int(target.bbox.center.position.y)
+        # 用真正的抓取中心(可能是掩码质心)画十字, 而不是固定 bbox 中心
+        if target is not None and center is not None:
+            cx, cy = int(center[0]), int(center[1])
             cv2.drawMarker(vis, (cx, cy), (255, 0, 0), cv2.MARKER_CROSS, 20, 2)
             if dis > 0:
                 cv2.putText(vis, "dis=%.3fm" % dis, (cx - 40, cy + 30),

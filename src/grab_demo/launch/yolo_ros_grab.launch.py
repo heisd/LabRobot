@@ -47,6 +47,12 @@ def generate_launch_description():
     select_mode_arg = DeclareLaunchArgument(
         "select_mode", default_value="confidence",
         description="多目标选择: confidence / nearest / center / largest")
+    center_mode_arg = DeclareLaunchArgument(
+        "center_mode", default_value="bbox",
+        description="抓取中心: bbox=检测框中心(规则物体) / mask=分割掩码质心(不规则物体, 需 -seg 模型)")
+    conf_threshold_arg = DeclareLaunchArgument(
+        "conf_threshold", default_value="0.0",
+        description="桥接端额外置信度门槛, 低于它的检测不抓(0=只用 yolo 的 threshold)")
 
     model = LaunchConfiguration("model")
     device = LaunchConfiguration("device")
@@ -54,6 +60,8 @@ def generate_launch_description():
     target_class = LaunchConfiguration("target_class")
     target_label = LaunchConfiguration("target_label")
     select_mode = LaunchConfiguration("select_mode")
+    center_mode = LaunchConfiguration("center_mode")
+    conf_threshold = LaunchConfiguration("conf_threshold")
 
     # 机械臂语义描述(供抓取节点)
     robot_description_semantic_config = load_file(
@@ -123,6 +131,8 @@ def generate_launch_description():
             "target_class": ParameterValue(target_class, value_type=int),
             "target_label": target_label,
             "select_mode": select_mode,
+            "center_mode": center_mode,
+            "conf_threshold": ParameterValue(conf_threshold, value_type=float),
             "min_dist": 0.1,
             "max_dist": 2.0,
             "publish_debug_image": True,
@@ -150,6 +160,7 @@ def generate_launch_description():
     return LaunchDescription([
         model_arg, device_arg, threshold_arg,
         target_class_arg, target_label_arg, select_mode_arg,
+        center_mode_arg, conf_threshold_arg,
         camera_launch,      # 相机
         camera_info,        # 相机内参
         lebai_lm3,          # 机械臂

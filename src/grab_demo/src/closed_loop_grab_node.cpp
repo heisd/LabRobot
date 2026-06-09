@@ -28,12 +28,14 @@
 #include "lebai_interfaces/srv/set_gripper.hpp"
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/pose.hpp>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
 
 #include <chrono>
 #include <cmath>
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 using namespace std::chrono_literals;
 
@@ -84,12 +86,48 @@ public:
         "obj_grab_service",
         std::bind(&ClosedLoopGrab::onGrab, this, std::placeholders::_1, std::placeholders::_2));
 
+    // ---- 运行时动态调参 (ros2 param set 立即生效) ----
+    // 重点是 grasp_z_offset / approach_height: 控制沿 Z 轴(竖直)下降抓取的深度,
+    // 配合桥接节点的 z_offset(沿相机光轴的深度偏移), 即可抓取不同深度/厚度的物体。
+    // 注意: 抓取过程中(服务回调阻塞执行器)设置的参数会在本次抓取结束后才被应用。
+    param_cb_handle_ = add_on_set_parameters_callback(
+        std::bind(&ClosedLoopGrab::onSetParams, this, std::placeholders::_1));
+
     RCLCPP_INFO(get_logger(),
-                "闭环抓取就绪: max_iters=%d, pos_tol=%.3fm, approach_height=%.3fm, settle=%.1fs",
-                max_iters_, pos_tolerance_, approach_height_, settle_sec_);
+                "闭环抓取就绪: max_iters=%d, pos_tol=%.3fm, approach_height=%.3fm, "
+                "grasp_z_offset=%.3fm, settle=%.1fs",
+                max_iters_, pos_tolerance_, approach_height_, grasp_z_offset_, settle_sec_);
   }
 
 private:
+  // 动态参数回调: 运行中用 `ros2 param set /grab_service_n <name> <value>` 调整
+  rcl_interfaces::msg::SetParametersResult
+  onSetParams(const std::vector<rclcpp::Parameter> &params)
+  {
+    rcl_interfaces::msg::SetParametersResult result;
+    result.successful = true;
+    for (const auto &p : params) {
+      const std::string &name = p.get_name();
+      if (name == "grasp_z_offset") {
+        grasp_z_offset_ = p.as_double();
+        RCLCPP_INFO(get_logger(), "grasp_z_offset -> %.3f m", grasp_z_offset_);
+      } else if (name == "approach_height") {
+        approach_height_ = p.as_double();
+        RCLCPP_INFO(get_logger(), "approach_height -> %.3f m", approach_height_);
+      } else if (name == "pos_tolerance") {
+        pos_tolerance_ = p.as_double();
+      } else if (name == "settle_sec") {
+        settle_sec_ = p.as_double();
+      } else if (name == "max_iters") {
+        max_iters_ = static_cast<int>(p.as_int());
+      } else if (name == "velocity_scaling") {
+        vel_scale_ = p.as_double();
+        move_group_->setMaxVelocityScalingFactor(vel_scale_);
+      }
+    }
+    return result;
+  }
+
   // 张开/闭合夹爪 (val: 100=张开, 0=闭合)
   void setGripper(double val)
   {
@@ -248,6 +286,7 @@ private:
   rclcpp::Client<lebai_interfaces::srv::SetGripper>::SharedPtr gripper_client_;
   std::shared_ptr<lebai_interfaces::srv::SetGripper::Request> gripper_req_;
   rclcpp::Service<grab_demo::srv::GrabObject>::SharedPtr grab_service_;
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
 
   std::string base_frame_, look_target_;
   int max_iters_;
