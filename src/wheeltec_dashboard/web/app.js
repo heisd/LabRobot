@@ -247,6 +247,22 @@
       const b = $('kcf-cmd'); if (b) b.textContent = txt;
     }, { throttle_rate: 100 });
 
+    // QR line-following (line_follow_qr_fixed: qr_detector + cmd_arbiter).
+    sub('/qr_code/detected', 'std_msgs/msg/Bool', (msg) => {
+      const el = $('line-qr-detected'); if (!el) return;
+      const yes = msg.data === true || msg.data === 1;
+      el.textContent = yes ? '检测到' : '未检测';
+      el.classList.remove('ok', 'warn');
+      el.classList.add(yes ? 'ok' : 'warn');
+    });
+    sub('/qr_code/data', 'std_msgs/msg/String', (msg) => {
+      const el = $('line-qr-data'); if (el) el.textContent = msg.data || '—';
+    });
+    sub('/qr_code/area_ratio', 'std_msgs/msg/Float32', (msg) => {
+      const el = $('line-qr-area');
+      if (el) el.textContent = (typeof msg.data === 'number') ? (msg.data * 100).toFixed(1) + ' %' : '—';
+    });
+
     // Lidar health (fused + per-sensor) and optional YOLO detections.
     subscribeLidar();
     subscribeYolo();
