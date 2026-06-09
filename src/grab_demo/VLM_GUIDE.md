@@ -20,7 +20,15 @@ Dashboard 输入指令 ──/vlm/instruction──> vlm_grab_node
 ```
 
 接口与 HSV/YOLO/KCF 一致（同样的相机话题、`target_frame`、`/grab_target/distance`），
-所以 `grab_service_node` 无需改动。
+所以抓取服务无需改动。
+
+> 本节点已按 **yolo_ros 方案的同一思路** 升级（详见 `YOLO_ROS_GUIDE.md` / `ARBITER_GUIDE.md`）：
+> ① 抓取改为**闭环** + 接入**抓取仲裁**（`vlm_grab.launch.py` 默认用 `closed_loop_grab_node` +
+>    `arm_arbiter`；手动接管会打断 VLM 触发的抓取，接管期间 VLM 不触发抓取）；
+> ② `z_offset`（抓取深度）/ `min_dist`/`max_dist`/`auto_grab`/`require_confirm`/`max_instruction_len`
+>    **运行时可调**（`ros2 param set` 即时生效，z_offset 改了立刻反映到广播）；
+> ③ **未接入 VLM 大模型时会输出明确日志**（见第六节）, 并加了相机**帧流看门狗**；
+> ④ 接入 **Dashboard 参数面板**（`/vlm_node` 的 “VLM 抓取” 分组）。
 
 ## 二、VLM 接口（本地或云端，二选一）
 
@@ -122,3 +130,29 @@ ros2 run rqt_image_view rqt_image_view /vlm_node/vlm_image   # 看框选可视�
 
 > 想全自动（不确认）：设 `require_confirm:=false`。只定位不抓：设 `auto_grab:=false`。
 > 网络/服务异常时结果会回 `❌ VLM 调用失败`。
+
+### 未接入大模型时的提示（重要）
+
+为避免"发了指令没反应却不知道为什么"，节点会主动判断是否接入了大模型：
+
+- **启动时**：打印一条接入情况日志 ——
+  - 已配置 Key：`INFO  VLM 大模型已配置: provider=… model=… api_base=… (API Key 来自环境变量 …)`；
+  - 云端 `api_base` 但 Key 为空：`ERROR 未接入 VLM 大模型: …环境变量 … 为空 —— 自然语言抓取不可用…`；
+  - 无 Key 但用的是本地 `api_base`：`WARN VLM 未检测到 API Key…若为本地模型可忽略`。
+- **收到指令时**：若判定为"未接入大模型(云端且无 Key)"，**直接拒绝并报错**，不做无谓网络请求：
+  日志 `ERROR 未接入 VLM 大模型…拒绝处理指令`，Dashboard 结果区显示
+  `❌ 未接入 VLM 大模型…请配置 API Key 后重启, 或把 api_base 指向本地模型`。
+- 调用失败(网络不可达/Key 无效/模型不存在)时：`ERROR VLM 调用失败(可能未接入大模型/网络不可达/Key 无效)`。
+
+### 运行时调参 / 仲裁 / 健康日志
+
+```bash
+ros2 param set /vlm_node z_offset 0.10        # 抓更深(即时生效)
+ros2 param set /vlm_node require_confirm false # 关闭二次确认
+ros2 param set /vlm_node auto_grab false       # 只定位不抓
+```
+
+- 手动接管(Dashboard【手动接管】或手动关节运动)期间, VLM 不会触发抓取, 结果区提示
+  `✋ 手动接管中, 暂不自动抓取`; 释放后恢复。
+- 相机长时间无帧会 `ERROR` 告警(帧流看门狗), 便于发现相机掉线/话题不匹配。
+- 也可在 **Dashboard 监控页** 的【…+ 闭环抓取 参数】卡片里 “VLM 抓取” 分组在线调上述参数。

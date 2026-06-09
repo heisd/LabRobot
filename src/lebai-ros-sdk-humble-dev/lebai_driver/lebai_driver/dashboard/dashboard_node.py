@@ -130,7 +130,23 @@ PARAM_CONTROLS = [
     {"id": "hsv_min_area", "group": "HSV 颜色", "node": "/color_node", "param": "min_area",
      "label": "最小色块面积", "kind": "number", "ptype": "int",
      "min": 50, "max": 20000, "step": 50, "default": 200, "unit": "px"},
-    # ---- 闭环抓取(YOLO/KCF/HSV 共用) ----
+    # ---- VLM 自然语言抓取 (节点名 vlm_node) ----
+    {"id": "vlm_z_offset", "group": "VLM 抓取", "node": "/vlm_node", "param": "z_offset",
+     "label": "Z 偏移(沿相机光轴, 越大抓得越深)", "kind": "number", "ptype": "double",
+     "min": -0.05, "max": 0.30, "step": 0.01, "default": 0.07, "unit": "m"},
+    {"id": "vlm_auto_grab", "group": "VLM 抓取", "node": "/vlm_node", "param": "auto_grab",
+     "label": "理解到目标后自动抓取", "kind": "choice", "ptype": "bool",
+     "choices": ["true", "false"], "default": "true"},
+    {"id": "vlm_require_confirm", "group": "VLM 抓取", "node": "/vlm_node", "param": "require_confirm",
+     "label": "抓取前需二次确认", "kind": "choice", "ptype": "bool",
+     "choices": ["true", "false"], "default": "true"},
+    {"id": "vlm_min_dist", "group": "VLM 抓取", "node": "/vlm_node", "param": "min_dist",
+     "label": "允许最近距离", "kind": "number", "ptype": "double",
+     "min": 0.05, "max": 1.0, "step": 0.05, "default": 0.1, "unit": "m"},
+    {"id": "vlm_max_dist", "group": "VLM 抓取", "node": "/vlm_node", "param": "max_dist",
+     "label": "允许最远距离", "kind": "number", "ptype": "double",
+     "min": 0.3, "max": 3.0, "step": 0.1, "default": 1.5, "unit": "m"},
+    # ---- 闭环抓取(YOLO/KCF/HSV/VLM 共用) ----
     {"id": "grasp_z_offset", "group": "闭环抓取", "node": "/grab_service_n", "param": "grasp_z_offset",
      "label": "下降抓取补偿(竖直)", "kind": "number", "ptype": "double",
      "min": -0.02, "max": 0.10, "step": 0.005, "default": 0.02, "unit": "m"},
@@ -866,10 +882,10 @@ INDEX_HTML = """<!DOCTYPE html>
   </div>
 
   <div class="card" style="grid-column:1 / span 2;">
-    <h2>YOLO / KCF / HSV 识别 + 闭环抓取 参数 (运行时可调)</h2>
+    <h2>YOLO / KCF / HSV / VLM 识别 + 闭环抓取 参数 (运行时可调)</h2>
     <div id="paramctrls"></div>
     <small>需先在"功能启动"页启动对应抓取任务(YOLO→/yolo_ros_node, KCF→/kcf_node,
-      HSV→/color_node, 闭环抓取→/grab_service_n)。改动通过 ros2 param set 即时下发;
+      HSV→/color_node, VLM→/vlm_node, 闭环抓取→/grab_service_n)。改动通过 ros2 param set 即时下发;
       闭环抓取的参数会在下次抓取生效。KCF 改了 HSV/面积阈值后点【KCF 重新播种】立即按新阈值重新选目标。</small>
   </div>
 
