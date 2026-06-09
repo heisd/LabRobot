@@ -442,6 +442,14 @@ main {
 }
 .yolo-det-row .yd-label { color: var(--text); word-break: break-word; }
 .yolo-det-row .yd-score { color: var(--accent); text-align: right; }
+.yolo-det-row .yd-track {
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid rgba(45, 56, 69, 0.8);
+  border-radius: 4px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
 
 .viewer {
   background: #000;

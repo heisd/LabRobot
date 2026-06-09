@@ -20,7 +20,7 @@
   let lidarSubs = [];      // per-source LaserScan subs (managed separately so
                            // the lidar card can re-subscribe on topic change)
   const lidarLast = {};    // key -> { time, points, min }
-  let yoloDetSub = null;   // optional vision_msgs/Detection2DArray sub
+  let yoloDetSub = null;   // optional yolo_msgs/DetectionArray sub (yolo_ros)
 
   function setStatus(state, text) {
     statusEl.className = 'status status-' + state;
@@ -1162,16 +1162,25 @@
     const countEl = $('yolo-det-count');
     if (countEl) countEl.textContent = dets.length + ' 个目标';
     view.innerHTML = dets.map((d) => {
-      const res = (d.results && d.results[0]) || null;
-      let label = '?', score = 0;
-      if (res) {
-        // vision_msgs changed shape across versions: newer nests a
-        // `hypothesis` (class_id/score), older is flat (id/score).
-        const h = res.hypothesis || res;
-        label = (h.class_id != null) ? h.class_id : (h.id != null ? h.id : '?');
-        score = (h.score != null) ? h.score : 0;
+      let label = '?', score = 0, track = '';
+      if (d && (d.class_name != null || d.class_id != null)) {
+        // yolo_ros (yolo_msgs/Detection): class_name/score, optional tracking id.
+        label = (d.class_name != null && d.class_name !== '') ? d.class_name
+              : (d.class_id != null ? d.class_id : '?');
+        score = (d.score != null) ? d.score : 0;
+        track = (d.id != null && d.id !== '') ? d.id : '';
+      } else {
+        // vision_msgs/Detection2DArray fallback: newer nests a `hypothesis`
+        // (class_id/score), older is flat (id/score).
+        const res = (d && d.results && d.results[0]) || null;
+        if (res) {
+          const h = res.hypothesis || res;
+          label = (h.class_id != null) ? h.class_id : (h.id != null ? h.id : '?');
+          score = (h.score != null) ? h.score : 0;
+        }
       }
-      return `<div class="yolo-det-row"><span class="yd-label">${escapeHTML(String(label))}</span>` +
+      const trackHtml = track ? ` <span class="yd-track">#${escapeHTML(String(track))}</span>` : '';
+      return `<div class="yolo-det-row"><span class="yd-label">${escapeHTML(String(label))}${trackHtml}</span>` +
         `<span class="yd-score">${(Number(score) * 100).toFixed(0)}%</span></div>`;
     }).join('');
   }
@@ -1182,7 +1191,7 @@
     const topic = ((el && el.value) || '').trim();
     if (!topic) return;
     yoloDetSub = new ROSLIB.Topic({
-      ros, name: topic, messageType: 'vision_msgs/msg/Detection2DArray', throttle_rate: 200,
+      ros, name: topic, messageType: 'yolo_msgs/msg/DetectionArray', throttle_rate: 200,
     });
     yoloDetSub.subscribe(renderYolo);
   }

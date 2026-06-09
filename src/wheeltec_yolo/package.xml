@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>wheeltec_yolo</name>
+  <version>0.1.0</version>
+  <description>
+    Wheeltec S300 集成 yolo_ros (mgonzs13): 便捷启动 + 3D 跟随节点. YOLO 检测输入接
+    Wheeltec 相机 /camera/color/image_raw, 输出 /yolo/detections 与标注流
+    /yolo/debug_image 供 Web 仪表盘使用; yolo_follow 用带深度的 /yolo/detections_3d
+    让小车与被跟踪目标保持设定距离(默认 0.20m). 上游 yolo_ros 源码用 vcs 从
+    yolo_ros.repos 拉取, 不并入本仓库.
+  </description>
+  <maintainer email="wheeltec@todo.todo">wheeltec</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <!-- 上游 yolo_ros 提供 (vcs import 后存在): 消息/启动/节点 -->
+  <exec_depend>yolo_msgs</exec_depend>
+  <exec_depend>yolo_bringup</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

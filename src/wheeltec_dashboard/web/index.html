@@ -469,10 +469,10 @@
       <!-- YOLO 检测 -->
       <div class="subtab-panel" id="subpanel-yolo">
         <section class="card card-wide">
-          <h2>YOLO 检测 <span class="muted">(通用查看器 · 需自行部署节点)</span></h2>
+          <h2>YOLO 检测 <span class="muted">(yolo_ros / mgonzs13)</span></h2>
           <div class="fn-stream-toolbar">
             <label>图像话题
-              <input class="fn-topic" data-img="yolo-stream" type="text" value="/camera/color/image_raw" />
+              <input class="fn-topic" data-img="yolo-stream" type="text" value="/yolo/debug_image" />
             </label>
             <label>检测话题
               <input id="yolo-det-topic" type="text" value="/yolo/detections" />
@@ -481,7 +481,7 @@
             <button id="yolo-det-apply">订阅检测</button>
           </div>
           <div class="cam-frame fn-frame">
-            <img id="yolo-stream" class="cam-img fn-img" data-topic="/camera/color/image_raw" src="placeholder.svg" alt="yolo" />
+            <img id="yolo-stream" class="cam-img fn-img" data-topic="/yolo/debug_image" src="placeholder.svg" alt="yolo" />
             <div class="cam-err" hidden>无法加载流</div>
           </div>
           <div class="yolo-det-head">
@@ -489,7 +489,7 @@
             <span id="yolo-det-count" class="muted">0 个目标</span>
           </div>
           <div id="yolo-detections" class="yolo-detections"></div>
-          <p class="hint">注意：本仓库未内置 YOLO 节点，此页为通用查看器。若另行部署了发布 <code>vision_msgs/msg/Detection2DArray</code> 的检测节点（默认话题 <code>/yolo/detections</code>），这里会列出类别与置信度；把"图像话题"指向检测节点输出的标注流即可看带框画面。</p>
+          <p class="hint">由 <a href="https://github.com/mgonzs13/yolo_ros" target="_blank" rel="noopener">yolo_ros</a> 提供检测。启动：<code>ros2 launch yolo_bringup yolo_wheeltec.launch.py</code>（已把输入设为 <code>/camera/color/image_raw</code>）。标注画面来自 <code>/yolo/debug_image</code>（<code>use_debug</code>），目标列表来自 <code>/yolo/detections</code>（<code>yolo_msgs/msg/DetectionArray</code>：<code>class_name</code> / <code>score</code>，开启 <code>use_tracking</code> 时带跟踪 <code>id</code>）。改"检测话题"为 <code>/yolo/tracking</code> 可看带 ID 的跟踪结果。</p>
         </section>
       </div>
 
