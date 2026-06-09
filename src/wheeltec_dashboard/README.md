@@ -50,13 +50,30 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 页面顶部为导航栏，把所有功能分为五个板块，点击切换（也支持 `#overview`、
 `#components`、`#control`、`#function`、`#contact` 锚点深链）：
 
-- **系统总览**：3D 视图、实时遥测、电压 / cmd_vel 折线图
-- **各组件状态**：超声波测距、`/rosout` 日志面板
+- **系统总览**：3D 视图（雷达 `/scan`）、实时遥测、电压 / cmd_vel 折线图
+- **各组件状态**：雷达（双雷达融合健康）、超声波、语音组件、相机预览、
+  `/rosout` 日志面板
 - **控制模块**：速度控制（遥控）、参数调节
-- **功能模块**：VLA 语音导航、相机预览
+- **功能模块**（含子页面）：巡线、KCF 跟踪、YOLO 检测、VLA 语音导航
 - **联系作者**：项目仓库与反馈渠道
 
 各板块明细：
+
+- **雷达**：订阅融合 `/scan` 与单雷达 `/scan1`/`/scan2`（`sensor_msgs/LaserScan`），
+  显示每路在线状态、有效点数与融合最近障碍距离。融合由 `double_lidar_fusion`
+  完成；点云可视化见"系统总览"3D 视图。
+- **语音组件**：来自 `wheeltec_mic` 的麦克风初始化 `/voice_flag`、唤醒
+  `/awake_flag`、声源角 `/awake_angle`、识别 `/voice_words`，并可向
+  `/tts_text` 发文本播报（经 `tts_make`）。
+- **巡线**（`simple_follower_ros2`）：web_video_server 预览
+  `/camera/color/image_raw`，显示巡线节点输出的 `/cmd_vel`。颜色在机器人端
+  trackbar 选择。
+- **KCF 跟踪**（`wheeltec_robot_kcf`）：预览标注流 `/KCF_image`，并实时调节
+  `/image_converter` 的距离/转向 PID 参数（`targetDist_`、`linear_K*_`、
+  `angular_K*_`）。目标框需在机器人端 OpenCV 窗口鼠标框选。
+- **YOLO 检测**：本仓库未内置 YOLO 节点，提供通用查看器——可订阅任意
+  `vision_msgs/msg/Detection2DArray` 检测话题（默认 `/yolo/detections`）并列出
+  类别/置信度，图像话题可指向检测节点的标注输出。
 
 - 实时遥测：`/PowerVoltage`、`/robot_charging_flag`、`/robot_charging_current`、
   `/robot_red_flag`、`/self_check_data`、`/odom`、`/imu/data_raw`、`/Distance`

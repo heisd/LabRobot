@@ -17,6 +17,10 @@
   let cmdVelPub = null;
   let vlaInstrPub = null;  // /vla/instruction publisher
   let ttsPub = null;       // /tts_text publisher
+  let lidarSubs = [];      // per-source LaserScan subs (managed separately so
+                           // the lidar card can re-subscribe on topic change)
+  const lidarLast = {};    // key -> { time, points, min }
+  let yoloDetSub = null;   // optional vision_msgs/Detection2DArray sub
 
   function setStatus(state, text) {
     statusEl.className = 'status status-' + state;
@@ -101,6 +105,12 @@
   function teardownTopics() {
     subs.forEach((t) => { try { t.unsubscribe(); } catch (_) { /* ignore */ } });
     subs.length = 0;
+    lidarSubs.forEach((t) => { try { t.unsubscribe(); } catch (_) { /* ignore */ } });
+    lidarSubs = [];
+    if (yoloDetSub) {
+      try { yoloDetSub.unsubscribe(); } catch (_) { /* ignore */ }
+      yoloDetSub = null;
+    }
     if (cmdVelPub) {
       try { cmdVelPub.unadvertise(); } catch (_) { /* ignore */ }
       cmdVelPub = null;
@@ -197,8 +207,9 @@
     ttsPub.advertise();
 
     sub('/voice_words', 'std_msgs/msg/String', (msg) => {
-      const el = $('vla-heard');
-      if (el) el.textContent = msg.data || '—';
+      const txt = msg.data || '—';
+      const a = $('vla-heard'); if (a) a.textContent = txt;
+      const b = $('voice-words'); if (b) b.textContent = txt;
     });
     sub('/tts_text', 'std_msgs/msg/String', (msg) => {
       const el = $('vla-say');
@@ -207,6 +218,38 @@
     sub('/vla/status', 'std_msgs/msg/String', (msg) => {
       addVlaStatus(msg.data || '');
     });
+
+    // Voice subsystem status (wheeltec_mic + tts_make).
+    sub('/voice_flag', 'std_msgs/msg/Int8', (msg) => {
+      const el = $('voice-mic'); if (!el) return;
+      const ok = msg.data === 1 || msg.data === true;
+      el.textContent = ok ? '已初始化' : '未就绪';
+      el.classList.remove('ok', 'err');
+      el.classList.add(ok ? 'ok' : 'err');
+    });
+    sub('/awake_flag', 'std_msgs/msg/Int8', (msg) => {
+      const el = $('voice-awake'); if (!el) return;
+      const awake = msg.data === 1 || msg.data === true;
+      el.textContent = awake ? '已唤醒' : '休眠';
+      el.classList.remove('ok', 'warn');
+      el.classList.add(awake ? 'ok' : 'warn');
+    });
+    sub('/awake_angle', 'std_msgs/msg/UInt32', (msg) => {
+      const el = $('voice-angle'); if (el) el.textContent = msg.data + ' °';
+    });
+
+    // cmd_vel monitor → line-follow / KCF readouts (whatever drives the bus).
+    sub('/cmd_vel', 'geometry_msgs/msg/Twist', (msg) => {
+      const vx = (msg.linear && msg.linear.x) || 0;
+      const wz = (msg.angular && msg.angular.z) || 0;
+      const txt = `vx=${(+vx).toFixed(2)}, wz=${(+wz).toFixed(2)}`;
+      const a = $('line-cmd'); if (a) a.textContent = txt;
+      const b = $('kcf-cmd'); if (b) b.textContent = txt;
+    }, { throttle_rate: 100 });
+
+    // Lidar health (fused + per-sensor) and optional YOLO detections.
+    subscribeLidar();
+    subscribeYolo();
 
     // Build viewer + log subscription as part of the connection lifecycle.
     rebuildViewer();
@@ -435,63 +478,74 @@
     return null;
   }
 
-  function refreshParams() {
-    if (!ros) return;
-    const node = $('param-node').value.trim();
-    const names = Array.from(document.querySelectorAll('#param-list .param-row'))
-      .map((r) => r.dataset.param);
-    const req = new ROSLIB.ServiceRequest({ names });
-    paramService(node, 'get_parameters').callService(req, (res) => {
-      res.values.forEach((val, i) => {
-        const row = document.querySelector(`#param-list .param-row[data-param="${names[i]}"]`);
-        if (!row) return;
-        let v = null;
-        switch (val.type) {
-          case PT_INTEGER: v = val.integer_value; break;
-          case PT_DOUBLE:  v = val.double_value; break;
-          case PT_BOOL:    v = val.bool_value; break;
-          case PT_STRING:  v = val.string_value; break;
-          default: v = null;
-        }
-        // Auto-update data-type from the server's real type, so subsequent
-        // apply uses the right ParameterValue variant even if the HTML
-        // declared something else.
-        if (val.type && TYPE_NAME[val.type]) {
-          row.dataset.type = TYPE_NAME[val.type];
-        }
-        row.querySelector('.param-current').textContent =
-          v === null ? '(未设置)' : `${String(v)}  [${TYPE_NAME[val.type] || '?'}]`;
-        if (v !== null) row.querySelector('input').value = v;
+  // Generic parameter editor. Each `.param-group` carries its own node input
+  // (`.pg-node`), refresh button (`.pg-refresh`) and a set of
+  // `.param-row[data-param]` rows, so the same logic drives both the robot
+  // params (/wheeltec_robot) and the KCF PID params (/image_converter).
+  function initParamGroup(root) {
+    const nodeInput = root.querySelector('.pg-node');
+    if (!nodeInput) return;
+    const refreshBtn = root.querySelector('.pg-refresh');
+    const rows = () => Array.from(root.querySelectorAll('.param-row[data-param]'));
+
+    function refresh() {
+      if (!ros) { alert('未连接 rosbridge'); return; }
+      const node = nodeInput.value.trim();
+      const rs = rows();
+      const names = rs.map((r) => r.dataset.param);
+      const req = new ROSLIB.ServiceRequest({ names });
+      paramService(node, 'get_parameters').callService(req, (res) => {
+        res.values.forEach((val, i) => {
+          const row = rs[i];
+          if (!row) return;
+          let v = null;
+          switch (val.type) {
+            case PT_INTEGER: v = val.integer_value; break;
+            case PT_DOUBLE:  v = val.double_value; break;
+            case PT_BOOL:    v = val.bool_value; break;
+            case PT_STRING:  v = val.string_value; break;
+            default: v = null;
+          }
+          // Auto-update data-type from the server's real type, so subsequent
+          // apply uses the right ParameterValue variant even if the HTML
+          // declared something else.
+          if (val.type && TYPE_NAME[val.type]) row.dataset.type = TYPE_NAME[val.type];
+          row.querySelector('.param-current').textContent =
+            v === null ? '(未设置)' : `${String(v)}  [${TYPE_NAME[val.type] || '?'}]`;
+          if (v !== null) row.querySelector('input').value = v;
+        });
+      }, (err) => {
+        console.error('get_parameters failed', err);
+        alert('读取参数失败：' + err);
       });
-    }, (err) => {
-      console.error('get_parameters failed', err);
-      alert('读取参数失败：' + err);
+    }
+
+    if (refreshBtn) refreshBtn.addEventListener('click', refresh);
+
+    root.querySelectorAll('.param-apply').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (!ros) { alert('未连接 rosbridge'); return; }
+        const row = btn.closest('.param-row');
+        const name = row.dataset.param;
+        const typeName = row.dataset.type || 'double';
+        const raw = row.querySelector('input').value;
+        const value = buildParameterValue(typeName, raw);
+        if (!value) { alert(`无效 ${typeName} 值: "${raw}"`); return; }
+        const node = nodeInput.value.trim();
+        const req = new ROSLIB.ServiceRequest({ parameters: [{ name, value }] });
+        paramService(node, 'set_parameters').callService(req, (res) => {
+          const ok = res.results && res.results[0] && res.results[0].successful;
+          if (ok) {
+            row.querySelector('.param-current').textContent = `${String(raw)}  [${typeName}]`;
+          } else {
+            alert('设置失败：' + (res.results && res.results[0] && res.results[0].reason || '未知'));
+          }
+        }, (err) => alert('设置失败：' + err));
+      });
     });
   }
 
-  $('param-refresh').addEventListener('click', refreshParams);
-
-  document.querySelectorAll('#param-list .param-apply').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      if (!ros) { alert('未连接 rosbridge'); return; }
-      const row = btn.closest('.param-row');
-      const name = row.dataset.param;
-      const typeName = row.dataset.type || 'double';
-      const raw = row.querySelector('input').value;
-      const value = buildParameterValue(typeName, raw);
-      if (!value) { alert(`无效 ${typeName} 值: "${raw}"`); return; }
-      const node = $('param-node').value.trim();
-      const req = new ROSLIB.ServiceRequest({ parameters: [{ name, value }] });
-      paramService(node, 'set_parameters').callService(req, (res) => {
-        const ok = res.results && res.results[0] && res.results[0].successful;
-        if (ok) {
-          row.querySelector('.param-current').textContent = `${String(raw)}  [${typeName}]`;
-        } else {
-          alert('设置失败：' + (res.results && res.results[0] && res.results[0].reason || '未知'));
-        }
-      }, (err) => alert('设置失败：' + err));
-    });
-  });
+  document.querySelectorAll('.param-group').forEach(initParamGroup);
 
   // Populate the node datalist from ros.getNodes() each time we connect.
   function refreshNodeList() {
@@ -976,6 +1030,149 @@
   // Start streams once on load (they're independent of rosbridge).
   applyAllCams();
 
+  // ---------- Function-page MJPEG streams (line / KCF / YOLO) ----------
+  // These reuse the camera toolbar's port/quality/base settings through
+  // buildStreamUrl(), but each function page points its own <img> at a topic.
+  function applyFnStream(img) {
+    if (!img) return;
+    const topic = (img.dataset.topic || '').trim();
+    const frame = img.closest('.cam-frame');
+    const errEl = frame ? frame.querySelector('.cam-err') : null;
+    if (!topic) {
+      img.onerror = null;
+      img.src = CAM_PLACEHOLDER;
+      if (errEl) { errEl.hidden = false; errEl.textContent = '未设置 topic'; }
+      return;
+    }
+    img.onerror = () => {
+      img.onerror = null;
+      img.src = CAM_PLACEHOLDER;
+      if (errEl) { errEl.hidden = false; errEl.textContent = '无法加载流，检查 web_video_server 与话题'; }
+    };
+    img.onload = () => { if (errEl) errEl.hidden = true; };
+    img.src = buildStreamUrl(topic);
+  }
+  function applyAllFnStreams() {
+    document.querySelectorAll('.fn-img').forEach(applyFnStream);
+  }
+  document.querySelectorAll('.fn-topic').forEach((inp) => {
+    inp.addEventListener('change', () => {
+      const img = $(inp.dataset.img);
+      if (img) { img.dataset.topic = inp.value.trim(); applyFnStream(img); }
+    });
+  });
+  document.querySelectorAll('.fn-reload').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const img = $(btn.dataset.img);
+      if (img) applyFnStream(img);
+    });
+  });
+  // Keep function streams in sync when the shared camera port/quality changes.
+  camReload.addEventListener('click', applyAllFnStreams);
+  camPort.addEventListener('change', applyAllFnStreams);
+  camQuality.addEventListener('change', applyAllFnStreams);
+  if (camBase) camBase.addEventListener('change', applyAllFnStreams);
+  // Kick the default-visible line stream now; the rest start on tab switch.
+  applyFnStream($('line-stream'));
+
+  // ---------- Lidar status (double_lidar_fusion) ----------
+  const LIDAR_SRC = [
+    { key: 'fused', input: 'lidar-fused', def: '/scan' },
+    { key: 's1', input: 'lidar-scan1', def: '/scan1' },
+    { key: 's2', input: 'lidar-scan2', def: '/scan2' },
+  ];
+
+  function subscribeLidar() {
+    lidarSubs.forEach((t) => { try { t.unsubscribe(); } catch (_) { /* ignore */ } });
+    lidarSubs = [];
+    if (!ros) return;
+    LIDAR_SRC.forEach((src) => {
+      const el = $(src.input);
+      const topic = ((el && el.value) || src.def).trim();
+      if (!topic) return;
+      const t = new ROSLIB.Topic({
+        ros, name: topic, messageType: 'sensor_msgs/msg/LaserScan',
+        throttle_rate: 200, queue_length: 1,
+      });
+      t.subscribe((msg) => {
+        const ranges = msg.ranges || [];
+        let n = 0, min = Infinity;
+        for (let i = 0; i < ranges.length; i++) {
+          const r = ranges[i];
+          if (isFinite(r) && r >= msg.range_min && r <= msg.range_max) {
+            n++;
+            if (r < min) min = r;
+          }
+        }
+        lidarLast[src.key] = { time: Date.now(), points: n, min: isFinite(min) ? min : null };
+      });
+      lidarSubs.push(t);
+    });
+  }
+
+  function updateLidarUI() {
+    LIDAR_SRC.forEach((src) => {
+      const el = $('lidar-' + (src.key === 'fused' ? 'fused-val' : (src.key === 's1' ? 's1-val' : 's2-val')));
+      if (!el) return;
+      const last = lidarLast[src.key];
+      const online = last && (Date.now() - last.time < 1500);
+      el.classList.remove('ok', 'err');
+      if (online) { el.textContent = `在线 · ${last.points} 点`; el.classList.add('ok'); }
+      else { el.textContent = '离线'; el.classList.add('err'); }
+    });
+    const minEl = $('lidar-fused-min');
+    if (minEl) {
+      const last = lidarLast.fused;
+      const online = last && (Date.now() - last.time < 1500);
+      minEl.classList.remove('warn', 'err');
+      if (online && last.min != null) {
+        minEl.textContent = last.min.toFixed(2) + ' m';
+        if (last.min < 0.3) minEl.classList.add('err');
+        else if (last.min < 0.6) minEl.classList.add('warn');
+      } else {
+        minEl.textContent = '— m';
+      }
+    }
+  }
+  setInterval(updateLidarUI, 500);
+  const lidarApplyBtn = $('lidar-apply');
+  if (lidarApplyBtn) lidarApplyBtn.addEventListener('click', subscribeLidar);
+
+  // ---------- YOLO detections (optional external node) ----------
+  function renderYolo(msg) {
+    const view = $('yolo-detections');
+    if (!view) return;
+    const dets = (msg && msg.detections) || [];
+    const countEl = $('yolo-det-count');
+    if (countEl) countEl.textContent = dets.length + ' 个目标';
+    view.innerHTML = dets.map((d) => {
+      const res = (d.results && d.results[0]) || null;
+      let label = '?', score = 0;
+      if (res) {
+        // vision_msgs changed shape across versions: newer nests a
+        // `hypothesis` (class_id/score), older is flat (id/score).
+        const h = res.hypothesis || res;
+        label = (h.class_id != null) ? h.class_id : (h.id != null ? h.id : '?');
+        score = (h.score != null) ? h.score : 0;
+      }
+      return `<div class="yolo-det-row"><span class="yd-label">${escapeHTML(String(label))}</span>` +
+        `<span class="yd-score">${(Number(score) * 100).toFixed(0)}%</span></div>`;
+    }).join('');
+  }
+  function subscribeYolo() {
+    if (yoloDetSub) { try { yoloDetSub.unsubscribe(); } catch (_) { /* ignore */ } yoloDetSub = null; }
+    if (!ros) return;
+    const el = $('yolo-det-topic');
+    const topic = ((el && el.value) || '').trim();
+    if (!topic) return;
+    yoloDetSub = new ROSLIB.Topic({
+      ros, name: topic, messageType: 'vision_msgs/msg/Detection2DArray', throttle_rate: 200,
+    });
+    yoloDetSub.subscribe(renderYolo);
+  }
+  const yoloApplyBtn = $('yolo-det-apply');
+  if (yoloApplyBtn) yoloApplyBtn.addEventListener('click', subscribeYolo);
+
   // ---------- VLA voice navigation ----------
   const VLA_MAX_LINES = 200;
 
@@ -1027,6 +1224,14 @@
   if (ttsSendBtn) ttsSendBtn.addEventListener('click', () => sendTts(ttsInput.value));
   if (ttsInput) ttsInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { sendTts(ttsInput.value); ttsInput.value = ''; }
+  });
+
+  // Voice-component TTS box (各组件状态) shares the same /tts_text publisher.
+  const voiceTtsInput = $('voice-tts-input');
+  const voiceTtsSend = $('voice-tts-send');
+  if (voiceTtsSend) voiceTtsSend.addEventListener('click', () => sendTts(voiceTtsInput.value));
+  if (voiceTtsInput) voiceTtsInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { sendTts(voiceTtsInput.value); voiceTtsInput.value = ''; }
   });
 
   const vlaClearBtn = $('vla-clear');
@@ -1146,32 +1351,50 @@
     logView.innerHTML = '';
   });
 
-  // ---------- Navigation tabs ----------
-  // Group cards into the five top-nav sections. Switching just toggles a
-  // CSS class; every card stays in the DOM so all ROS wiring (which looks
-  // elements up by id) keeps working whether or not its tab is visible.
-  (function initTabs() {
-    const navBtns = Array.from(document.querySelectorAll('.tab-btn'));
-    const panels = Array.from(document.querySelectorAll('.tab-panel'));
-
-    function activate(tab) {
-      if (!navBtns.some((b) => b.dataset.tab === tab)) return;
-      navBtns.forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-      panels.forEach((p) => p.classList.toggle('active', p.id === 'panel-' + tab));
-      // Chart.js canvases and the three.js viewer size to their container,
-      // which reads as 0×0 while the panel is display:none. Nudging a resize
-      // once the panel is visible makes them re-measure and fill the space.
-      window.dispatchEvent(new Event('resize'));
+  // ---------- Navigation (top tabs + function sub-tabs) ----------
+  // Switching just toggles a CSS class; every card stays in the DOM so all
+  // ROS wiring (which looks elements up by id) keeps working whether or not
+  // its tab is visible.
+  (function initNav() {
+    function initTabGroup(opts) {
+      const btns = Array.from(document.querySelectorAll(opts.btnSel));
+      function activate(val) {
+        if (!btns.some((b) => b.dataset[opts.key] === val)) return;
+        btns.forEach((b) => b.classList.toggle('active', b.dataset[opts.key] === val));
+        Array.from(document.querySelectorAll(opts.panelSel))
+          .forEach((p) => p.classList.toggle('active', p.id === opts.prefix + val));
+        // Chart.js canvases and the three.js viewer size to their container,
+        // which reads as 0×0 while the panel is display:none. Nudging a resize
+        // once the panel is visible makes them re-measure and fill the space.
+        window.dispatchEvent(new Event('resize'));
+        if (opts.onActivate) opts.onActivate(val);
+      }
+      btns.forEach((b) => b.addEventListener('click', () => {
+        activate(b.dataset[opts.key]);
+        if (opts.hash) {
+          try { history.replaceState(null, '', '#' + b.dataset[opts.key]); } catch (_) { /* ignore */ }
+        }
+      }));
+      return activate;
     }
 
-    navBtns.forEach((b) => b.addEventListener('click', () => {
-      activate(b.dataset.tab);
-      try { history.replaceState(null, '', '#' + b.dataset.tab); } catch (_) { /* ignore */ }
-    }));
+    // Function sub-tabs: re-apply the sub-page's MJPEG stream when it becomes
+    // visible (an <img> in a display:none parent may never have fetched).
+    initTabGroup({
+      btnSel: '.subtab-btn', key: 'subtab', panelSel: '.subtab-panel', prefix: 'subpanel-',
+      onActivate: (val) => {
+        const img = document.querySelector('#subpanel-' + val + ' .fn-img');
+        if (img) applyFnStream(img);
+      },
+    });
 
-    // Allow deep-linking to a tab via #hash (e.g. .../#control).
+    const activateTop = initTabGroup({
+      btnSel: '.tab-btn', key: 'tab', panelSel: '.tab-panel', prefix: 'panel-', hash: true,
+    });
+
+    // Allow deep-linking to a top tab via #hash (e.g. .../#control).
     const initial = (location.hash || '').replace(/^#/, '');
-    if (initial) activate(initial);
+    if (initial) activateTop(initial);
   })();
 
   // Auto-connect on load.

@@ -36,7 +36,7 @@
     <!-- ============ 系统总览 ============ -->
     <div class="tab-panel active" id="panel-overview">
       <section class="card card-wide">
-        <h2>3D 视图 <span class="muted">(three.js)</span></h2>
+        <h2>3D 视图 <span class="muted">(three.js · 雷达)</span></h2>
         <div class="viewer-controls">
           <label>Fixed frame
             <input id="vw-fixed" type="text" value="odom_combined" />
@@ -52,7 +52,7 @@
         </div>
         <div id="viewer" class="viewer"></div>
         <div id="viewer-status" class="viewer-status"></div>
-        <p class="hint">图层：Grid / 坐标轴 / LaserScan(<code>/scan</code>) / Odom 轨迹。TF 直接订阅 <code>/tf</code>+<code>/tf_static</code>，无需 tf2_web_republisher。双雷达单台故障时可把 <code>/scan</code> 改成 <code>/scan2</code> 看单雷达。</p>
+        <p class="hint">图层：Grid / 坐标轴 / LaserScan(<code>/scan</code>) / Odom 轨迹。TF 直接订阅 <code>/tf</code>+<code>/tf_static</code>，无需 tf2_web_republisher。融合输出 <code>/scan</code> 来自 double_lidar_fusion；单台故障时可把 <code>/scan</code> 改成 <code>/scan1</code> 或 <code>/scan2</code> 看单雷达。</p>
       </section>
 
       <section class="card">
@@ -105,6 +105,41 @@
     <!-- ============ 各组件状态 ============ -->
     <div class="tab-panel" id="panel-components">
       <section class="card">
+        <h2>雷达 <span class="muted">(double_lidar_fusion)</span></h2>
+        <div class="lidar-cfg">
+          <label>融合
+            <input id="lidar-fused" type="text" value="/scan" />
+          </label>
+          <label>雷达1
+            <input id="lidar-scan1" type="text" value="/scan1" />
+          </label>
+          <label>雷达2
+            <input id="lidar-scan2" type="text" value="/scan2" />
+          </label>
+          <button id="lidar-apply">应用</button>
+        </div>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">融合 /scan</div>
+            <div id="lidar-fused-val" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">最近障碍</div>
+            <div id="lidar-fused-min" class="metric-value">— m</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">雷达1 /scan1</div>
+            <div id="lidar-s1-val" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">雷达2 /scan2</div>
+            <div id="lidar-s2-val" class="metric-value">—</div>
+          </div>
+        </div>
+        <p class="hint">double_lidar_fusion 订阅 <code>/scan1</code>+<code>/scan2</code> 融合为 <code>/scan</code>（360°）。某台离线时自动只用在线雷达；两台都离线则停止输出。点云可视化见"系统总览"的 3D 视图。</p>
+      </section>
+
+      <section class="card">
         <h2>超声波 (m)</h2>
         <div id="sonar-grid" class="sonar-grid">
           <div class="sonar"><span class="sl">A</span><span id="s-a" class="sv">—</span></div>
@@ -114,6 +149,74 @@
           <div class="sonar"><span class="sl">E</span><span id="s-e" class="sv">—</span></div>
           <div class="sonar"><span class="sl">F</span><span id="s-f" class="sv">—</span></div>
         </div>
+      </section>
+
+      <section class="card">
+        <h2>语音组件 <span class="muted">(wheeltec_mic)</span></h2>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">麦克风 (/voice_flag)</div>
+            <div id="voice-mic" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">唤醒 (/awake_flag)</div>
+            <div id="voice-awake" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">声源角度 (/awake_angle)</div>
+            <div id="voice-angle" class="metric-value">— °</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">最近识别 (/voice_words)</div>
+            <div id="voice-words" class="metric-value">—</div>
+          </div>
+        </div>
+        <div class="vla-row">
+          <input id="voice-tts-input" type="text" placeholder="让小车说话…（发布到 /tts_text）" />
+          <button id="voice-tts-send">播报</button>
+        </div>
+        <p class="hint">来自 wheeltec_mic：唤醒 <code>/awake_flag</code>、声源角 <code>/awake_angle</code>、识别 <code>/voice_words</code>；播报经 tts_make 订阅 <code>/tts_text</code>。需先启动麦克风语音 launch（如 <code>mic_init.launch.py</code> / <code>base.launch.py</code>）。</p>
+      </section>
+
+      <section class="card card-wide">
+        <h2>相机 <span class="muted">(web_video_server MJPEG)</span></h2>
+        <div class="cam-toolbar">
+          <label>video_server 端口
+            <input id="cam-port" type="number" value="8081" min="1" max="65535" />
+          </label>
+          <label>画质 (1-100)
+            <input id="cam-quality" type="number" value="60" min="1" max="100" />
+          </label>
+          <label class="cam-base-wrap">Base URL (覆盖端口)
+            <input id="cam-base" type="text" placeholder="例如 https://robot.example/video" />
+          </label>
+          <button id="cam-reload">刷新</button>
+        </div>
+        <div class="cam-grid">
+          <div class="cam-tile">
+            <div class="cam-head">
+              <span>车上相机</span>
+              <input class="cam-topic" data-slot="car" type="text" value="/camera/color/image_raw" />
+              <label class="cam-check"><input type="checkbox" class="cam-enable" data-slot="car" checked /> 启用</label>
+            </div>
+            <div class="cam-frame">
+              <img class="cam-img" data-slot="car" src="placeholder.svg" alt="car camera" />
+              <div class="cam-err" data-slot="car" hidden>无法加载流</div>
+            </div>
+          </div>
+          <div class="cam-tile">
+            <div class="cam-head">
+              <span>机械臂相机</span>
+              <input class="cam-topic" data-slot="arm" type="text" value="/camera_arm/color/image_raw" />
+              <label class="cam-check"><input type="checkbox" class="cam-enable" data-slot="arm" checked /> 启用</label>
+            </div>
+            <div class="cam-frame">
+              <img class="cam-img" data-slot="arm" src="placeholder.svg" alt="arm camera" />
+              <div class="cam-err" data-slot="arm" hidden>无法加载流</div>
+            </div>
+          </div>
+        </div>
+        <p class="hint">流从 <code>http://&lt;host&gt;:&lt;port&gt;/stream?topic=...</code> 拉取。astra_camera 默认发布车上 <code>/camera/color/image_raw</code> 与机械臂 <code>/camera_arm/color/image_raw</code>（含 depth/ir）。深度流把 topic 改成 <code>/camera/depth/image_raw</code> 即可。</p>
       </section>
 
       <section class="card card-wide">
@@ -182,11 +285,11 @@
 
       <section class="card card-wide">
         <h2>参数 (/wheeltec_robot)</h2>
-        <div class="params">
+        <div class="params param-group">
           <div class="param-row">
             <label>节点</label>
-            <input id="param-node" type="text" value="/wheeltec_robot" list="node-list" />
-            <button id="param-refresh">读取当前值</button>
+            <input id="param-node" class="pg-node" type="text" value="/wheeltec_robot" list="node-list" />
+            <button id="param-refresh" class="pg-refresh">读取当前值</button>
           </div>
           <datalist id="node-list"></datalist>
           <div id="param-list">
@@ -222,83 +325,183 @@
 
     <!-- ============ 功能模块 ============ -->
     <div class="tab-panel" id="panel-function">
-      <section class="card card-wide">
-        <h2>VLA 语音导航 <span class="muted">(/vla)</span></h2>
-        <div class="vla">
-          <div class="vla-row">
-            <input id="vla-instr" type="text" placeholder="输入导航指令，如：去厨房 / 向前一米然后左转" />
-            <button id="vla-send">发送指令</button>
+      <nav class="subtabs" id="function-subnav">
+        <button class="subtab-btn active" data-subtab="line">巡线</button>
+        <button class="subtab-btn" data-subtab="kcf">KCF 跟踪</button>
+        <button class="subtab-btn" data-subtab="yolo">YOLO 检测</button>
+        <button class="subtab-btn" data-subtab="vla">VLA 语音导航</button>
+      </nav>
+
+      <!-- 巡线 -->
+      <div class="subtab-panel active" id="subpanel-line">
+        <section class="card card-wide">
+          <h2>巡线 <span class="muted">(simple_follower_ros2)</span></h2>
+          <div class="fn-stream-toolbar">
+            <label>相机话题
+              <input class="fn-topic" data-img="line-stream" type="text" value="/camera/color/image_raw" />
+            </label>
+            <button class="fn-reload" data-img="line-stream">刷新</button>
           </div>
-          <div class="vla-quick">
-            <button class="vla-q" data-instr="去厨房">去厨房</button>
-            <button class="vla-q" data-instr="去充电桩">去充电桩</button>
-            <button class="vla-q" data-instr="去门口">去门口</button>
-            <button class="vla-q" data-instr="去原点">去原点</button>
-            <button class="vla-q vla-q-stop" data-instr="停">停</button>
+          <div class="cam-frame fn-frame">
+            <img id="line-stream" class="cam-img fn-img" data-topic="/camera/color/image_raw" src="placeholder.svg" alt="line camera" />
+            <div class="cam-err" hidden>无法加载流</div>
           </div>
           <div class="grid">
             <div class="metric">
-              <div class="metric-label">最近识别 (/voice_words)</div>
-              <div id="vla-heard" class="metric-value">—</div>
-            </div>
-            <div class="metric">
-              <div class="metric-label">语音播报 (/tts_text)</div>
-              <div id="vla-say" class="metric-value">—</div>
+              <div class="metric-label">当前 /cmd_vel</div>
+              <div id="line-cmd" class="metric-value">vx=0.00, wz=0.00</div>
             </div>
           </div>
-          <div class="vla-row">
-            <input id="tts-input" type="text" placeholder="让小车说话…（发布到 /tts_text）" />
-            <button id="tts-send">播报</button>
-          </div>
-          <div class="vla-timeline-head">
-            <span>VLA 时间线 <span class="muted">(/vla/status)</span></span>
-            <button id="vla-clear">清空</button>
-          </div>
-          <div id="vla-timeline" class="vla-timeline"></div>
-        </div>
-        <p class="hint">指令发布到 <code>/vla/instruction</code>；麦克风识别走 <code>/voice_words</code>。决策与导航状态来自 <code>/vla/status</code>，目标点见 RViz 或 <code>/goal_pose</code>。需先启动 <code>vla_navigator</code> 节点与 rosbridge。</p>
-      </section>
+          <p class="hint">启动：<code>ros2 launch simple_follower_ros2 line_follower.launch.py</code>。节点 <code>line_follow</code> 订阅 <code>/camera/color/image_raw</code>，按 HSV 颜色巡线并输出 <code>/cmd_vel</code>；巡线颜色（红/绿/蓝/黄/黑）在机器人端 OpenCV 窗口的 trackbar 选择。本页用 web_video_server 预览相机并显示底盘指令。</p>
+        </section>
+      </div>
 
-      <section class="card card-wide">
-        <h2>相机 <span class="muted">(web_video_server MJPEG)</span></h2>
-        <div class="cam-toolbar">
-          <label>video_server 端口
-            <input id="cam-port" type="number" value="8081" min="1" max="65535" />
-          </label>
-          <label>画质 (1-100)
-            <input id="cam-quality" type="number" value="60" min="1" max="100" />
-          </label>
-          <label class="cam-base-wrap">Base URL (覆盖端口)
-            <input id="cam-base" type="text" placeholder="例如 https://robot.example/video" />
-          </label>
-          <button id="cam-reload">刷新</button>
-        </div>
-        <div class="cam-grid">
-          <div class="cam-tile">
-            <div class="cam-head">
-              <span>车上相机</span>
-              <input class="cam-topic" data-slot="car" type="text" value="/camera/color/image_raw" />
-              <label class="cam-check"><input type="checkbox" class="cam-enable" data-slot="car" checked /> 启用</label>
-            </div>
-            <div class="cam-frame">
-              <img class="cam-img" data-slot="car" src="placeholder.svg" alt="car camera" />
-              <div class="cam-err" data-slot="car" hidden>无法加载流</div>
+      <!-- KCF 跟踪 -->
+      <div class="subtab-panel" id="subpanel-kcf">
+        <section class="card card-wide">
+          <h2>KCF 跟踪画面 <span class="muted">(/KCF_image)</span></h2>
+          <div class="fn-stream-toolbar">
+            <label>跟踪画面话题
+              <input class="fn-topic" data-img="kcf-stream" type="text" value="/KCF_image" />
+            </label>
+            <button class="fn-reload" data-img="kcf-stream">刷新</button>
+          </div>
+          <div class="cam-frame fn-frame">
+            <img id="kcf-stream" class="cam-img fn-img" data-topic="/KCF_image" src="placeholder.svg" alt="kcf tracking" />
+            <div class="cam-err" hidden>无法加载流</div>
+          </div>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">当前 /cmd_vel</div>
+              <div id="kcf-cmd" class="metric-value">vx=0.00, wz=0.00</div>
             </div>
           </div>
-          <div class="cam-tile">
-            <div class="cam-head">
-              <span>机械臂相机</span>
-              <input class="cam-topic" data-slot="arm" type="text" value="/camera_arm/color/image_raw" />
-              <label class="cam-check"><input type="checkbox" class="cam-enable" data-slot="arm" checked /> 启用</label>
+          <p class="hint">启动：<code>ros2 launch wheeltec_robot_kcf wheeltec_robot_kcf.launch.py</code>。目标框需在机器人端 OpenCV 窗口用鼠标框选；标注画面发布到 <code>/KCF_image</code>，跟踪输出 <code>/cmd_vel</code>。</p>
+        </section>
+
+        <section class="card card-wide">
+          <h2>KCF 参数 <span class="muted">(/image_converter)</span></h2>
+          <div class="params param-group">
+            <div class="param-row">
+              <label>节点</label>
+              <input class="pg-node" type="text" value="/image_converter" list="node-list" />
+              <button class="pg-refresh">读取当前值</button>
             </div>
-            <div class="cam-frame">
-              <img class="cam-img" data-slot="arm" src="placeholder.svg" alt="arm camera" />
-              <div class="cam-err" data-slot="arm" hidden>无法加载流</div>
+            <div>
+              <div class="param-row" data-param="targetDist_" data-type="double">
+                <label>targetDist_ (m)</label>
+                <input type="number" step="0.05" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="linear_KP_" data-type="double">
+                <label>linear_KP_</label>
+                <input type="number" step="0.1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="linear_KI_" data-type="double">
+                <label>linear_KI_</label>
+                <input type="number" step="0.1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="linear_KD_" data-type="double">
+                <label>linear_KD_</label>
+                <input type="number" step="0.1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="angular_KP_" data-type="double">
+                <label>angular_KP_</label>
+                <input type="number" step="0.1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="angular_KI_" data-type="double">
+                <label>angular_KI_</label>
+                <input type="number" step="0.1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="angular_KD_" data-type="double">
+                <label>angular_KD_</label>
+                <input type="number" step="0.1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
             </div>
+            <p class="hint">距离 / 转向 PID 可在此实时调参（等价 <code>ros2 param set /image_converter ...</code>）。先点"读取当前值"拉取，再修改"应用"。线速度/角速度在节点内被限制在 ±0.35。</p>
           </div>
-        </div>
-        <p class="hint">流从 <code>http://&lt;host&gt;:&lt;port&gt;/stream?topic=...</code> 拉取。若没启动 <code>astra_camera</code> 节点，画面会显示加载失败。深度流也支持，把 topic 换成 <code>/camera/depth/image_raw</code> 即可。</p>
-      </section>
+        </section>
+      </div>
+
+      <!-- YOLO 检测 -->
+      <div class="subtab-panel" id="subpanel-yolo">
+        <section class="card card-wide">
+          <h2>YOLO 检测 <span class="muted">(通用查看器 · 需自行部署节点)</span></h2>
+          <div class="fn-stream-toolbar">
+            <label>图像话题
+              <input class="fn-topic" data-img="yolo-stream" type="text" value="/camera/color/image_raw" />
+            </label>
+            <label>检测话题
+              <input id="yolo-det-topic" type="text" value="/yolo/detections" />
+            </label>
+            <button class="fn-reload" data-img="yolo-stream">刷新画面</button>
+            <button id="yolo-det-apply">订阅检测</button>
+          </div>
+          <div class="cam-frame fn-frame">
+            <img id="yolo-stream" class="cam-img fn-img" data-topic="/camera/color/image_raw" src="placeholder.svg" alt="yolo" />
+            <div class="cam-err" hidden>无法加载流</div>
+          </div>
+          <div class="yolo-det-head">
+            <span>检测结果</span>
+            <span id="yolo-det-count" class="muted">0 个目标</span>
+          </div>
+          <div id="yolo-detections" class="yolo-detections"></div>
+          <p class="hint">注意：本仓库未内置 YOLO 节点，此页为通用查看器。若另行部署了发布 <code>vision_msgs/msg/Detection2DArray</code> 的检测节点（默认话题 <code>/yolo/detections</code>），这里会列出类别与置信度；把"图像话题"指向检测节点输出的标注流即可看带框画面。</p>
+        </section>
+      </div>
+
+      <!-- VLA 语音导航 -->
+      <div class="subtab-panel" id="subpanel-vla">
+        <section class="card card-wide">
+          <h2>VLA 语音导航 <span class="muted">(/vla)</span></h2>
+          <div class="vla">
+            <div class="vla-row">
+              <input id="vla-instr" type="text" placeholder="输入导航指令，如：去厨房 / 向前一米然后左转" />
+              <button id="vla-send">发送指令</button>
+            </div>
+            <div class="vla-quick">
+              <button class="vla-q" data-instr="去厨房">去厨房</button>
+              <button class="vla-q" data-instr="去充电桩">去充电桩</button>
+              <button class="vla-q" data-instr="去门口">去门口</button>
+              <button class="vla-q" data-instr="去原点">去原点</button>
+              <button class="vla-q vla-q-stop" data-instr="停">停</button>
+            </div>
+            <div class="grid">
+              <div class="metric">
+                <div class="metric-label">最近识别 (/voice_words)</div>
+                <div id="vla-heard" class="metric-value">—</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">语音播报 (/tts_text)</div>
+                <div id="vla-say" class="metric-value">—</div>
+              </div>
+            </div>
+            <div class="vla-row">
+              <input id="tts-input" type="text" placeholder="让小车说话…（发布到 /tts_text）" />
+              <button id="tts-send">播报</button>
+            </div>
+            <div class="vla-timeline-head">
+              <span>VLA 时间线 <span class="muted">(/vla/status)</span></span>
+              <button id="vla-clear">清空</button>
+            </div>
+            <div id="vla-timeline" class="vla-timeline"></div>
+          </div>
+          <p class="hint">指令发布到 <code>/vla/instruction</code>；麦克风识别走 <code>/voice_words</code>。决策与导航状态来自 <code>/vla/status</code>，目标点见 RViz 或 <code>/goal_pose</code>。需先启动 <code>vla_navigator</code> 节点与 rosbridge。</p>
+        </section>
+      </div>
     </div>
 
     <!-- ============ 联系作者 ============ -->
@@ -309,7 +512,7 @@
           <div class="contact-avatar">W</div>
           <div class="contact-body">
             <div class="contact-name">Wheeltec S300 Dashboard</div>
-            <p class="contact-desc">面向 Wheeltec S300 机器人的轻量级 Web 仪表盘：实时遥测、底盘控制、参数调节、3D 视图、相机预览、日志与 VLA 语音导航，全部通过 rosbridge 与 ROS 2 通信。</p>
+            <p class="contact-desc">面向 Wheeltec S300 机器人的轻量级 Web 仪表盘：实时遥测、底盘控制、参数调节、3D 视图、相机预览、日志，以及巡线 / KCF / YOLO / VLA 等功能模块，全部通过 rosbridge 与 ROS 2 通信。</p>
             <ul class="contact-list">
               <li><span class="ck">项目仓库</span><a href="https://github.com/heisd/wheeltec_s300" target="_blank" rel="noopener">github.com/heisd/wheeltec_s300</a></li>
               <li><span class="ck">维护者</span><span>heisd</span></li>
