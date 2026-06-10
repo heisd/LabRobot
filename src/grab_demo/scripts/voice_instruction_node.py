@@ -18,6 +18,7 @@ VLM 节点(vlm_grab_node) **无需任何改动** —— 它照常订阅 /vlm/ins
     # 或   pip install sounddevice openai-whisper
 """
 
+import re
 import threading
 import time
 
@@ -49,7 +50,22 @@ class VoiceInstructionNode(Node):
         self.status_topic = self.declare_parameter("status_topic", "/voice/status").value
         self.publish_to_instruction = bool(
             self.declare_parameter("publish_to_instruction", True).value)
-        self.min_text_len = int(self.declare_parameter("min_text_len", 1).value)
+
+        # ---- 输入/输出 安全约束(与 VLM 节点同思路) ----
+        self.min_text_len = int(self.declare_parameter("min_text_len", 2).value)   # 太短丢弃
+        self.max_text_len = int(self.declare_parameter("max_text_len", 100).value)  # 超长截断
+        # 发往 VLM 的最小间隔(秒): 限制输出频率, 防止连续触发
+        self.min_publish_interval = float(self.declare_parameter("min_publish_interval", 1.5).value)
+        # 置信度门槛(faster-whisper): 平均对数概率过低 / 无语音概率过高 -> 丢弃
+        self.min_avg_logprob = float(self.declare_parameter("min_avg_logprob", -1.0).value)
+        self.max_no_speech_prob = float(self.declare_parameter("max_no_speech_prob", 0.6).value)
+        # 幻听短语黑名单: 静音/噪声时 Whisper 常吐这些, 命中则丢弃(可按需增减)
+        self.drop_phrases = list(self.declare_parameter(
+            "drop_phrases",
+            ["谢谢观看", "请不吝点赞订阅转发打赏支持明镜与点点栏目",
+             "字幕by", "字幕志愿者", "明镜需要您的支持", "请订阅", "下次见", "thank you"]).value)
+        self._drop_set = set(p.strip().lower() for p in self.drop_phrases if p)
+        self._last_pub_time = 0.0
 
         # ---- ASR 后端 ----
         self.backend = str(self.declare_parameter("backend", "faster-whisper").value)
@@ -228,19 +244,57 @@ class VoiceInstructionNode(Node):
             lang = self.language or None
             if self.backend == "faster-whisper":
                 segments, _info = self._model.transcribe(audio, language=lang, beam_size=1)
-                return "".join(seg.text for seg in segments).strip()
+                segs = list(segments)
+                if not segs:
+                    return ""
+                text = "".join(seg.text for seg in segs).strip()
+                # 输入质量约束: 置信度过低(多半是噪声/静音幻听)直接丢弃
+                avg_lp = sum(getattr(s, "avg_logprob", 0.0) for s in segs) / len(segs)
+                nsp = max((getattr(s, "no_speech_prob", 0.0) for s in segs), default=0.0)
+                if avg_lp < self.min_avg_logprob or nsp > self.max_no_speech_prob:
+                    self.get_logger().info(
+                        "丢弃低置信度识别(avg_logprob=%.2f no_speech=%.2f): %s" % (avg_lp, nsp, text))
+                    return ""
+                return text
             res = self._model.transcribe(audio, language=lang, fp16=(self.device != "cpu"))
             return str(res.get("text", "")).strip()
         except Exception as e:  # noqa: BLE001
             self.get_logger().error("语音转写失败: %s" % e, throttle_duration_sec=2.0)
             return ""
 
+    @staticmethod
+    def _sanitize(text):
+        # 输出约束: 去控制字符 + 合并空白
+        text = re.sub(r"[\x00-\x1f\x7f]", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
     def _publish_text(self, text):
-        self.text_pub.publish(String(data=text))
+        text = self._sanitize(text)
+        # 输出约束: 长度下限(防噪点) / 幻听短语黑名单
+        if len(text) < self.min_text_len:
+            self.get_logger().info("识别结果过短, 丢弃: '%s'" % text)
+            return
+        if text.strip().lower() in self._drop_set:
+            self.get_logger().info("命中幻听黑名单, 丢弃: '%s'" % text)
+            return
+        # 输出约束: 长度上限(截断), 避免把超长串喂给 VLM
+        if len(text) > self.max_text_len:
+            self.get_logger().warn("识别结果超 %d 字, 已截断" % self.max_text_len)
+            text = text[:self.max_text_len]
+
+        self.text_pub.publish(String(data=text))   # 给 Dashboard 显示(不受频率限制)
         self.get_logger().info("识别到: %s" % text)
-        if self.publish_to_instruction and len(text) >= self.min_text_len:
-            self.instr_pub.publish(String(data=text))
-            self.get_logger().info("已转为指令发往 %s" % self.instruction_topic)
+
+        if not self.publish_to_instruction:
+            return
+        # 输出约束: 频率限制, 两条指令间至少间隔 min_publish_interval 秒
+        now = time.time()
+        if now - self._last_pub_time < self.min_publish_interval:
+            self.get_logger().info("距上一条指令过近(<%.1fs), 不重复发往 VLM" % self.min_publish_interval)
+            return
+        self._last_pub_time = now
+        self.instr_pub.publish(String(data=text))
+        self.get_logger().info("已转为指令发往 %s" % self.instruction_topic)
 
 
 def main(args=None):

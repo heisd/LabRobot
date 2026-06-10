@@ -88,8 +88,32 @@ ros2 topic pub --once /voice/enable std_msgs/Bool "{data: false}"   # 关
 | `min_speech_sec` / `max_speech_sec` | `0.3` / `12` | 一句话最短/最长 |
 | `listen_timeout` | `8.0` | 【说一句】等待开口的上限(秒) |
 | `enabled` | `true` | 是否持续聆听 |
+| `min_text_len` / `max_text_len` | `2` / `100` | **输出约束**: 识别文字过短丢弃 / 超长截断 |
+| `min_publish_interval` | `1.5` | **输出约束**: 两条指令最小间隔(秒), 限制触发频率 |
+| `min_avg_logprob` | `-1.0` | **输入约束**: 平均对数概率门槛(faster-whisper), 过低=噪声幻听则丢弃 |
+| `max_no_speech_prob` | `0.6` | **输入约束**: 无语音概率上限, 过高则丢弃 |
+| `drop_phrases` | 一组常见幻听 | **输出约束**: 命中黑名单(如"谢谢观看")直接丢弃 |
 
-## 七、和其它能力的关系
+## 七、输入 / 输出 安全约束(已内置)
+
+语音模块和 VLM 节点同思路, 在"听"和"发"两端都做了约束, 避免噪声/口误触发机械臂:
+
+**输入端(听到的)**:
+- **时长约束**: 一句话短于 `min_speech_sec` 或长于 `max_speech_sec` 不处理(`max` 同时是录音硬上限);
+- **能量门槛**: 低于 `vad_threshold` 的环境音不触发分句;
+- **置信度门槛**(faster-whisper): 平均对数概率 < `min_avg_logprob` 或 无语音概率 > `max_no_speech_prob`
+  的结果(多半是静音/噪声幻听)直接丢弃。
+
+**输出端(发出去的)**:
+- **清洗**: 去除控制字符、合并多余空白;
+- **长度**: 短于 `min_text_len` 丢弃; 超 `max_text_len` 截断后再发;
+- **幻听黑名单**: 命中 `drop_phrases`(如"谢谢观看""请订阅"等 Whisper 常见幻听)直接丢弃;
+- **频率限制**: 两条发往 `/vlm/instruction` 的指令至少间隔 `min_publish_interval` 秒, 防止连续误触发。
+
+> 进一步的"指令长度上限 / 距离范围 / 抓取二次确认 / 手动接管打断"等约束, 由下游 VLM 与仲裁继续把关
+> (见 `VLM_GUIDE.md` 安全加固、`ARBITER_GUIDE.md`)。两层约束叠加, 语音误识别也不会乱抓。
+
+## 八、和其它能力的关系
 
 - 识别文字走的就是 VLM 的指令入口，所以 VLM 的**安全二次确认 / 仲裁(手动接管打断) / 闭环抓取**全都生效：
   说"把瓶子递给我" → VLM 理解 → 默认等你点【确认抓取】→ 闭环抓取；手动接管会随时打断。
