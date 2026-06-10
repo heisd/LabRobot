@@ -1,24 +1,27 @@
-# lebai 工作空间（src）
+# Lebai LM3 机械臂（src/）
 
-本目录是 **乐白（Lebai）LM3 机械臂** 的 ROS 2（Humble）工作空间源码目录，集成了官方 SDK、
-机械臂运动学示例、多种视觉抓取方案以及 Gazebo 仿真场景。配合移动底盘（wheeltec），可实现
-"移动 + 视觉识别 + 机械臂抓取" 的完整流程。
+**乐白（Lebai）LM3 机械臂** 部分，基于 ROS 2（Humble）开发，集成了官方 SDK、
+机械臂运动学示例、多种视觉抓取方案以及 Gazebo 仿真场景。配合移动底盘（Wheeltec S300，
+见 [`docs/wheeltec.md`](wheeltec.md)），可实现 "移动 + 视觉识别 + 机械臂抓取" 的完整流程。
+所有功能包均位于仓库统一工作空间的 [`src/`](../src) 目录下，与移动底盘共用同一个 colcon 工作空间。
 
-> 文档约定：本目录及各子包内的 `*.md` 指南均为中文，本 README 为整个 `src/` 的总览索引。
+> 文档约定：本页及各子包内的 `*.md` 指南均为中文，本页为机械臂相关功能包的总览索引；
+> 调试笔记 / 历史文档统一放在 [`docs/lebai/`](lebai/)。
 
 ## 目录结构
 
 | 子目录 / 文件 | 说明 |
 |--------------|------|
-| `lebai-ros-sdk-humble-dev/` | 乐白官方 ROS 2 SDK：驱动、接口、URDF 模型、MoveIt 配置、示例教程 |
-| `grab_demo/` | 视觉抓取核心包：HSV / YOLO / KCF / ArUco / VLM 多种识别方案与抓取服务 |
-| `arm_demo/` | 机械臂运动学示例：正运动学（FK）/ 逆运动学（IK）演示 |
-| `lebai_gazebo/` | LM3 机械臂的 Gazebo Classic 仿真场景与启动文件 |
-| `DEBUG_README.md` | VSCode 下 ROS 2 节点（C++）的 gdb 调试指南 |
-| `DEBUG_ABOUT_OBJECT_GRAB.md` | 颜色识别抓取相关问题（TF 树 / 可视化）的调试记录 |
-| `VirtualMemory.md` | 编译时增加交换分区（虚拟内存）的方法，避免大包编译 OOM |
-| `wheeltec_S300常用指令.txt` | wheeltec S300 移动底盘的常用命令速查 |
-| `更新记录.txt` | 模型 / 功能更新记录 |
+| `../src/lebai-ros-sdk-humble-dev/` | 乐白官方 ROS 2 SDK：驱动、接口、URDF 模型、MoveIt 配置、示例教程 |
+| `../src/grab_demo/` | 视觉抓取核心包：HSV / YOLO / KCF / ArUco / VLM 多种识别方案与抓取服务 |
+| `../src/arm_demo/` | 机械臂运动学示例：正运动学（FK）/ 逆运动学（IK）演示 |
+| `../src/lebai_gazebo/` | LM3 机械臂的 Gazebo Classic 仿真场景与启动文件 |
+| [`lebai/DEBUG_README.md`](lebai/DEBUG_README.md) | VSCode 下 ROS 2 节点（C++）的 gdb 调试指南 |
+| [`lebai/DEBUG_ABOUT_OBJECT_GRAB.md`](lebai/DEBUG_ABOUT_OBJECT_GRAB.md) | 颜色识别抓取相关问题（TF 树 / 可视化）的调试记录 |
+| [`lebai/VirtualMemory.md`](lebai/VirtualMemory.md) | 编译时增加交换分区（虚拟内存）的方法，避免大包编译 OOM |
+| [`lebai/frame.md`](lebai/frame.md) / [`lebai/serivce.md`](lebai/serivce.md) | 手眼标定 / 点云 / TF 相关说明与记录 |
+| [`wheeltec/wheeltec_S300常用指令_lebai笔记.txt`](wheeltec/wheeltec_S300常用指令_lebai笔记.txt) | wheeltec S300 移动底盘的常用命令速查（笔记版） |
+| [`lebai/更新记录.txt`](lebai/更新记录.txt) | 模型 / 功能更新记录 |
 
 ## 子包概览
 
@@ -95,10 +98,10 @@ ros2 launch lebai_gazebo gazebo_grab.launch.py   # 仿真 + 抓取
 
 ## 编译
 
-本目录即 colcon 工作空间的 `src/`，在其上一级（工作空间根目录）执行：
+机械臂相关功能包与移动底盘共用仓库根目录下的 `src/`，在工作空间根目录（仓库根目录）执行：
 
 ```bash
-cd ~/lebai
+cd <repo_root>
 colcon build              # 编译全部
 source install/setup.bash
 
@@ -120,7 +123,7 @@ ros2 launch grab_demo color_grab.launch.py
 
 ## 相关文档
 
-- 视觉抓取调试：`grab_demo/DEBUG_GUIDE.md`、`DEBUG_ABOUT_OBJECT_GRAB.md`
-- C++ 节点 gdb 调试：`DEBUG_README.md`
-- 手眼标定 / 点云：`grab_demo/point_cloud.md`、根目录 `serivce.md`、`frame.md`
-- 仿真：`lebai_gazebo/GAZEBO_GUIDE.md`
+- 视觉抓取调试：[`../src/grab_demo/DEBUG_GUIDE.md`](../src/grab_demo/DEBUG_GUIDE.md)、[`lebai/DEBUG_ABOUT_OBJECT_GRAB.md`](lebai/DEBUG_ABOUT_OBJECT_GRAB.md)
+- C++ 节点 gdb 调试：[`lebai/DEBUG_README.md`](lebai/DEBUG_README.md)
+- 手眼标定 / 点云：[`../src/grab_demo/point_cloud.md`](../src/grab_demo/point_cloud.md)、[`lebai/serivce.md`](lebai/serivce.md)、[`lebai/frame.md`](lebai/frame.md)
+- 仿真：[`../src/lebai_gazebo/GAZEBO_GUIDE.md`](../src/lebai_gazebo/GAZEBO_GUIDE.md)

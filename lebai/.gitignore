@@ -1,6 +1,0 @@
-build
-log
-install
-.vscode
-__pycache__/
-*.pyc

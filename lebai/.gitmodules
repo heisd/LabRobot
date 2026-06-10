@@ -1,3 +1,0 @@
-[submodule "src/yolo_ros"]
-	path = src/yolo_ros
-	url = https://github.com/mgonzs13/yolo_ros.git

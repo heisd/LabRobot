@@ -5,18 +5,16 @@
 **「YOLO 检测」** 页。
 
 本包只是一个 **便捷启动包**：把上游 `yolo_bringup/yolo.launch.py` 的参数换成
-Wheeltec 默认值后转发。上游源码 **不并入本仓库**，用 `vcs` 按需拉取。
+Wheeltec 默认值后转发。上游源码 **不并入本仓库**，以 `src/yolo_ros` git submodule
+形式引入（与 `grab_demo` 共用同一份 yolo_ros）。
 
-## 1. 拉取 yolo_ros 源码（vcs）
+## 1. 拉取 yolo_ros 源码（git submodule）
 
 ```bash
-sudo apt install python3-vcstool          # 没有 vcs 时
-cd <workspace_root>                        # 含 src/ 的工作区根目录
-vcs import src < yolo_ros.repos            # -> src/yolo_ros (yolo_msgs / yolo_ros / yolo_bringup)
-# 以后更新：vcs pull src
+cd <workspace_root>                        # 含 src/ 的工作区根目录（仓库根目录）
+git submodule update --init --recursive    # -> src/yolo_ros (yolo_msgs / yolo_ros / yolo_bringup)
+# 以后更新：cd src/yolo_ros && git pull && cd - && git add src/yolo_ros
 ```
-
-> 想要可复现的机器人构建，把 `yolo_ros.repos` 里的 `version: main` 钉到某个 tag / commit。
 
 ## 2. 安装推理依赖（ultralytics）
 

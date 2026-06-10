@@ -1,0 +1,6 @@
+[submodule "src/yolo_ros"]
+	path = src/yolo_ros
+	url = https://github.com/mgonzs13/yolo_ros.git
+[submodule "src/serial_ros2"]
+	path = src/serial_ros2
+	url = https://github.com/RoverRobotics-forks/serial-ros2.git
