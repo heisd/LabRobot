@@ -6,6 +6,62 @@
 
 ---
 
+## 第 6 轮 — arm_demo 能力接入 + 下位机 STM32F407 状态卡 + 低压禁动提醒
+
+### arm_demo（FK/IK 运动学演示）接入机械臂页
+
+arm_demo 是两个一次性 MoveIt 演示程序（`fk_demo` 关节空间 / `ik_demo`
+笛卡尔位姿），本身不暴露话题/服务，因此把**能力**而非节点接入面板，走
+lebai 驱动既有服务：
+
+- **关节运动卡新增预设位**：观察位 look / 零位 zero（来自 MoveIt SRDF
+  命名位姿）与 FK 演示位（`fk_demo` 的硬编码目标关节角），点按钮只填值，
+  仍走统一的"执行运动"二次确认路径。
+- **新增"位姿运动 IK"卡**：末端 X/Y/Z + RPY（角度制，`quatFromRpy` 转
+  四元数）经 `/motion_service/move_joint`（关节插补）或 `move_line`
+  （笛卡尔直线）下发，`is_joint_pose=false` —— 逆解由乐白控制器完成。
+  "IK 演示位"按钮把 `ik_demo` 的目标位姿（四元数经既有 `rpyFromQuat`
+  反算成 RPY）填入。提示中明确：**不经 MoveIt、无碰撞检查**，要碰撞
+  规划仍用 `ros2 launch arm_demo fk_demo/ik_demo.launch.py`。
+
+### 下位机 STM32F407 状态卡（组件状态页）
+
+- 读 `turn_on_wheeltec_robot/src/wheeltec_robot.cpp` 确认：`/odom`、
+  `/PowerVoltage` 等话题**只有串口帧（帧头 0x7B）校验通过才发布**，
+  因此用"话题数据流动"作下位机在线信号：`/odom`、`/PowerVoltage`
+  回调刷新 `stm32Time`，2 秒无帧判离线，在线/离线**边沿**写入卡内
+  事件时间线（复用 `appendTimeline`）。
+- 卡内含本地 SVG 示意图（`web/stm32f407.svg`，LQFP 封装俯视，无外链）、
+  串口在线状态、电池电压、底盘移动（<20V 禁动）、急停 red flag
+  （`/robot_red_flag` 回调扩展为同时驱动总览与本卡）。
+- **低压禁动提醒**：固件在电压 <20V（Plus 型）禁止底盘移动。
+  - 前端：电压跌破/恢复 20V 边沿写事件日志，持续低压每 60s 重复提醒；
+    "底盘移动"指标变红显示"禁动 (<20V)"；总览电压阈值同步改为
+    <20 err（禁动）/ <22 warn（原 22/23）。
+  - 驱动：`wheeltec_robot.cpp` 低压分支原本只 `cout` 到本地终端，
+    现同时 `RCLCPP_WARN` 进 `/rosout`——Dashboard 日志面板可见。
+- 架构卡底盘侧新增"下位机 STM32"芯片（跳组件状态页）。
+
+### 文件改动汇总（第 6 轮）
+
+| 文件 | 变化 |
+| --- | --- |
+| `web/index.html` | 关节预设位按钮、位姿运动 IK 卡、STM32 卡、架构卡芯片 |
+| `web/app.js` | mj-preset 填充、quatFromRpy + armCartesianMove、stm32 在线/低压状态机与事件日志、/odom //PowerVoltage //robot_red_flag 回调扩展 |
+| `web/style.css` | `.stm32-*` 样式 |
+| `web/stm32f407.svg` | 新增本地芯片示意图 |
+| `../turn_on_wheeltec_robot/src/wheeltec_robot.cpp` | 低压告警补 RCLCPP_WARN 进 /rosout |
+| `README.md` | 组件状态/机械臂功能清单更新 |
+
+### 验证清单
+
+- [ ] 组件状态页出现 STM32F407 卡：底盘驱动启动后"串口数据流"变绿"在线"，拔串口/停驱动 2 秒后变红"离线"，事件栏各记录一条。
+- [ ] 模拟低压（或真实低电量）：电压 <20V 时总览电压与卡内电压变红、"底盘移动"显示"禁动"，事件栏出现低压提醒且 60s 重复；`/rosout` 日志面板出现驱动的 WARN（需重编译 turn_on_wheeltec_robot）。
+- [ ] 机械臂"关节运动"点"观察位 look"填入 [-1.14,-1.75,-2.47,-0.46,1.56,3.58]，执行后机械臂到观察位。
+- [ ] "位姿运动 IK"点"IK 演示位"后执行，机械臂到 (0.6, 0.17, 0.46)；不可达位姿返回失败并写事件时间线。
+
+---
+
 ## 第 5 轮 — 代码评审修复 + 导航重组为"底盘 / 机械臂"两部分
 
 ### 背景

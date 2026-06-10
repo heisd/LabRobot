@@ -806,6 +806,25 @@ main {
 .vla-line .vt { color: var(--muted); }
 .vla-line .vm { color: var(--text); }
 
+/* --------- 下位机 STM32F407 卡 --------- */
+.stm32-body {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.stm32-img {
+  width: 132px;
+  height: 132px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #0b0f14;
+}
+.stm32-grid { flex: 1; min-width: 220px; }
+.stm32-log { height: 120px; }
+
 /* --------- 系统架构卡（系统总览：底盘 + 机械臂 关系图） --------- */
 .arch {
   display: grid;

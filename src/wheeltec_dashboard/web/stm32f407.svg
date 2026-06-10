@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-label="STM32F407 MCU">
+  <!-- 下位机 STM32F407 示意图（LQFP 封装俯视，本地资源无需联网） -->
+  <rect width="240" height="240" rx="8" fill="#0b0f14"/>
+  <!-- 四边引脚（用虚线画引脚阵列） -->
+  <line x1="58" y1="42" x2="182" y2="42" stroke="#8b98a5" stroke-width="14" stroke-dasharray="5 5.5"/>
+  <line x1="58" y1="198" x2="182" y2="198" stroke="#8b98a5" stroke-width="14" stroke-dasharray="5 5.5"/>
+  <line x1="42" y1="58" x2="42" y2="182" stroke="#8b98a5" stroke-width="14" stroke-dasharray="5 5.5"/>
+  <line x1="198" y1="58" x2="198" y2="182" stroke="#8b98a5" stroke-width="14" stroke-dasharray="5 5.5"/>
+  <!-- 芯片本体 -->
+  <rect x="48" y="48" width="144" height="144" rx="10" fill="#1a2028" stroke="#2d3845" stroke-width="2"/>
+  <rect x="56" y="56" width="128" height="128" rx="6" fill="#151a21"/>
+  <!-- 1 脚标记 -->
+  <circle cx="70" cy="70" r="5" fill="#0b0f14" stroke="#8b98a5" stroke-width="1.5"/>
+  <!-- ST 徽标块 -->
+  <rect x="96" y="74" width="48" height="22" rx="4" fill="#58a6ff" opacity="0.9"/>
+  <text x="120" y="90" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#0b0f14">ST</text>
+  <!-- 型号文字 -->
+  <text x="120" y="122" text-anchor="middle" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="17" font-weight="700" fill="#e6edf3">STM32F407</text>
+  <text x="120" y="140" text-anchor="middle" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11" fill="#8b98a5">VET6</text>
+  <text x="120" y="160" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#8b98a5">ARM Cortex-M4 · 168 MHz</text>
+  <text x="120" y="174" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#566270">WHEELTEC 下位机</text>
+</svg>
