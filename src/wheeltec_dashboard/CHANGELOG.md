@@ -52,16 +52,34 @@ lebai_driver / grab_demo 暴露的 ROS2 接口，不需要任何新后端。
 `requestArmGrab()`）：
 
 - **HSV**（`color_grab` / `color_node`）：调试图 `/color_node/detection_image`；
-  HSV 阈值 hue/sat/val/min_area 复用 `.param-group` 调参机制（int 类型）。
+  **HSV 阈值滑条**（`.hsv-group` 组件：H 0–180、S/V 0–255、min_area 0–5000，
+  拖动 120ms 防抖即发 `set_parameters`(int)，"读取当前值"经 `get_parameters`
+  同步回滑条）。
 - **YOLO**（`yolo_ros_grab` / `yolo_ros_node`）：调试图
-  `/yolo_ros_node/detection_image`；`target_label`(string) /
-  `target_class`(int) / `conf_threshold`(double) 实时调参。
-- **KCF**（`kcf_grab` / `kcf_node`）：跟踪画面 `/kcf_node/tracking_image`；
-  HSV 播种阈值调参。
+  `/yolo_ros_node/detection_image`；**识别物体按钮** —— 订阅
+  `/yolo/detections`（yolo_msgs/DetectionArray，300ms 节流），按类别合并
+  渲染成按钮（数量 + 最高置信度），点击把类别名写进桥接节点的
+  `target_label` 参数（节点名取自子页参数卡的 `.pg-node`，按钮高亮选中态，
+  事件委托避免重渲染丢绑定），"清除筛选"写空串恢复任意类别；
+  `target_label`(string) / `target_class`(int) / `conf_threshold`(double)
+  仍可在参数卡手动调。
+- **KCF**（`kcf_grab` / `kcf_node`）：跟踪画面 `/kcf_node/tracking_image`，
+  **画面上拖拽框选目标** —— pointer 事件画选框（`.bbox-rect` 覆盖层 +
+  `setPointerCapture`，触屏可用），松手后把显示坐标经 object-fit:contain
+  内容区换算成原始图像像素（`naturalWidth/Height`），发布
+  `sensor_msgs/RegionOfInterest` 到 `/kcf_node/select_bbox`；流未加载
+  （placeholder）或框小于 8×8 像素时忽略并提示。【重新播种 (HSV)】调
+  `/kcf_node/reinit`（Trigger）；HSV 播种阈值滑条同 HSV 页组件。
 - **ArUco**（`aruco_grab` / `aruco_node`）：节点无调试图发布，子页显示
   机械臂相机原图。
 - **VLM**（`vlm_grab` / `vlm_node`）：框选画面 `/vlm_node/vlm_image`；指令发
   `/vlm/instruction`、结果订 `/vlm/result`、确认/取消发 `/vlm/confirm`。
+
+**配套后端改动（grab_demo/kcf_track_node.cpp）**：新增 `~/select_bbox` 订阅
+（sensor_msgs/RegionOfInterest），收到手动框即放弃当前跟踪、下一帧优先用
+该框播种（一次性，优先级高于 init_bbox/HSV）；`~/reinit` 同时丢弃未消费的
+手动框。默认单线程执行器下与图像回调串行，无需加锁。接口文档见
+`grab_demo/KCF_GUIDE.md`。
 
 **MJPEG 流的懒加载**：顶层 tab 切到机械臂时只拉当前激活子页的流；切换机械臂
 子页时再拉对应子页的流（同功能模块策略），不会一次拉起五个方案的调试画面。
@@ -77,10 +95,12 @@ lebai_driver / grab_demo 暴露的 ROS2 接口，不需要任何新后端。
 
 | 文件 | 变化 |
 | --- | --- |
-| `web/index.html` | 导航栏加"机械臂" tab、新增 `#panel-arm`（子导航 + 监控与控制 / 五个抓取方案子页） |
-| `web/app.js` | 机械臂订阅/发布、TriState 渲染、关节表、系统/夹爪/运动/抓取服务调用、事件时间线、机械臂子页 tab 组、流懒加载 |
-| `web/style.css` | 子页样式扩展到 `.arm-subtab-*`、`.sys-btns`、`.grip-row`、`.arm-joint*`、`.mj-*` 等机械臂样式 |
+| `web/index.html` | 导航栏加"机械臂" tab、新增 `#panel-arm`（子导航 + 监控与控制 / 五个抓取方案子页）、KCF 框选层、YOLO 物体按钮区、HSV 滑条组 |
+| `web/app.js` | 机械臂订阅/发布、TriState 渲染、关节表、系统/夹爪/运动/抓取服务调用、事件时间线、机械臂子页 tab 组、流懒加载、KCF 拖拽框选、YOLO 目标按钮、HSV 滑条组件 |
+| `web/style.css` | 子页样式扩展到 `.arm-subtab-*`、`.sys-btns`、`.grip-row`、`.arm-joint*`、`.mj-*`、`.bbox-*`、`.hsv-*`、`.arm-yolo-buttons` |
 | `README.md` | 功能板块更新为六个，补机械臂子页明细与启动前提 |
+| `../grab_demo/src/kcf_track_node.cpp` | 新增 `~/select_bbox` 手动框选接口 |
+| `../grab_demo/KCF_GUIDE.md` | 记录框选接口与主面板用法 |
 
 ### 验证清单
 
@@ -88,8 +108,9 @@ lebai_driver / grab_demo 暴露的 ROS2 接口，不需要任何新后端。
 - [ ] 启动 `lebai_driver robot_state.launch.py` 后状态卡片有值；停掉 3 秒后回 "—"。
 - [ ] 夹爪滑块"设置位置"能开合真实夹爪（`/gripper_status` 数值跟随）。
 - [ ] "填入当前关节角"填进 `lebai_joint_1..6` 实时值；"执行运动"先弹确认。
-- [ ] 启动 `grab_demo color_grab.launch.py`：HSV 子页能看到调试画面，"读取当前值"拉回 hue/sat/val 阈值，改 `hue_min` 应用后画面掩码变化。
-- [ ] 启动 `grab_demo yolo_ros_grab.launch.py`：YOLO 子页调试图有框+距离，各子页"目标距离"同步有读数，"抓取目标"能完成一次抓取并在时间线显示结果。
+- [ ] 启动 `grab_demo color_grab.launch.py`：HSV 子页能看到调试画面，"读取当前值"把滑条同步到节点当前阈值，拖动 H/S/V 滑条调试画面的色块掩码实时变化。
+- [ ] 启动 `grab_demo yolo_ros_grab.launch.py`：YOLO 子页调试图有框+距离，识别到的物体出现为按钮（同类合并计数），点击某个按钮后调试图只跟该类别且按钮高亮，"清除筛选"恢复；各子页"目标距离"同步有读数，"抓取目标"能完成一次抓取并在时间线显示结果。
+- [ ] 启动 `grab_demo kcf_grab.launch.py`（重编译 grab_demo 后）：KCF 子页在跟踪画面上拖拽框选一个物体，节点日志出现"收到手动框选"，跟踪框跳到所选物体；【重新播种 (HSV)】后回到色块播种。
 - [ ] VLM 子页发指令后 `/vlm/result` 显示理解结果，"确认抓取"触发执行。
 - [ ] "手动接管"后 `/arm_arbiter/state` 显示"手动接管"，自动抓取被拒绝；"释放控制权"恢复。
 - [ ] 断开 rosbridge 时点任何按钮：时间线提示"未连接"，不报 JS 错。

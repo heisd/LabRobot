@@ -132,13 +132,19 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
     `/grab_target/distance` + `/obj_grab_service` 流程，每页含调试画面、
     目标距离与"抓取目标"快捷键）：
     - **HSV 颜色抓取**（`color_grab.launch.py`）：调试图
-      `/color_node/detection_image`；HSV 阈值（hue/sat/val/min_area）
-      实时调参（`/color_node`）。
+      `/color_node/detection_image`；**HSV 阈值滑条**（H/S/V min/max +
+      min_area，拖动即生效，可"读取当前值"同步），对照调试画面调色。
     - **YOLO 抓取**（`yolo_ros_grab.launch.py`）：调试图
-      `/yolo_ros_node/detection_image`（带框+距离）；`target_label` /
-      `target_class` / `conf_threshold` 实时调参（`/yolo_ros_node`）。
+      `/yolo_ros_node/detection_image`（带框+距离）；**识别到的物体渲染成
+      按钮**（订阅 `/yolo/detections`，同类合并显示数量与最高置信度），
+      **点击即选为抓取目标**（实时写桥接节点 `target_label`），"清除筛选"
+      恢复任意类别；`target_label` / `target_class` / `conf_threshold`
+      也可手动调参（`/yolo_ros_node`）。
     - **KCF 跟踪抓取**（`kcf_grab.launch.py`）：跟踪画面
-      `/kcf_node/tracking_image`；HSV 播种阈值实时调参（`/kcf_node`）。
+      `/kcf_node/tracking_image`，**支持直接在画面上拖拽框选目标**
+      （显示坐标换算为图像像素后发 `/kcf_node/select_bbox`，节点立即用
+      该框重新播种）；【重新播种 (HSV)】调 `/kcf_node/reinit`；HSV 播种
+      阈值滑条（`/kcf_node`）。
     - **ArUco 抓取**（`aruco_grab.launch.py`）：显示机械臂相机原图
       （aruco_node 无调试图）。
     - **VLM 语言抓取**（`vlm_grab.launch.py`）：框选画面

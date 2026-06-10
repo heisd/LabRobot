@@ -19,6 +19,7 @@
   let ttsPub = null;       // /tts_text publisher
   let armVlmInstrPub = null;   // /vlm/instruction publisher (机械臂 VLM 抓取)
   let armVlmConfirmPub = null; // /vlm/confirm publisher (确认/取消抓取)
+  let kcfBboxPub = null;       // /kcf_node/select_bbox publisher (KCF 手动框选)
   let lidarSubs = [];      // per-source LaserScan subs (managed separately so
                            // the lidar card can re-subscribe on topic change)
   const lidarLast = {};    // key -> { time, points, min }
@@ -132,6 +133,10 @@
     if (armVlmConfirmPub) {
       try { armVlmConfirmPub.unadvertise(); } catch (_) { /* ignore */ }
       armVlmConfirmPub = null;
+    }
+    if (kcfBboxPub) {
+      try { kcfBboxPub.unadvertise(); } catch (_) { /* ignore */ }
+      kcfBboxPub = null;
     }
   }
 
@@ -309,6 +314,13 @@
       if (el) el.textContent = msg.data || '—';
       if (msg.data) addArmLog('VLM: ' + msg.data);
     });
+    // KCF 手动框选: 在跟踪画面上拖拽框选 -> 发布像素框给 kcf_node 重新播种。
+    kcfBboxPub = new ROSLIB.Topic({
+      ros, name: '/kcf_node/select_bbox', messageType: 'sensor_msgs/msg/RegionOfInterest',
+    });
+    kcfBboxPub.advertise();
+    // YOLO 抓取子页: 把识别到的物体渲染成按钮, 点击设为抓取目标(target_label)。
+    sub('/yolo/detections', 'yolo_msgs/msg/DetectionArray', renderArmYoloButtons, { throttle_rate: 300 });
 
     // Lidar health (fused + per-sensor) and optional YOLO detections.
     subscribeLidar();
@@ -1665,6 +1677,221 @@
     const v = $('arm-log');
     if (v) v.innerHTML = '';
   });
+
+  // ---- HSV 阈值滑条 (HSV 抓取 /color_node、KCF 播种 /kcf_node 共用组件) ----
+  // 拖动即下发 set_parameters(int)（120ms 防抖，同 dist-slider 的做法），
+  // "读取当前值"用 get_parameters 把节点当前阈值同步回滑条。
+  function initHsvGroup(root) {
+    const nodeInput = root.querySelector('.hsv-node');
+    if (!nodeInput) return;
+    const node = () => nodeInput.value.trim();
+    const sliders = Array.from(root.querySelectorAll('.hsv-slider[data-param]'));
+
+    sliders.forEach((row) => {
+      const range = row.querySelector('input[type=range]');
+      const valEl = row.querySelector('.hs-val');
+      if (!range) return;
+      const show = () => { if (valEl) valEl.textContent = range.value; };
+      const send = () => {
+        if (!ros) return;
+        const value = buildParameterValue('int', range.value);
+        if (!value) return;
+        const req = new ROSLIB.ServiceRequest({
+          parameters: [{ name: row.dataset.param, value }],
+        });
+        paramService(node(), 'set_parameters').callService(req, () => {},
+          (err) => console.error(`set ${row.dataset.param} failed`, err));
+      };
+      let timer = null;
+      range.addEventListener('input', () => {
+        show();
+        if (timer) clearTimeout(timer);    // 拖动中防抖
+        timer = setTimeout(() => { timer = null; send(); }, 120);
+      });
+      range.addEventListener('change', () => {
+        if (timer) { clearTimeout(timer); timer = null; }  // 松手立即发一次
+        send();
+      });
+      show();
+    });
+
+    const refreshBtn = root.querySelector('.hsv-refresh');
+    if (refreshBtn) refreshBtn.addEventListener('click', () => {
+      if (!ros) { alert('未连接 rosbridge'); return; }
+      const names = sliders.map((r) => r.dataset.param);
+      const req = new ROSLIB.ServiceRequest({ names });
+      paramService(node(), 'get_parameters').callService(req, (res) => {
+        (res.values || []).forEach((val, i) => {
+          const row = sliders[i];
+          if (!row) return;
+          let v = null;
+          if (val.type === PT_INTEGER) v = val.integer_value;
+          else if (val.type === PT_DOUBLE) v = val.double_value;
+          if (v === null) return;
+          const range = row.querySelector('input[type=range]');
+          const valEl = row.querySelector('.hs-val');
+          if (range) range.value = v;
+          if (valEl) valEl.textContent = String(v);
+        });
+      }, (err) => alert('读取失败：' + err + '（节点是否已启动？）'));
+    });
+  }
+  document.querySelectorAll('.hsv-group').forEach(initHsvGroup);
+
+  // ---- KCF: 在跟踪画面上拖拽框选目标 ----
+  // 显示坐标 -> object-fit:contain 内容区 -> 原始图像像素，发布
+  // sensor_msgs/RegionOfInterest 到 /kcf_node/select_bbox，节点收到即重新播种。
+  (function initKcfBoxSelect() {
+    const frame = $('arm-kcf-frame');
+    const img = $('arm-kcf-stream');
+    const rect = $('arm-kcf-rect');
+    if (!frame || !img || !rect) return;
+    let dragging = false;
+    let sx = 0, sy = 0;   // 起点（frame 内坐标）
+
+    function frameXY(e) {
+      const r = frame.getBoundingClientRect();
+      return {
+        x: Math.max(0, Math.min(r.width, e.clientX - r.left)),
+        y: Math.max(0, Math.min(r.height, e.clientY - r.top)),
+        fw: r.width, fh: r.height,
+      };
+    }
+    // object-fit: contain 的实际渲染区域（扣掉上下/左右黑边）
+    function contentBox(fw, fh) {
+      const nw = img.naturalWidth, nh = img.naturalHeight;
+      if (!nw || !nh) return null;
+      const s = Math.min(fw / nw, fh / nh);
+      return { x: (fw - nw * s) / 2, y: (fh - nh * s) / 2, scale: s, nw, nh };
+    }
+
+    frame.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if ((img.src || '').indexOf('placeholder') !== -1) {
+        addArmLog('跟踪画面尚未加载，无法框选（kcf_grab 是否已启动？）');
+        return;
+      }
+      dragging = true;
+      const p = frameXY(e);
+      sx = p.x; sy = p.y;
+      rect.hidden = false;
+      rect.style.left = sx + 'px';
+      rect.style.top = sy + 'px';
+      rect.style.width = '0px';
+      rect.style.height = '0px';
+      try { frame.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      e.preventDefault();
+    });
+    frame.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const p = frameXY(e);
+      rect.style.left = Math.min(sx, p.x) + 'px';
+      rect.style.top = Math.min(sy, p.y) + 'px';
+      rect.style.width = Math.abs(p.x - sx) + 'px';
+      rect.style.height = Math.abs(p.y - sy) + 'px';
+    });
+    frame.addEventListener('pointerup', (e) => {
+      if (!dragging) return;
+      dragging = false;
+      rect.hidden = true;
+      const p = frameXY(e);
+      const cb = contentBox(p.fw, p.fh);
+      if (!cb) { addArmLog('跟踪画面尺寸未知，无法框选'); return; }
+      const x0 = Math.min(sx, p.x), y0 = Math.min(sy, p.y);
+      const x1 = Math.max(sx, p.x), y1 = Math.max(sy, p.y);
+      const ix0 = Math.max(0, Math.round((x0 - cb.x) / cb.scale));
+      const iy0 = Math.max(0, Math.round((y0 - cb.y) / cb.scale));
+      const ix1 = Math.min(cb.nw, Math.round((x1 - cb.x) / cb.scale));
+      const iy1 = Math.min(cb.nh, Math.round((y1 - cb.y) / cb.scale));
+      const w = ix1 - ix0, h = iy1 - iy0;
+      if (w < 8 || h < 8) { addArmLog('框选太小（不足 8×8 像素），已忽略'); return; }
+      if (!kcfBboxPub) { addArmLog('未连接 rosbridge，无法发送框选'); return; }
+      kcfBboxPub.publish(new ROSLIB.Message({
+        x_offset: ix0, y_offset: iy0, height: h, width: w, do_rectify: false,
+      }));
+      addArmLog(`> KCF 手动框选 [x=${ix0} y=${iy0} w=${w} h=${h}] → /kcf_node/select_bbox`);
+    });
+    frame.addEventListener('pointercancel', () => { dragging = false; rect.hidden = true; });
+  })();
+
+  const armKcfReinit = $('arm-kcf-reinit');
+  if (armKcfReinit) {
+    armKcfReinit.addEventListener('click', () => {
+      addArmLog('> KCF 重新播种 (/kcf_node/reinit)');
+      callArmService('/kcf_node/reinit', 'std_srvs/srv/Trigger', {}, (res) => {
+        addArmLog((res && res.success ? '✓ ' : '✗ ') + ((res && res.message) || 'reinit'));
+      });
+    });
+  }
+
+  // ---- YOLO: 识别物体按钮 -> 选为抓取目标 ----
+  // 订阅 /yolo/detections，把每个类别渲染成按钮；点击把类别名写进桥接节点
+  // (/yolo_ros_node) 的 target_label 参数 —— 调试图与 target_frame 立刻只跟该类别。
+  let armYoloSelected = '';
+
+  function armYoloNode() {
+    const inp = document.querySelector('#arm-subpanel-yolo .pg-node');
+    return ((inp && inp.value) || '/yolo_ros_node').trim();
+  }
+
+  function renderArmYoloButtons(msg) {
+    const view = $('arm-yolo-buttons');
+    if (!view) return;
+    const dets = (msg && msg.detections) || [];
+    const cntEl = $('arm-yolo-count');
+    if (cntEl) cntEl.textContent = dets.length + ' 个';
+    // 同类合并: 显示一次 + 数量 + 最高置信度（target_label 按类别筛选，无法区分同类个体）
+    const byLabel = new Map();
+    dets.forEach((d) => {
+      const label = (d && d.class_name != null && d.class_name !== '')
+        ? String(d.class_name)
+        : String((d && d.class_id != null) ? d.class_id : '?');
+      const score = (d && typeof d.score === 'number') ? d.score : 0;
+      const cur = byLabel.get(label);
+      if (!cur) byLabel.set(label, { count: 1, best: score });
+      else { cur.count += 1; if (score > cur.best) cur.best = score; }
+    });
+    const sel = (armYoloSelected || '').toLowerCase();
+    const html = [];
+    byLabel.forEach((v, label) => {
+      const active = label.toLowerCase() === sel ? ' active' : '';
+      html.push(
+        `<button type="button" data-label="${escapeHTML(label)}" class="yp${active}">` +
+        `${escapeHTML(label)}${v.count > 1 ? ' ×' + v.count : ''}` +
+        ` <span>${(v.best * 100).toFixed(0)}%</span></button>`
+      );
+    });
+    view.innerHTML = html.join('');
+  }
+
+  function selectArmYoloTarget(label) {
+    if (!ros) { addArmLog('未连接 rosbridge，无法设置抓取目标'); return; }
+    const value = buildParameterValue('string', label);
+    const req = new ROSLIB.ServiceRequest({ parameters: [{ name: 'target_label', value }] });
+    paramService(armYoloNode(), 'set_parameters').callService(req, (res) => {
+      const ok = res.results && res.results[0] && res.results[0].successful;
+      if (!ok) { addArmLog('✗ 设置 target_label 失败（节点是否已启动？）'); return; }
+      armYoloSelected = label;
+      addArmLog(label ? ('> 抓取目标类别 → ' + label) : '> 已清除类别筛选（抓任意类别）');
+      const view = $('arm-yolo-buttons');
+      if (view) {
+        view.querySelectorAll('button[data-label]').forEach((b) => {
+          b.classList.toggle('active', b.dataset.label.toLowerCase() === label.toLowerCase() && label !== '');
+        });
+      }
+    }, (err) => addArmLog('✗ 设置 target_label 失败：' + err));
+  }
+
+  const armYoloButtonsView = $('arm-yolo-buttons');
+  if (armYoloButtonsView) {
+    // 按钮随检测重渲染，用事件委托避免反复绑定
+    armYoloButtonsView.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-label]');
+      if (b) selectArmYoloTarget(b.dataset.label);
+    });
+  }
+  const armYoloClear = $('arm-yolo-clear');
+  if (armYoloClear) armYoloClear.addEventListener('click', () => selectArmYoloTarget(''));
 
   // ---------- Logs (/rosout) ----------
   const logView = $('log-view');

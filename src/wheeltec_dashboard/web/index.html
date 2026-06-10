@@ -746,58 +746,22 @@
         </section>
 
         <section class="card card-wide">
-          <h2>HSV 阈值参数 <span class="muted">(/color_node)</span></h2>
-          <div class="params param-group">
-            <div class="param-row">
-              <label>节点</label>
-              <input class="pg-node" type="text" value="/color_node" list="node-list" />
-              <button class="pg-refresh">读取当前值</button>
+          <h2>HSV 阈值滑条 <span class="muted">(/color_node · 拖动即生效)</span></h2>
+          <div class="hsv-group">
+            <div class="hsv-toolbar">
+              <label>节点
+                <input class="hsv-node" type="text" value="/color_node" list="node-list" />
+              </label>
+              <button class="hsv-refresh">读取当前值</button>
             </div>
-            <div>
-              <div class="param-row" data-param="hue_min" data-type="int">
-                <label>hue_min (0-180)</label>
-                <input type="number" step="1" />
-                <button class="param-apply">应用</button>
-                <span class="param-current">—</span>
-              </div>
-              <div class="param-row" data-param="hue_max" data-type="int">
-                <label>hue_max (0-180)</label>
-                <input type="number" step="1" />
-                <button class="param-apply">应用</button>
-                <span class="param-current">—</span>
-              </div>
-              <div class="param-row" data-param="sat_min" data-type="int">
-                <label>sat_min (0-255)</label>
-                <input type="number" step="1" />
-                <button class="param-apply">应用</button>
-                <span class="param-current">—</span>
-              </div>
-              <div class="param-row" data-param="sat_max" data-type="int">
-                <label>sat_max (0-255)</label>
-                <input type="number" step="1" />
-                <button class="param-apply">应用</button>
-                <span class="param-current">—</span>
-              </div>
-              <div class="param-row" data-param="val_min" data-type="int">
-                <label>val_min (0-255)</label>
-                <input type="number" step="1" />
-                <button class="param-apply">应用</button>
-                <span class="param-current">—</span>
-              </div>
-              <div class="param-row" data-param="val_max" data-type="int">
-                <label>val_max (0-255)</label>
-                <input type="number" step="1" />
-                <button class="param-apply">应用</button>
-                <span class="param-current">—</span>
-              </div>
-              <div class="param-row" data-param="min_area" data-type="int">
-                <label>min_area (px²)</label>
-                <input type="number" step="50" />
-                <button class="param-apply">应用</button>
-                <span class="param-current">—</span>
-              </div>
-            </div>
-            <p class="hint">等价 <code>ros2 param set /color_node hue_min ...</code>，改完立即生效（无 trackbar 也能调色）。先点"读取当前值"再修改"应用"。</p>
+            <div class="hsv-slider" data-param="hue_min"><label>H min</label><input type="range" min="0" max="180" step="1" value="0" /><span class="hs-val">0</span></div>
+            <div class="hsv-slider" data-param="hue_max"><label>H max</label><input type="range" min="0" max="180" step="1" value="10" /><span class="hs-val">10</span></div>
+            <div class="hsv-slider" data-param="sat_min"><label>S min</label><input type="range" min="0" max="255" step="1" value="100" /><span class="hs-val">100</span></div>
+            <div class="hsv-slider" data-param="sat_max"><label>S max</label><input type="range" min="0" max="255" step="1" value="255" /><span class="hs-val">255</span></div>
+            <div class="hsv-slider" data-param="val_min"><label>V min</label><input type="range" min="0" max="255" step="1" value="100" /><span class="hs-val">100</span></div>
+            <div class="hsv-slider" data-param="val_max"><label>V max</label><input type="range" min="0" max="255" step="1" value="255" /><span class="hs-val">255</span></div>
+            <div class="hsv-slider" data-param="min_area"><label>min_area</label><input type="range" min="0" max="5000" step="50" value="200" /><span class="hs-val">200</span></div>
+            <p class="hint">拖动滑条即时下发（等价 <code>ros2 param set /color_node ...</code>），对照上方调试画面调到只剩目标色块即可。先点"读取当前值"同步节点当前阈值。H 范围 0–180（OpenCV 半角），红色跨界时用 H[0,10] 或 H[160,180]。</p>
           </div>
         </section>
       </div>
@@ -822,10 +786,16 @@
               <div class="metric-value arm-dist">— m</div>
             </div>
           </div>
+          <div class="yolo-det-head">
+            <span>识别到的物体 <span class="muted">(/yolo/detections · 点击选为抓取目标)</span></span>
+            <span id="arm-yolo-count" class="muted">0 个</span>
+          </div>
+          <div id="arm-yolo-buttons" class="arm-yolo-buttons"></div>
           <div class="vla-quick">
+            <button id="arm-yolo-clear" class="vla-q">清除筛选 (抓任意类别)</button>
             <button class="vla-q arm-grab-quick">抓取目标 (target_frame)</button>
           </div>
-          <p class="hint">启动：<code>ros2 launch grab_demo yolo_ros_grab.launch.py</code>（yolo_ros + 桥接 + 闭环抓取，CPU/GPU 皆可）。桥接节点把 <code>/yolo/detections</code> 转成 <code>target_frame</code> TF，调试图带框 + 距离。选中目标可用下方 <code>target_label</code>（类别名）/ <code>conf_threshold</code> 实时调，详见 <code>grab_demo/YOLO_ROS_GUIDE.md</code>。Jetson TensorRT 版用 <code>yolo_grab.launch.py</code>。</p>
+          <p class="hint">启动：<code>ros2 launch grab_demo yolo_ros_grab.launch.py</code>（yolo_ros + 桥接 + 闭环抓取，CPU/GPU 皆可）。<strong>点上方物体按钮即把该类别设为抓取目标</strong>（实时写桥接节点的 <code>target_label</code> 参数，调试图的框会立刻只跟该类别），再点"抓取目标"执行抓取；"清除筛选"恢复抓置信度最高的任意物体。同类多个物体按 <code>select_mode</code>（默认置信度最高）取一个。也可用下方参数卡手填 <code>target_label</code> / <code>conf_threshold</code>，详见 <code>grab_demo/YOLO_ROS_GUIDE.md</code>。Jetson TensorRT 版用 <code>yolo_grab.launch.py</code>。</p>
         </section>
 
         <section class="card card-wide">
@@ -870,9 +840,11 @@
               <input class="fn-topic" data-img="arm-kcf-stream" type="text" value="/kcf_node/tracking_image" />
             </label>
             <button class="fn-reload" data-img="arm-kcf-stream">刷新</button>
+            <button id="arm-kcf-reinit" title="调用 /kcf_node/reinit，回到 HSV 自动播种">重新播种 (HSV)</button>
           </div>
-          <div class="cam-frame fn-frame">
+          <div class="cam-frame fn-frame bbox-select" id="arm-kcf-frame" title="在画面上按住拖拽，框选要跟踪的物体">
             <img id="arm-kcf-stream" class="cam-img fn-img" data-topic="/kcf_node/tracking_image" src="placeholder.svg" alt="kcf grab" />
+            <div id="arm-kcf-rect" class="bbox-rect" hidden></div>
             <div class="cam-err" hidden>无法加载流</div>
           </div>
           <div class="grid">
@@ -884,62 +856,26 @@
           <div class="vla-quick">
             <button class="vla-q arm-grab-quick">抓取目标 (target_frame)</button>
           </div>
-          <p class="hint">启动：<code>ros2 launch grab_demo kcf_grab.launch.py</code>。KCF 相关滤波持续跟踪并刷新 <code>target_frame</code>，闭环节点据此反复修正位姿。初始框由 HSV 自动播种（阈值在下方调，默认红色），丢失后自动重播种（<code>reinit_on_loss</code>）。详见 <code>grab_demo/KCF_GUIDE.md</code>。</p>
+          <p class="hint">启动：<code>ros2 launch grab_demo kcf_grab.launch.py</code>。<strong>直接在上方画面拖拽即可框选跟踪目标</strong>——框选坐标换算为图像像素后发布到 <code>/kcf_node/select_bbox</code>（sensor_msgs/RegionOfInterest），节点收到立即用该框重新播种；不框选时默认 HSV 自动播种（阈值见下方滑条，默认红色），跟丢自动重播种（<code>reinit_on_loss</code>）。"重新播种 (HSV)" 调 <code>/kcf_node/reinit</code> 放弃当前目标。详见 <code>grab_demo/KCF_GUIDE.md</code>。</p>
         </section>
 
         <section class="card card-wide">
-          <h2>HSV 播种参数 <span class="muted">(/kcf_node)</span></h2>
-          <div class="params param-group">
-            <div class="param-row">
-              <label>节点</label>
-              <input class="pg-node" type="text" value="/kcf_node" list="node-list" />
-              <button class="pg-refresh">读取当前值</button>
+          <h2>HSV 播种阈值滑条 <span class="muted">(/kcf_node · 拖动即生效)</span></h2>
+          <div class="hsv-group">
+            <div class="hsv-toolbar">
+              <label>节点
+                <input class="hsv-node" type="text" value="/kcf_node" list="node-list" />
+              </label>
+              <button class="hsv-refresh">读取当前值</button>
             </div>
-            <div>
-              <div class="param-row" data-param="hue_min" data-type="int">
-                <label>hue_min (0-180)</label>
-                <input type="number" step="1" />
-                <button class="param-apply">应用</button>
-                <span class="param-current">—</span>
-              </div>
-              <div class="param-row" data-param="hue_max" data-type="int">
-                <label>hue_max (0-180)</label>
-                <input type="number" step="1" />
-                <button class="param-apply">应用</button>
-                <span class="param-current">—</span>
-              </div>
-              <div class="param-row" data-param="sat_min" data-type="int">
-                <label>sat_min (0-255)</label>
-                <input type="number" step="1" />
-                <button class="param-apply">应用</button>
-                <span class="param-current">—</span>
-              </div>
-              <div class="param-row" data-param="sat_max" data-type="int">
-                <label>sat_max (0-255)</label>
-                <input type="number" step="1" />
-                <button class="param-apply">应用</button>
-                <span class="param-current">—</span>
-              </div>
-              <div class="param-row" data-param="val_min" data-type="int">
-                <label>val_min (0-255)</label>
-                <input type="number" step="1" />
-                <button class="param-apply">应用</button>
-                <span class="param-current">—</span>
-              </div>
-              <div class="param-row" data-param="val_max" data-type="int">
-                <label>val_max (0-255)</label>
-                <input type="number" step="1" />
-                <button class="param-apply">应用</button>
-                <span class="param-current">—</span>
-              </div>
-              <div class="param-row" data-param="min_area" data-type="int">
-                <label>min_area (px²)</label>
-                <input type="number" step="50" />
-                <button class="param-apply">应用</button>
-                <span class="param-current">—</span>
-              </div>
-            </div>
-            <p class="hint">播种 = 用 HSV 找到第一个目标框交给 KCF。跟踪开始后改这些参数只影响下次重播种。</p>
+            <div class="hsv-slider" data-param="hue_min"><label>H min</label><input type="range" min="0" max="180" step="1" value="0" /><span class="hs-val">0</span></div>
+            <div class="hsv-slider" data-param="hue_max"><label>H max</label><input type="range" min="0" max="180" step="1" value="10" /><span class="hs-val">10</span></div>
+            <div class="hsv-slider" data-param="sat_min"><label>S min</label><input type="range" min="0" max="255" step="1" value="100" /><span class="hs-val">100</span></div>
+            <div class="hsv-slider" data-param="sat_max"><label>S max</label><input type="range" min="0" max="255" step="1" value="255" /><span class="hs-val">255</span></div>
+            <div class="hsv-slider" data-param="val_min"><label>V min</label><input type="range" min="0" max="255" step="1" value="100" /><span class="hs-val">100</span></div>
+            <div class="hsv-slider" data-param="val_max"><label>V max</label><input type="range" min="0" max="255" step="1" value="255" /><span class="hs-val">255</span></div>
+            <div class="hsv-slider" data-param="min_area"><label>min_area</label><input type="range" min="0" max="5000" step="50" value="400" /><span class="hs-val">400</span></div>
+            <p class="hint">播种 = 用 HSV 找到第一个目标框交给 KCF；手动框选优先于 HSV。跟踪开始后改滑条只影响下次重播种。先点"读取当前值"同步节点当前阈值。</p>
           </div>
         </section>
       </div>

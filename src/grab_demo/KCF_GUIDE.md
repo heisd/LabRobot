@@ -10,9 +10,19 @@
   优点是跟踪连续、对运动/部分遮挡更稳、计算量小；缺点是要先给初始框。
 
 本节点的初始框来源（按优先级）：
-1. 参数 `init_bbox = [x, y, w, h]`（`w,h>0` 时用，作为第一次播种）；
-2. 否则用 **HSV 颜色阈值找最大色块自动播种**（无需手动框选，headless 友好）；
-3. 运行中可调用 `~/reinit` 服务随时重新播种；跟丢时（`reinit_on_loss=true`）自动回到 HSV 重新播种。
+1. 话题 `~/select_bbox`（`sensor_msgs/RegionOfInterest`，原始图像像素坐标）：
+   **运行时手动框选** —— wheeltec_dashboard 机械臂 KCF 子页在跟踪画面上拖拽框选后
+   发布到这里，节点收到即放弃当前跟踪、下一帧用该框播种（只消费一次）；
+2. 参数 `init_bbox = [x, y, w, h]`（`w,h>0` 时用，作为第一次播种）；
+3. 否则用 **HSV 颜色阈值找最大色块自动播种**（无需手动框选，headless 友好）；
+4. 运行中可调用 `~/reinit` 服务随时重新播种（丢弃未消费的手动框，回到
+   init_bbox/HSV）；跟丢时（`reinit_on_loss=true`）自动回到 HSV 重新播种。
+
+```bash
+# 手动框选示例（等价 Dashboard 的拖拽框选）
+ros2 topic pub --once /kcf_node/select_bbox sensor_msgs/msg/RegionOfInterest \
+  "{x_offset: 100, y_offset: 80, width: 120, height: 90}"
+```
 
 ## 二、统一接口（和 HSV/YOLO 完全一致）
 
@@ -102,6 +112,16 @@ ros2 service call /kcf_node/reinit std_srvs/srv/Trigger
 
 ## 七、在 Dashboard 里使用
 
+lebai_driver 自带面板（`ros2 launch lebai_driver dashboard.launch.py`）：
+
 - **功能启动**页 → **视觉抓取**分组里的 **KCF 跟踪抓取**，点"启动"即可（与 YOLO/HSV/ArUco 互斥）。
 - **监控**页 → 【YOLO / KCF 识别 + 闭环抓取 参数】卡片的 **KCF 跟踪** 分组，可在线调
   `z_offset` / HSV `hue_min`、`hue_max` / `min_area` / `reinit_on_loss`，并有一键【KCF 重新播种】按钮。
+
+wheeltec_dashboard 主面板（`ros2 launch wheeltec_dashboard dashboard.launch.py`）→
+**机械臂** → **KCF 跟踪抓取** 子页：
+
+- 实时预览 `/kcf_node/tracking_image` 跟踪画面；
+- **直接在画面上拖拽框选目标**（坐标自动换算为图像像素，发 `~/select_bbox` 重新播种）；
+- 【重新播种 (HSV)】按钮调 `~/reinit`；HSV 播种阈值滑条拖动即生效；
+- 目标距离实时显示，【抓取目标】一键调 `/obj_grab_service` 执行抓取。

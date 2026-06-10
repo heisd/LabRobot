@@ -898,6 +898,106 @@ main {
 /* VLM 理解结果可能是整句话，缩小字号防止撑爆 metric 卡片。 */
 #arm-vlm-result { font-size: 13px; font-weight: 500; word-break: break-word; }
 
+/* KCF 跟踪画面上的拖拽框选 */
+.bbox-select {
+  cursor: crosshair;
+  touch-action: none;   /* 触屏拖拽框选时不滚动页面 */
+  user-select: none;
+}
+.bbox-rect {
+  position: absolute;
+  border: 1.5px dashed var(--accent);
+  background: rgba(88, 166, 255, 0.15);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* HSV 阈值滑条组（HSV 抓取 / KCF 播种共用） */
+.hsv-group { display: flex; flex-direction: column; gap: 8px; }
+.hsv-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+.hsv-toolbar label {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  color: var(--muted);
+}
+.hsv-toolbar input {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-top: 2px;
+  width: 160px;
+  height: 28px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.hsv-toolbar button {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  height: 28px;
+}
+.hsv-toolbar button:hover { filter: brightness(1.15); }
+.hsv-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hsv-slider label {
+  flex: 0 0 72px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.hsv-slider input[type=range] { flex: 1; min-width: 140px; }
+.hsv-slider .hs-val {
+  flex: 0 0 40px;
+  text-align: right;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* YOLO 识别物体按钮（点击选为抓取目标） */
+.arm-yolo-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 34px;
+}
+.arm-yolo-buttons:empty::after {
+  content: "暂无检测（yolo_ros_grab 是否已启动？）";
+  color: var(--muted);
+  font-size: 12px;
+  align-self: center;
+}
+.arm-yolo-buttons .yp {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+.arm-yolo-buttons .yp:hover { border-color: var(--accent); color: var(--accent); }
+.arm-yolo-buttons .yp.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.arm-yolo-buttons .yp span { font-size: 11px; opacity: 0.75; }
+
 /* --------- Mobile / narrow-screen tweaks --------- */
 @media (max-width: 640px) {
   header {
