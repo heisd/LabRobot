@@ -3,4 +3,4 @@
 	url = https://github.com/mgonzs13/yolo_ros.git
 [submodule "src/serial_ros2"]
 	path = src/serial_ros2
-	url = https://github.com/RozaGkliva/ros2_serial.git
+	url = https://github.com/jinmenglei/serial.git

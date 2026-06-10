@@ -56,12 +56,7 @@ source install/setup.bash
 | 子模块 | 路径 | 用途 |
 | --- | --- | --- |
 | [yolo_ros](https://github.com/mgonzs13/yolo_ros) | `src/yolo_ros` | YOLO 检测（Ultralytics），底盘 `wheeltec_yolo` 视觉跟随与机械臂 `grab_demo` YOLO 抓取共用 |
-| [ros2_serial](https://github.com/RozaGkliva/ros2_serial)（`ros2_cppserial` / `ros2_serial_interfaces`） | `src/serial_ros2` | 串口通信库 |
-
-> 注意：`turn_on_wheeltec_robot` 的 `package.xml` / `CMakeLists.txt` 当前依赖的包名是
-> `serial`（`find_package(serial REQUIRED)`），与 `ros2_serial` 提供的包名
-> `ros2_cppserial` / `ros2_serial_interfaces` 不一致，编译 `turn_on_wheeltec_robot` 时
-> 可能找不到 `serial` 包，需要据此调整依赖声明或代码中的引用。
+| [serial](https://github.com/jinmenglei/serial) | `src/serial_ros2` | 串口通信库（`serial` 包），`turn_on_wheeltec_robot` 依赖 |
 
 ## 常用文档速查
 
