@@ -273,6 +273,9 @@ void turn_on_robot::Publish_Voltage()
     if( ((Power_voltage<20 && robot_type=="Plus") || (Power_voltage<10 && robot_type=="Mini")) && Charging==0 && time_period>=2)
     {
       cout<<RED<<"Robot battery: "<<Power_voltage<<" is too low. Need charging."<<endl<<RESET;
+      //同时进 /rosout 的正式告警(原 cout 只在本地终端可见): Dashboard 日志面板可显示
+      RCLCPP_WARN(this->get_logger(),
+                  "电池电压 %.2fV 过低, 底盘禁止移动, 请尽快充电", Power_voltage);
       Last_Time = rclcpp::Node::now();
     }
 }

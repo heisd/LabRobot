@@ -154,14 +154,16 @@
 
     sub('/PowerVoltage', 'std_msgs/msg/Float32', (msg) => {
       chassisTime = Date.now();
+      stm32Time = Date.now();
       const v = msg.data;
       const el = $('m-voltage');
       el.textContent = v.toFixed(2) + ' V';
       el.classList.remove('ok', 'warn', 'err');
-      // S300 uses ~24V battery pack. Tweak thresholds to your battery.
-      if (v < 22) el.classList.add('err');
-      else if (v < 23) el.classList.add('warn');
+      // 24V 电池组：<20V 固件禁止底盘移动（err），<22V 提前预警（warn）。
+      if (v < 20) el.classList.add('err');
+      else if (v < 22) el.classList.add('warn');
       else el.classList.add('ok');
+      updateStm32Voltage(v);
       pushChart(chartVoltage, v);
     });
 
@@ -174,16 +176,20 @@
       $('m-charge-current').textContent = msg.data.toFixed(2) + ' A';
     });
     sub('/robot_red_flag', 'std_msgs/msg/Bool', (msg) => {
-      const el = $('m-red');
-      el.textContent = msg.data ? '触发' : '正常';
-      el.classList.remove('ok', 'err');
-      el.classList.add(msg.data ? 'err' : 'ok');
+      ['m-red', 'stm32-red'].forEach((id) => {
+        const el = $(id);
+        if (!el) return;
+        el.textContent = msg.data ? '触发' : '正常';
+        el.classList.remove('ok', 'err');
+        el.classList.add(msg.data ? 'err' : 'ok');
+      });
     });
     sub('/self_check_data', 'std_msgs/msg/UInt32', (msg) => {
       $('m-selfcheck').textContent = '0x' + msg.data.toString(16).toUpperCase();
     });
 
     sub('/odom', 'nav_msgs/msg/Odometry', (msg) => {
+      stm32Time = Date.now();   // /odom 只在串口帧校验通过时发布 → 下位机在线信号
       const p = msg.pose.pose.position;
       const q = msg.pose.pose.orientation;
       $('m-odom-xy').textContent = `${p.x.toFixed(2)}, ${p.y.toFixed(2)} m`;
@@ -1425,6 +1431,76 @@
     if (v) v.innerHTML = '';
   });
 
+  // ---------- 下位机 STM32F407 (turn_on_wheeltec_robot · serial) ----------
+  // /odom、/PowerVoltage 等话题只有串口帧校验通过才发布（wheeltec_robot.cpp
+  // Get_Sensor_Data 帧头 0x7B 校验）—— 话题数据流动即下位机在线。
+  // 固件在电压 <20V（Plus 型）时禁止底盘移动：边沿与持续低压都记录到事件栏。
+  let stm32Time = 0;        // 最近一次串口帧话题（/odom、/PowerVoltage）到达时间
+  let stm32Online = null;   // null=未知；用于在线/离线边沿记录日志
+  let stm32LowVolt = null;  // null=未知；低压状态边沿
+  let stm32LowVoltLogTime = 0;
+  const STM32_MIN_MOVE_VOLT = 20;   // 与 turn_on_wheeltec_robot 固件阈值一致
+
+  function addStm32Log(text) {
+    appendTimeline('stm32-log', 100, text);
+  }
+
+  function updateStm32Voltage(v) {
+    const volt = $('stm32-voltage');
+    if (volt) {
+      volt.textContent = v.toFixed(2) + ' V';
+      volt.classList.remove('ok', 'warn', 'err');
+      volt.classList.add(v < STM32_MIN_MOVE_VOLT ? 'err' : (v < 22 ? 'warn' : 'ok'));
+    }
+    const low = v < STM32_MIN_MOVE_VOLT;
+    const move = $('stm32-move');
+    if (move) {
+      move.textContent = low ? '禁动 (<' + STM32_MIN_MOVE_VOLT + 'V)' : '允许';
+      move.classList.remove('ok', 'err');
+      move.classList.add(low ? 'err' : 'ok');
+    }
+    const now = Date.now();
+    if (stm32LowVolt !== low) {
+      stm32LowVolt = low;
+      stm32LowVoltLogTime = now;
+      if (low) {
+        addStm32Log('⚠ 电压 ' + v.toFixed(2) + 'V 低于 ' + STM32_MIN_MOVE_VOLT +
+          'V，底盘禁止移动，请尽快充电');
+      } else {
+        addStm32Log('电压 ' + v.toFixed(2) + 'V 恢复，底盘允许移动');
+      }
+    } else if (low && now - stm32LowVoltLogTime > 60000) {
+      stm32LowVoltLogTime = now;   // 持续低压每 60s 重复提醒一次，不刷屏
+      addStm32Log('⚠ 持续低压 ' + v.toFixed(2) + 'V（<' + STM32_MIN_MOVE_VOLT +
+        'V 禁动），请充电');
+    }
+  }
+
+  // 在线/离线检测：2 秒没有任何串口帧话题判离线，1s 检查一次。
+  setInterval(() => {
+    if (stm32Time === 0) return;   // 从未收到数据，保持 "—"
+    const on = Date.now() - stm32Time < 2000;
+    const el = $('stm32-online');
+    if (el) {
+      el.textContent = on ? '在线' : '离线';
+      el.classList.remove('ok', 'err');
+      el.classList.add(on ? 'ok' : 'err');
+    }
+    if (stm32Online !== on) {
+      stm32Online = on;
+      addStm32Log(on ? '下位机在线（串口数据流正常）'
+        : '⚠ 下位机数据流中断（串口断开 / 驱动未运行 / rosbridge 断开）');
+    }
+  }, 1000);
+
+  const stm32LogClear = $('stm32-log-clear');
+  if (stm32LogClear) {
+    stm32LogClear.addEventListener('click', () => {
+      const v = $('stm32-log');
+      if (v) v.innerHTML = '';
+    });
+  }
+
   // ---------- 机械臂 (Lebai LM3: lebai_driver + grab_demo) ----------
   // 状态显示走 /robot_status、/gripper_status、/joint_states 等话题；控制走
   // /system_service、/io_service、/motion_service 的服务以及 grab_demo 的
@@ -1618,6 +1694,16 @@
     });
   }
 
+  // 预设关节位（SRDF 命名位姿 look/zero + arm_demo 的 FK 演示目标）：只填值不执行。
+  document.querySelectorAll('#panel-arm .mj-preset').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const vals = (btn.dataset.pose || '').split(',').map(Number);
+      if (vals.length < armMjInputs.length || vals.some(Number.isNaN)) return;
+      armMjInputs.forEach((inp, i) => { inp.value = vals[i]; });
+      addArmLog('已填入预设关节角：' + btn.textContent.trim() + '（点"执行运动"生效）');
+    });
+  });
+
   const armMjRun = $('arm-mj-run');
   if (armMjRun) {
     armMjRun.addEventListener('click', () => {
@@ -1641,6 +1727,71 @@
       }, (res) => {
         addArmLog(res && res.ret ? '✓ move_joint 已执行' : '✗ move_joint 失败（看驱动日志）');
       });
+    });
+  }
+
+  // 位姿运动 IK：末端 X/Y/Z + RPY -> /motion_service/move_joint|move_line
+  // （is_joint_pose=false，逆解在乐白控制器内完成）。arm_demo ik_demo 的面板版。
+  function quatFromRpy(roll, pitch, yaw) {
+    const cr = Math.cos(roll / 2), sr = Math.sin(roll / 2);
+    const cp = Math.cos(pitch / 2), sp = Math.sin(pitch / 2);
+    const cy = Math.cos(yaw / 2), sy = Math.sin(yaw / 2);
+    return {
+      x: sr * cp * cy - cr * sp * sy,
+      y: cr * sp * cy + sr * cp * sy,
+      z: cr * cp * sy - sr * sp * cy,
+      w: cr * cp * cy + sr * sp * sy,
+    };
+  }
+
+  function armCartesianMove(kind) {
+    const x = parseFloat($('arm-ik-x').value);
+    const y = parseFloat($('arm-ik-y').value);
+    const z = parseFloat($('arm-ik-z').value);
+    const roll = parseFloat($('arm-ik-r').value) * Math.PI / 180;
+    const pitch = parseFloat($('arm-ik-p').value) * Math.PI / 180;
+    const yaw = parseFloat($('arm-ik-yw').value) * Math.PI / 180;
+    if ([x, y, z, roll, pitch, yaw].some(Number.isNaN)) { alert('位姿必须是数字'); return; }
+    const acc = parseFloat($('arm-ik-acc').value);
+    const vel = parseFloat($('arm-ik-vel').value);
+    if (!(acc > 0) || !(vel > 0)) { alert('acc / vel 必须为正数'); return; }
+    const srv = kind === 'line' ? 'move_line' : 'move_joint';
+    const type = kind === 'line' ? 'lebai_interfaces/srv/MoveLine' : 'lebai_interfaces/srv/MoveJoint';
+    const txt = `x=${x.toFixed(3)}, y=${y.toFixed(3)}, z=${z.toFixed(3)}`;
+    if (!window.confirm('将真实移动机械臂末端到 (' + txt + ') m（' +
+        (kind === 'line' ? '笛卡尔直线' : '关节插补') + '，控制器解 IK，无碰撞检查），确认执行？')) return;
+    addArmLog('> ' + srv + ' (' + txt + ') acc=' + acc + ' vel=' + vel);
+    callArmService('/motion_service/' + srv, type, {
+      is_joint_pose: false,
+      joint_pose: [],
+      cartesian_pose: {
+        position: { x, y, z },
+        orientation: quatFromRpy(roll, pitch, yaw),
+      },
+      common: { acc, vel, time: 0, radius: 0 },
+    }, (res) => {
+      addArmLog(res && res.ret ? '✓ ' + srv + ' 已执行'
+        : '✗ ' + srv + ' 失败（目标可能不可达，看驱动日志）');
+    });
+  }
+
+  const armIkRun = $('arm-ik-run');
+  if (armIkRun) armIkRun.addEventListener('click', () => armCartesianMove('joint'));
+  const armIkLine = $('arm-ik-line');
+  if (armIkLine) armIkLine.addEventListener('click', () => armCartesianMove('line'));
+
+  const armIkDemo = $('arm-ik-demo');
+  if (armIkDemo) {
+    armIkDemo.addEventListener('click', () => {
+      // arm_demo ik_demo.cpp 的演示目标位姿（四元数转 RPY 填入）。
+      $('arm-ik-x').value = 0.6;
+      $('arm-ik-y').value = 0.17;
+      $('arm-ik-z').value = 0.46;
+      const rpy = rpyFromQuat({ x: 0.16, y: 0.05, z: 0.013, w: 0.98 });
+      $('arm-ik-r').value = (rpy.roll * 180 / Math.PI).toFixed(1);
+      $('arm-ik-p').value = (rpy.pitch * 180 / Math.PI).toFixed(1);
+      $('arm-ik-yw').value = (rpy.yaw * 180 / Math.PI).toFixed(1);
+      addArmLog('已填入 arm_demo IK 演示位（点"执行运动"生效）');
     });
   }
 

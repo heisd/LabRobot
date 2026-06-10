@@ -54,7 +54,8 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 - **系统总览**：系统架构卡（底盘 / 机械臂两部分的模块总览 + 在线状态点 +
   点击跳转）、3D 视图（雷达 `/scan`）、实时遥测、电压 / cmd_vel 折线图
 - **Wheeltec 底盘**
-  - **组件状态**：雷达（双雷达融合健康）、超声波、语音组件、相机预览、
+  - **组件状态**：下位机 STM32F407（示意图 + 串口在线检测 + 低压禁动 +
+    事件日志）、雷达（双雷达融合健康）、超声波、语音组件、相机预览、
     `/rosout` 日志面板
   - **底盘控制**：速度控制（遥控）、参数调节
   - **功能模块**（含子页面）：巡线、KCF 跟踪、YOLO 检测、VLA 语音导航
@@ -126,7 +127,12 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
     - 夹爪控制：位置/力度滑块 + 张开/闭合快捷键，调
       `/io_service/set_gripper_position|set_gripper_force`（SetGripper）。
     - 关节运动：6 关节角(rad) + acc/vel 调 `/motion_service/move_joint`
-      （MoveJoint，二次确认），可一键填入当前关节角。
+      （MoveJoint，二次确认），可一键填入当前关节角或预设位（观察位
+      look / 零位 zero / arm_demo FK 演示位）。
+    - 位姿运动 IK：末端 X/Y/Z + RPY（角度制，内部转四元数）经
+      `/motion_service/move_joint|move_line`（cartesian 模式）下发，逆解
+      由乐白控制器完成（不经 MoveIt、无碰撞检查，二次确认）；
+      "IK 演示位"即 `arm_demo ik_demo` 的目标位姿。
     - 抓取与仲裁（各方案共用）：调 `/obj_grab_service`（GrabObject）抓取
       指定 TF 目标；`/arm_arbiter/manual_takeover|manual_release` 手动
       接管/释放，可打断自动抓取；事件时间线记录所有命令与结果。

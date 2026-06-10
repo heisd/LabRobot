@@ -50,6 +50,7 @@
               <span class="arch-sub">turn_on_wheeltec_robot</span>
             </div>
             <div class="arch-items">
+              <button class="arch-link" data-tab="components">下位机 STM32</button>
               <button class="arch-link" data-tab="components">雷达 / 超声</button>
               <button class="arch-link" data-tab="components">语音 / 相机</button>
               <button class="arch-link" data-tab="control">速度控制</button>
@@ -189,6 +190,37 @@
           </div>
         </div>
         <p class="hint">double_lidar_fusion 订阅 <code>/scan1</code>+<code>/scan2</code> 融合为 <code>/scan</code>（360°）。某台离线时自动只用在线雷达；两台都离线则停止输出。点云可视化见"系统总览"的 3D 视图。</p>
+      </section>
+
+      <section class="card">
+        <h2>下位机 STM32F407 <span class="muted">(turn_on_wheeltec_robot · serial)</span></h2>
+        <div class="stm32-body">
+          <img class="stm32-img" src="stm32f407.svg" alt="STM32F407 下位机" />
+          <div class="grid stm32-grid">
+            <div class="metric">
+              <div class="metric-label">串口数据流（在线状态）</div>
+              <div id="stm32-online" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">电池电压</div>
+              <div id="stm32-voltage" class="metric-value">— V</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">底盘移动（&lt;20V 禁动）</div>
+              <div id="stm32-move" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">急停 (red flag)</div>
+              <div id="stm32-red" class="metric-value">—</div>
+            </div>
+          </div>
+        </div>
+        <div class="vla-timeline-head">
+          <span>下位机事件（在线/离线 · 低压禁动）</span>
+          <button id="stm32-log-clear">清空</button>
+        </div>
+        <div id="stm32-log" class="vla-timeline stm32-log"></div>
+        <p class="hint">下位机 STM32F407 经串口（serial 包，帧头 <code>0x7B</code>）连接 <code>turn_on_wheeltec_robot</code>：<code>/odom</code>、<code>/PowerVoltage</code> 等话题只有串口帧校验通过才发布，因此<strong>话题有数据 = 下位机在线</strong>（2 秒无帧判离线）。<strong>电压低于 20V 时底盘禁止移动</strong>：状态变化与持续低压会记录到上方事件栏，驱动节点同时向 <code>/rosout</code> 打 WARN（见本页日志面板）。</p>
       </section>
 
       <section class="card">
@@ -718,11 +750,36 @@
           <label>加速度 acc<input id="arm-mj-acc" type="number" step="0.1" min="0" value="1.0" /></label>
           <label>速度 vel<input id="arm-mj-vel" type="number" step="0.1" min="0" value="1.0" /></label>
         </div>
+        <div class="vla-quick">
+          <button class="vla-q mj-preset" data-pose="-1.14,-1.75,-2.47,-0.46,1.56,3.58">观察位 look</button>
+          <button class="vla-q mj-preset" data-pose="0,0,0,0,0,0">零位 zero</button>
+          <button class="vla-q mj-preset" data-pose="-1.01,-2.14,-1.72,-0.77,1.9,3.68">FK 演示位 (arm_demo)</button>
+        </div>
         <div class="mj-actions">
           <button id="arm-mj-fill" type="button">填入当前关节角</button>
           <button id="arm-mj-run" class="mj-run" type="button">执行运动</button>
         </div>
-        <p class="hint">⚠ 调用 <code>/motion_service/move_joint</code>（MoveJoint）<strong>会真实移动机械臂</strong>，执行前有二次确认；需启动 <code>motion.launch.py</code>。"填入当前关节角"读取 <code>/joint_states</code> 中 <code>lebai_joint_1..6</code> 的实时值。</p>
+        <p class="hint">⚠ 调用 <code>/motion_service/move_joint</code>（MoveJoint）<strong>会真实移动机械臂</strong>，执行前有二次确认；需启动 <code>motion.launch.py</code>。"填入当前关节角"读取 <code>/joint_states</code> 中 <code>lebai_joint_1..6</code> 的实时值；预设位按钮只填入数值（观察位/零位来自 MoveIt SRDF 命名位姿，FK 演示位即 <code>arm_demo fk_demo</code> 的目标关节角），点"执行运动"才会动。</p>
+      </section>
+
+      <section class="card card-wide">
+        <h2>位姿运动 IK <span class="muted">(/motion_service · cartesian · arm_demo 同款)</span></h2>
+        <div class="mj-grid">
+          <label>X (m)<input id="arm-ik-x" type="number" step="0.01" value="0.30" /></label>
+          <label>Y (m)<input id="arm-ik-y" type="number" step="0.01" value="0.00" /></label>
+          <label>Z (m)<input id="arm-ik-z" type="number" step="0.01" value="0.40" /></label>
+          <label>Roll (°)<input id="arm-ik-r" type="number" step="1" value="0" /></label>
+          <label>Pitch (°)<input id="arm-ik-p" type="number" step="1" value="0" /></label>
+          <label>Yaw (°)<input id="arm-ik-yw" type="number" step="1" value="0" /></label>
+          <label>加速度 acc<input id="arm-ik-acc" type="number" step="0.1" min="0" value="0.5" /></label>
+          <label>速度 vel<input id="arm-ik-vel" type="number" step="0.1" min="0" value="0.5" /></label>
+        </div>
+        <div class="mj-actions">
+          <button id="arm-ik-demo" type="button">IK 演示位 (arm_demo)</button>
+          <button id="arm-ik-line" type="button">直线运动 move_line</button>
+          <button id="arm-ik-run" class="mj-run" type="button">执行运动 move_joint</button>
+        </div>
+        <p class="hint">⚠ 给定末端目标位姿（机械臂基座坐标系，姿态为 RPY 角度制，内部转四元数下发），<strong>逆运动学由乐白控制器解算</strong>（等价 <code>movej/movel</code> 到 CartesianPose），<strong>不经 MoveIt、无碰撞检查</strong>——执行前请确认目标位姿无碰撞；均有二次确认，需启动 <code>motion.launch.py</code>。"执行运动"为关节插补，"直线运动"为笛卡尔直线。原 <code>arm_demo</code> 演示与本页等价：FK = 上方关节运动到 FK 演示位，IK = 本卡到 IK 演示位（x=0.6, y=0.17, z=0.46）；要走 MoveIt 碰撞规划仍可 <code>ros2 launch arm_demo fk_demo.launch.py / ik_demo.launch.py</code>。</p>
       </section>
 
       <section class="card card-wide">
