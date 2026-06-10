@@ -1,0 +1,17 @@
+Objects/
+Listings/
+*.axf
+*.hex
+*.bin
+*.map
+*.o
+*.obj
+*.crf
+*.lst
+*.d
+*.dep
+*.bak
+*.tmp
+*.uvgui*
+*.uvoptx
+*.uvguix.*
