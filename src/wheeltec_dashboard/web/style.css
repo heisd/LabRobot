@@ -1125,6 +1125,76 @@ main {
 }
 .arm-yolo-buttons .yp span { font-size: 11px; opacity: 0.75; }
 
+/* --------- 自动回充 / 安全等级 / RGB 灯带（底盘控制页） --------- */
+.sec-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+/* 与 .teleop-sliders label 同款纵排（标签在上、控件在下），按钮与控件底对齐 */
+.sec-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.sec-row select {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 8px;
+  border-radius: 4px;
+}
+.sec-row button,
+.rc-btns button,
+.rgb-row button {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sec-row button:hover,
+.rc-btns button:hover,
+.rgb-row button:hover { filter: brightness(1.15); }
+
+.rc-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.rc-btns .rc-stop { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
+.rc-btns .rc-stop:hover { border-color: var(--err); color: var(--err); filter: none; }
+
+.rgb-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.rgb-row input[type="color"] {
+  width: 56px;
+  height: 34px;
+  padding: 2px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.rgb-text {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--muted);
+  min-width: 130px;
+}
+
 /* --------- Mobile / narrow-screen tweaks --------- */
 @media (max-width: 640px) {
   header {

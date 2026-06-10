@@ -54,10 +54,10 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 - **系统总览**：系统架构卡（底盘 / 机械臂两部分的模块总览 + 在线状态点 +
   点击跳转）、3D 视图（雷达 `/scan`）、实时遥测、电压 / cmd_vel 折线图
 - **Wheeltec 底盘**
-  - **组件状态**：下位机 STM32F407（示意图 + 串口在线检测 + 低压禁动 +
-    事件日志）、雷达（双雷达融合健康）、超声波、语音组件、相机预览、
-    `/rosout` 日志面板
-  - **底盘控制**：速度控制（遥控）、参数调节
+  - **组件状态**：下位机 STM32F407（示意图 + 串口在线检测 + 固件使能位 +
+    低压禁动 + 回充模式回读 + 事件日志）、雷达（双雷达融合健康）、超声波、
+    语音组件、相机预览、`/rosout` 日志面板
+  - **底盘控制**：速度控制（遥控 + 安全等级）、自动回充、RGB 灯带、参数调节
   - **功能模块**（含子页面）：巡线、KCF 跟踪、YOLO 检测、VLA 语音导航
 - **Lebai 机械臂**
   - **监控与抓取**（含子页面）：监控与控制、HSV / YOLO / KCF / ArUco / VLM
@@ -92,8 +92,20 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
   类别/置信度，图像话题可指向检测节点的标注输出。
 
 - 实时遥测：`/PowerVoltage`、`/robot_charging_flag`、`/robot_charging_current`、
-  `/robot_red_flag`、`/self_check_data`、`/odom`、`/imu/data_raw`、`/Distance`
-- 速度控制：方向按键 + 线/角速度上限滑块 + 键盘 WASD/空格 (停)
+  `/robot_red_flag`（**回充红外信号**——固件回充帧 rx[3] 是收到充电桩红外的
+  对管个数，不是急停）、`/self_check_data`（新固件该字段恒 0）、`/odom`、
+  `/imu/data_raw`、`/Distance`、`/robot_enable_flag`（固件使能位 en_flag，
+  需重编译驱动）、`/robot_recharge_mode`（固件回充模式回读，需重编译驱动）
+- 速度控制：方向按键 + 线/角速度上限滑块 + 键盘 WASD/空格 (停)；
+  **安全等级**开关发布 `/chassis_security`（0=速度流中断自动停车 /
+  1=保持最后速度，随下一帧 cmd_vel 写入固件 SecurityLevel）
+- **自动回充**：发布 `/robot_recharge_flag`（1 开 / 0 关，发布后自动补发一帧
+  零速 cmd_vel 把标志位带给固件）；卡内显示固件确认的回充模式、回充红外、
+  充电状态与电流。回充中由充电桩 CAN 设备引导底盘，手动遥控可打断，
+  低压禁动豁免
+- **RGB 灯带**：颜色选择器调 `/set_rgb_color` 服务（robot_interfaces/SetRgb，
+  驱动转固件 `0x04` 串口帧）。固件优先级：充电指示 > 低电量 > 超声波警示 >
+  用户自定义
 - 参数调节：通过 `rcl_interfaces/GetParameters`/`SetParameters` 服务读写
   `/wheeltec_robot` 上的 `odom_x_scale`、`odom_y_scale`、
   `odom_z_scale_positive`、`odom_z_scale_negative`

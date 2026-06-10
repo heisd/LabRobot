@@ -191,7 +191,9 @@ class turn_on_robot :public rclcpp::Node
 		//自动回充模式标志位订阅回调函数
 		void Recharge_Flag_Callback(const std_msgs::msg::Int8 &Recharge_Flag); 
 		void Security_Callback(const std_msgs::msg::Int8 &Security_Flag);
-		bool Set_LightRgb_Callback(robot_interfaces::srv::SetRgb::Request &req,robot_interfaces::srv::SetRgb::Response &res);
+		//设置灯带颜色服务回调（rclcpp 服务签名：shared_ptr 请求/响应）
+		void Set_LightRgb_Callback(const std::shared_ptr<robot_interfaces::srv::SetRgb::Request> req,
+		                           std::shared_ptr<robot_interfaces::srv::SetRgb::Response> res);
 		
         rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher;         // CHANGE
 		rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_publisher;         // CHANGE
@@ -201,6 +203,8 @@ class turn_on_robot :public rclcpp::Node
 		rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr Charging_current_publisher;         // CHANGE
 		rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr RED_publisher;         // CHANGE
 		rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr SelfCheck_publisher;         // CHANGE
+		rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr Enable_publisher;       //下位机使能位 en_flag (24字节帧 rx[1])
+		rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr RechargeMode_publisher; //下位机自动回充模式 ChargeMode (回充帧 rx[5])
 		rclcpp::Service<robot_interfaces::srv::SetRgb>::SharedPtr SetRgb_Service;
 
 
@@ -216,6 +220,8 @@ class turn_on_robot :public rclcpp::Node
 		void Publish_Charging();        //Pub a topic about whether the robot is charging //发布机器人是否在充电的话题
 		void Publish_ChargingCurrent(); //Pub the charging current topic //发布充电电流话题
 		void Publish_RED();             //Pub the topic whether the robot finds the infrared signal (charging station) //发布机器人是否寻找到红外信号(充电桩)的话题
+		void Publish_EnableFlag();      //发布下位机使能位（en_flag：急停开关/驱动器离线报错/低压等任一条件触发失能）
+		void Publish_RechargeMode();    //发布下位机自动回充模式（固件确认的 ChargeMode，区别于上位机意图 /robot_recharge_flag）
 
         //从串口(ttyUSB)读取运动底盘速度、IMU、电源电压数据
         //Read motion chassis speed, IMU, power supply voltage data from serial port (ttyUSB)
@@ -241,7 +247,8 @@ class turn_on_robot :public rclcpp::Node
         int8_t AutoRecharge=0;     //Flag bit of the automatic recharge command //自动回充命令标志位
         bool Charging=0;           //Whether the robot is charging the flag bit //机器人是否在充电的标志位
         float Charging_Current=0;  //Charging_Current //充电电流
-        bool Red=0;                //Whether the robot finds the marker bit of infrared signal (charging pile)  //机器人是否寻找到红外信号(充电桩)的标志位 
+        bool Red=0;                //Whether the robot finds the marker bit of infrared signal (charging pile)  //机器人是否寻找到红外信号(充电桩)的标志位
+        bool RechargeMode=0;       //下位机回充模式（回充帧 rx[5]，固件 RobotControlParam.ChargeMode 的回读） 
         float odom_x_scale,odom_y_scale,odom_z_scale_positive,odom_z_scale_negative;
 };
 #endif

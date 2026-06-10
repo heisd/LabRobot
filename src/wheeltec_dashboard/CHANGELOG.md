@@ -6,6 +6,99 @@
 
 ---
 
+## 第 7 轮 — 对齐新固件 KeilSingleChipProject：回充红外语义修正 + 自动回充 / RGB 灯带 / 安全等级 / 固件使能位
+
+### 背景
+
+仓库新增了下位机 STM32F407 的完整 Keil 工程源码
+（`firmware/KeilSingleChipProject`，FreeRTOS）。逐文件比对固件协议
+（`data_task.c` 上行三包 / `SerialControl_task.c` 下行命令 /
+`RobotControl_task.c` 使能逻辑 / `AutoRecharge_task.c` 回充 /
+`RGBStripControl_task.c` 灯带）与驱动 `turn_on_wheeltec_robot` 后，
+把固件实际暴露但面板没接的能力补齐，并修正一处语义错误。
+
+### 语义修正：`/robot_red_flag` 不是急停
+
+固件回充帧 `autorechargerbuffer[3] = ChargeDev.RedNum` —— 是**收到充电桩
+红外信号的对管个数（0–4）**，驱动转成 Bool 发布。此前面板标成
+"急停 (red flag)"并按 err 渲染是错的。现统一改为"回充红外信号"，
+检测到=ok / 未检测=warn（总览遥测、STM32 卡、自动回充卡三处）。
+
+### 新增"自动回充"卡（底盘控制页）
+
+- 【开始自动回充】发布 `1` 到 `/robot_recharge_flag`（二次确认），
+  【退出回充】发布 `0`。**关键细节**：驱动只把该标志存进变量、随下一帧
+  cmd_vel 序列化进串口帧 frame[1]，所以发布后面板自动补发一帧零速
+  cmd_vel 把标志带下去（固件 `roscmdBuf[1]==1||2 → ChargeMode=1`）。
+- 卡内显示：回充模式（**固件回读**，见下）、回充红外、充电中、充电电流。
+- 固件行为已写进卡片提示：寻桩由充电桩 CAN 设备控制（Charger_CMD
+  优先级最低，手动遥控可打断）；无红外信号或已充电时寻桩速度为 0；
+  **回充模式中低压禁动豁免**（`robot_en_check`: `Vol<20 && ChargeMode==0`
+  才置 LowPower 错）；灯带转充电指示。
+
+### 新增"RGB 灯带"卡（底盘控制页）
+
+- 颜色选择器 + R/G/B 读数 +【设置颜色】/【关闭灯带】，调驱动服务
+  `/set_rgb_color`（robot_interfaces/SetRgb → 固件 `7B 04 en R G B … 7D`）。
+- 提示固件灯带优先级（充电指示 > 低电量 > 超声波警示 > 用户自定义），
+  自定义色在这些状态活跃时会被暂时覆盖。
+
+### 速度控制卡新增"安全等级"开关
+
+`/chassis_security`（Int8）→ 串口帧 frame[2] → 固件 SecurityLevel：
+0 = 速度流中断时固件主动停车（看门狗，默认）；1 = 保持最后速度。
+切到 1 需二次确认（断网不自停，明确标danger）；应用后补发一帧当前速度
+使其立即生效。
+
+### STM32F407 卡新增"固件使能位"与"回充模式回读"
+
+- 新指标 **固件使能 (en_flag)**：来自 24 字节帧 rx[1]（固件
+  `RobotControlParam.en_flag`），是固件真实的"允许移动"信号，涵盖
+  低压 / 急停开关 / 软件急停 / 驱动器离线或报错 全部失能条件 ——
+  比面板原来仅按电压推断的"底盘移动"更准确。失能/恢复边沿写事件日志
+  并列出固件 errCode 枚举的可能原因。
+- 新指标 **回充模式（固件确认）**：回充帧 rx[5] 的回读，区别于上位机
+  意图 `/robot_recharge_flag`；进入/退出边沿写事件日志。
+- "底盘移动"指标在 低压+回充中 时显示"允许（回充中低压豁免）"(warn)，
+  对齐固件逻辑。
+- 卡片提示更新：固件源码位置、20Hz 三包帧结构（24B 基础 `0x7B…0x7D` +
+  19B 超声波 `0xFA…0xFC` + 8B 回充 `0x7C…0x7F`）、新固件自检字段恒 0
+  （`/self_check_data` 显示 0x0 属正常）。
+
+### 配套驱动改动（turn_on_wheeltec_robot，需重编译）
+
+- **启用 `set_rgb_color` 服务**：回调原为 ROS1 风格签名且注册行被注释，
+  改为 rclcpp shared_ptr 签名并注册；修复串口异常后仍返回
+  "Set successfully" 的 bug（catch 分支 return）。
+- **新发布 `/robot_enable_flag`**（Bool，随 24 字节帧 ~20Hz）：rx[1]
+  此前已解析进 `Receive_Data.Flag_Stop` 但从未发布。
+- **新发布 `/robot_recharge_mode`**（Bool，随回充帧）：解析此前被忽略的
+  回充帧 rx[5]（固件 ChargeMode 回读）。
+- 面板对旧驱动向后兼容：两个新话题没有时对应指标保持 "—"，
+  RGB 服务不存在时按钮报"调用失败（驱动是否已重编译…）"。
+
+### 文件改动汇总（第 7 轮）
+
+| 文件 | 变化 |
+| --- | --- |
+| `web/index.html` | red flag 标签修正、STM32 卡 en_flag/回充模式指标 + hint 重写、自动回充卡、RGB 灯带卡、安全等级行 |
+| `web/app.js` | red flag/充电状态多处广播、/robot_enable_flag //robot_recharge_mode 订阅与边沿日志、回充/安全等级发布（补发 cmd_vel 推帧）、RGB 服务调用、低压回充豁免显示 |
+| `web/style.css` | `.sec-row` / `.rc-btns` / `.rgb-row` 样式 |
+| `../turn_on_wheeltec_robot/include/.../wheeltec_robot.hpp` | SetRgb 回调签名、新发布者/成员/函数声明 |
+| `../turn_on_wheeltec_robot/src/wheeltec_robot.cpp` | 启用 set_rgb_color 服务、Publish_EnableFlag / Publish_RechargeMode、回充帧 rx[5] 解析 |
+| `README.md` | 遥测/控制功能清单更新 |
+
+### 验证清单
+
+- [ ] 重编译 `colcon build --packages-select turn_on_wheeltec_robot` 后：`ros2 topic echo /robot_enable_flag` 有 ~20Hz 数据；按下急停开关 → false，STM32 卡"固件使能"变红并写事件日志。
+- [ ] `ros2 service call /set_rgb_color robot_interfaces/srv/SetRgb "{en: true, r: 255, g: 0, b: 0}"` 灯带变红；面板 RGB 卡选色"设置颜色"灯带跟随，"关闭灯带"熄灭。
+- [ ] 面板"开始自动回充"后：`/robot_recharge_flag` 收到 1、随后一帧零速 cmd_vel；下位机进入回充（卡内"回充模式（固件确认）"变"回充中"，事件日志记录）；遥控打断后再"退出回充"恢复。
+- [ ] 小车靠近充电桩：三处"回充红外"显示"检测到充电桩"（绿色，不再是"急停触发"红色）。
+- [ ] 安全等级切 1 时弹危险确认；`ros2 topic echo /chassis_security` 收到 1，且随后有一帧 cmd_vel。
+- [ ] 旧驱动（未重编译）下打开面板：新指标保持 "—"，无 JS 报错；RGB 按钮提示需重编译。
+
+---
+
 ## 第 6 轮 — arm_demo 能力接入 + 下位机 STM32F407 状态卡 + 低压禁动提醒
 
 ### arm_demo（FK/IK 运动学演示）接入机械臂页

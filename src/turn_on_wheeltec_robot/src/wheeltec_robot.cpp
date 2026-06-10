@@ -44,18 +44,20 @@ float turn_on_robot::Odom_Trans(uint8_t Data_High,uint8_t Data_Low)
 }
 
 
-//设置灯带颜色服务
-bool turn_on_robot::Set_LightRgb_Callback(robot_interfaces::srv::SetRgb::Request &req,robot_interfaces::srv::SetRgb::Response &res)
+//设置灯带颜色服务。对应固件 SerialControl_task.c 的 0x04 帧：
+//7B 04 en R G B 00 00 00 BCC 7D —— en=1 设置用户自定义颜色，en=0 关闭灯带。
+//注意固件灯带优先级（RGBStripControl_task.c）：充电指示/低电量/超声波警示
+//均高于用户自定义色，这些状态活跃时设置的颜色会被暂时覆盖。
+void turn_on_robot::Set_LightRgb_Callback(const std::shared_ptr<robot_interfaces::srv::SetRgb::Request> req,
+                                          std::shared_ptr<robot_interfaces::srv::SetRgb::Response> res)
 {
-  // short  transition;  //intermediate variable //中间变量
-
   Send_Data.tx[0]=FRAME_HEADER; //frame head 0x7B //帧头0X7B
-  Send_Data.tx[1] = 04; //设置灯带方法
-  Send_Data.tx[2] = req.en; //是否使能设置
+  Send_Data.tx[1] = 0x04; //设置灯带方法
+  Send_Data.tx[2] = req->en; //是否使能设置
 
-  Send_Data.tx[3] = req.r;  
-  Send_Data.tx[4] = req.g;   
-  Send_Data.tx[5] = req.b;
+  Send_Data.tx[3] = req->r;
+  Send_Data.tx[4] = req->g;
+  Send_Data.tx[5] = req->b;
 
   Send_Data.tx[6] = 0;
   Send_Data.tx[7] = 0;
@@ -64,15 +66,15 @@ bool turn_on_robot::Set_LightRgb_Callback(robot_interfaces::srv::SetRgb::Request
   Send_Data.tx[10]=FRAME_TAIL; //frame tail 0x7D //帧尾0X7D
   try
   {
-    Stm32_Serial.write(Send_Data.tx,sizeof (Send_Data.tx)); //Sends data to the downloader via serial port //通过串口向下位机发送数据 
+    Stm32_Serial.write(Send_Data.tx,sizeof (Send_Data.tx)); //Sends data to the downloader via serial port //通过串口向下位机发送数据
   }
-  catch (serial::IOException& e)   
+  catch (serial::IOException& e)
   {
-    res.res = "Set failed,Unable to send data through serial port";
+    res->res = "Set failed,Unable to send data through serial port";
+    return;
   }
 
-  res.res = "Set successfully";
-  return true;
+  res->res = "Set successfully";
 }
 
 /**************************************
@@ -289,8 +291,30 @@ void turn_on_robot::Publish_RED()
 {
     std_msgs::msg::Bool msg;
     msg.data=Red;
-    RED_publisher->publish(msg); 
+    RED_publisher->publish(msg);
 
+}
+/**************************************
+功能: 发布下位机使能位（24字节帧 rx[1] = 固件 RobotControlParam.en_flag）。
+false 表示固件已主动失能禁止底盘移动，可能原因（固件 RobotControl_task.h）：
+低压(<20V 且未回充)/急停开关按下/软件急停/任一驱动器离线或报错。
+***************************************/
+void turn_on_robot::Publish_EnableFlag()
+{
+    std_msgs::msg::Bool msg;
+    msg.data = (Receive_Data.Flag_Stop != 0);
+    Enable_publisher->publish(msg);
+}
+/**************************************
+功能: 发布下位机自动回充模式（回充帧 rx[5]）。这是固件确认进入/退出
+ChargeMode 的回读，区别于 /robot_recharge_flag（上位机意图，需随下一帧
+cmd_vel 序列化下发后才生效）。
+***************************************/
+void turn_on_robot::Publish_RechargeMode()
+{
+    std_msgs::msg::Bool msg;
+    msg.data = RechargeMode;
+    RechargeMode_publisher->publish(msg);
 }
 /**************************************
 Date: January 14, 2022
@@ -464,8 +488,9 @@ bool turn_on_robot::Get_Sensor_Data()
         transition_16   |=  Receive_AutoCharge_Data.rx[2]; 
         Charging_Current = transition_16/1000+(transition_16 % 1000)*0.001; //充电电流 
         
-        Red =  Receive_AutoCharge_Data.rx[3];    //红外接受状态
+        Red =  Receive_AutoCharge_Data.rx[3];    //红外接受状态（固件 ChargeDev.RedNum：收到充电桩红外的对管个数 0-4）
         Charging = Receive_AutoCharge_Data.rx[4];//小车充电状态
+        RechargeMode = Receive_AutoCharge_Data.rx[5];//下位机回充模式（固件 RobotControlParam.ChargeMode 回读）
 
         check_AutoCharge_data = true; //数据成功接收标志位
       }
@@ -599,6 +624,7 @@ void turn_on_robot::Control()
       Publish_Charging();  //Pub a topic about whether the robot is charging //发布机器人是否在充电的话题
       Publish_RED();       //Pub the topic whether the robot finds the infrared signal (charging station) //发布机器人是否寻找到红外信号(充电桩)的话题
       Publish_ChargingCurrent(); //Pub the charging current topic //发布充电电流话题
+      Publish_RechargeMode();    //发布下位机回充模式（固件 ChargeMode 回读）
       check_AutoCharge_data = false;
     }
 
@@ -626,8 +652,9 @@ void turn_on_robot::Control()
       // std::cout<<Mpu6050.linear_acceleration.x<<" "<<Mpu6050.linear_acceleration.y<<" "<<Mpu6050.linear_acceleration.z<<std::endl;
       // std::this_thread::sleep_for(std::chrono::milliseconds(500));
       Publish_Odom();      //Pub the speedometer topic //发布里程计话题
-      Publish_ImuSensor(); //Pub the IMU topic //发布IMU话题    
+      Publish_ImuSensor(); //Pub the IMU topic //发布IMU话题
       Publish_Voltage();   //Pub the topic of power supply voltage //发布电源电压话题
+      Publish_EnableFlag();//发布下位机使能位（en_flag，急停/驱动器异常/低压时为 false）
 
       last_time = current_time; //Record the time and use it to calculate the time interval //记录时间，用于计算时间间隔
       
@@ -685,7 +712,10 @@ turn_on_robot::turn_on_robot(std::string node_name):Node(node_name),Sampling_Tim
   Charging_current_publisher =     create_publisher<std_msgs::msg::Float32>("robot_charging_current", 20);    // CHANGE
   RED_publisher              =     create_publisher<std_msgs::msg::Bool>("robot_red_flag", 20);    // CHANGE
   SelfCheck_publisher        =     create_publisher<std_msgs::msg::UInt32>("/self_check_data", 20);    // CHANGE
-  // SetRgb_Service=create_service<robot_interfaces::srv::SetRgb>("set_rgb_color",std::bind(&turn_on_robot::Set_LightRgb_Callback,this,std::placeholders::_1,std::placeholders::_2));
+  Enable_publisher           =     create_publisher<std_msgs::msg::Bool>("robot_enable_flag", 10);     //下位机使能位（24字节帧 rx[1]）
+  RechargeMode_publisher     =     create_publisher<std_msgs::msg::Bool>("robot_recharge_mode", 20);   //下位机回充模式（回充帧 rx[5]）
+  //RGB 灯带设置服务（固件 0x04 帧）。Dashboard 经 rosbridge 调用。
+  SetRgb_Service=create_service<robot_interfaces::srv::SetRgb>("set_rgb_color",std::bind(&turn_on_robot::Set_LightRgb_Callback,this,std::placeholders::_1,std::placeholders::_2));
 
 
 

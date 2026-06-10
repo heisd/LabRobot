@@ -20,6 +20,8 @@
   let armVlmInstrPub = null;   // /vlm/instruction publisher (机械臂 VLM 抓取)
   let armVlmConfirmPub = null; // /vlm/confirm publisher (确认/取消抓取)
   let kcfBboxPub = null;       // /kcf_node/select_bbox publisher (KCF 手动框选)
+  let rechargeFlagPub = null;  // /robot_recharge_flag publisher (自动回充 1开/0关)
+  let securityPub = null;      // /chassis_security publisher (固件安全等级 0/1)
   let lidarSubs = [];      // per-source LaserScan subs (managed separately so
                            // the lidar card can re-subscribe on topic change)
   const lidarLast = {};    // key -> { time, points, min }
@@ -139,6 +141,14 @@
       try { kcfBboxPub.unadvertise(); } catch (_) { /* ignore */ }
       kcfBboxPub = null;
     }
+    if (rechargeFlagPub) {
+      try { rechargeFlagPub.unadvertise(); } catch (_) { /* ignore */ }
+      rechargeFlagPub = null;
+    }
+    if (securityPub) {
+      try { securityPub.unadvertise(); } catch (_) { /* ignore */ }
+      securityPub = null;
+    }
     // 机械臂侧状态属于上一个连接：清掉，避免换机器人重连后残留
     // 旧关节行 / 旧的 YOLO 目标选中态（armJointMap 也因此不会无限增长）。
     armJointMap.clear();
@@ -168,25 +178,43 @@
     });
 
     sub('/robot_charging_flag', 'std_msgs/msg/Bool', (msg) => {
-      const el = $('m-charging');
-      el.textContent = msg.data ? '是' : '否';
-      el.classList.toggle('ok', !!msg.data);
-    });
-    sub('/robot_charging_current', 'std_msgs/msg/Float32', (msg) => {
-      $('m-charge-current').textContent = msg.data.toFixed(2) + ' A';
-    });
-    sub('/robot_red_flag', 'std_msgs/msg/Bool', (msg) => {
-      ['m-red', 'stm32-red'].forEach((id) => {
+      ['m-charging', 'rc-charging'].forEach((id) => {
         const el = $(id);
         if (!el) return;
-        el.textContent = msg.data ? '触发' : '正常';
-        el.classList.remove('ok', 'err');
-        el.classList.add(msg.data ? 'err' : 'ok');
+        el.textContent = msg.data ? '是' : '否';
+        el.classList.toggle('ok', !!msg.data);
+      });
+    });
+    sub('/robot_charging_current', 'std_msgs/msg/Float32', (msg) => {
+      ['m-charge-current', 'rc-current'].forEach((id) => {
+        const el = $(id);
+        if (el) el.textContent = msg.data.toFixed(2) + ' A';
+      });
+    });
+    // red flag = 回充红外：固件回充帧 rx[3] 是收到充电桩红外的对管个数
+    // (ChargeDev.RedNum 0-4)，驱动转成 Bool 发布 —— 不是急停信号。
+    sub('/robot_red_flag', 'std_msgs/msg/Bool', (msg) => {
+      ['m-red', 'stm32-red', 'rc-red'].forEach((id) => {
+        const el = $(id);
+        if (!el) return;
+        el.textContent = msg.data ? '检测到充电桩' : '未检测';
+        el.classList.remove('ok', 'warn', 'err');
+        if (msg.data) el.classList.add('ok');   // 未检测是常态，不着色
       });
     });
     sub('/self_check_data', 'std_msgs/msg/UInt32', (msg) => {
       $('m-selfcheck').textContent = '0x' + msg.data.toString(16).toUpperCase();
     });
+    // 下位机使能位（24字节帧 rx[1]）：固件真实的"允许移动"信号。
+    // 需重编译 turn_on_wheeltec_robot 才有此话题，没有时指标保持 "—"。
+    sub('/robot_enable_flag', 'std_msgs/msg/Bool', (msg) => {
+      stm32Time = Date.now();
+      updateStm32Enable(!!msg.data);
+    }, { throttle_rate: 200 });
+    // 下位机回充模式回读（回充帧 rx[5]）：固件确认已进入/退出 ChargeMode。
+    sub('/robot_recharge_mode', 'std_msgs/msg/Bool', (msg) => {
+      updateRechargeMode(!!msg.data);
+    }, { throttle_rate: 200 });
 
     sub('/odom', 'nav_msgs/msg/Odometry', (msg) => {
       stm32Time = Date.now();   // /odom 只在串口帧校验通过时发布 → 下位机在线信号
@@ -226,6 +254,17 @@
       messageType: 'geometry_msgs/msg/Twist',
     });
     cmdVelPub.advertise();
+
+    // 自动回充开关与固件安全等级：都是驱动里的标志位，随下一帧 cmd_vel
+    // 序列化进串口帧（frame[1]/frame[2]）下发，因此发布后要补发一帧 cmd_vel。
+    rechargeFlagPub = new ROSLIB.Topic({
+      ros, name: '/robot_recharge_flag', messageType: 'std_msgs/msg/Int8',
+    });
+    rechargeFlagPub.advertise();
+    securityPub = new ROSLIB.Topic({
+      ros, name: '/chassis_security', messageType: 'std_msgs/msg/Int8',
+    });
+    securityPub.advertise();
 
     // VLA: publish instructions / TTS text, watch recognition + status.
     vlaInstrPub = new ROSLIB.Topic({
@@ -1455,9 +1494,16 @@
     const low = v < STM32_MIN_MOVE_VOLT;
     const move = $('stm32-move');
     if (move) {
-      move.textContent = low ? '禁动 (<' + STM32_MIN_MOVE_VOLT + 'V)' : '允许';
-      move.classList.remove('ok', 'err');
-      move.classList.add(low ? 'err' : 'ok');
+      // 固件只在"低压且未回充"时禁动（robot_en_check: Vol<20 && ChargeMode==0）。
+      if (low && stm32RechargeMode === true) {
+        move.textContent = '允许（回充中低压豁免）';
+        move.classList.remove('ok', 'err');
+        move.classList.add('warn');
+      } else {
+        move.textContent = low ? '禁动 (<' + STM32_MIN_MOVE_VOLT + 'V)' : '允许';
+        move.classList.remove('ok', 'err', 'warn');
+        move.classList.add(low ? 'err' : 'ok');
+      }
     }
     const now = Date.now();
     if (stm32LowVolt !== low) {
@@ -1473,6 +1519,44 @@
       stm32LowVoltLogTime = now;   // 持续低压每 60s 重复提醒一次，不刷屏
       addStm32Log('⚠ 持续低压 ' + v.toFixed(2) + 'V（<' + STM32_MIN_MOVE_VOLT +
         'V 禁动），请充电');
+    }
+  }
+
+  // 固件使能位 en_flag（/robot_enable_flag，24字节帧 rx[1]）。失能边沿写事件
+  // 日志并列出固件的可能失能原因（RobotControl_task.h errCode 枚举）。
+  let stm32Enable = null;   // null=未知（话题没来过，旧驱动没有此话题）
+  function updateStm32Enable(en) {
+    const el = $('stm32-enable');
+    if (el) {
+      el.textContent = en ? '使能（可移动）' : '失能（禁止移动）';
+      el.classList.remove('ok', 'err');
+      el.classList.add(en ? 'ok' : 'err');
+    }
+    if (stm32Enable !== en) {
+      stm32Enable = en;
+      if (en) {
+        addStm32Log('固件使能恢复，底盘允许移动');
+      } else {
+        addStm32Log('⚠ 固件已失能禁止移动 —— 可能原因：低压(<20V 且未回充) / ' +
+          '急停开关按下 / 软件急停 / 驱动器离线或报错');
+      }
+    }
+  }
+
+  // 下位机回充模式回读（/robot_recharge_mode，回充帧 rx[5]）。
+  let stm32RechargeMode = null;
+  function updateRechargeMode(on) {
+    ['rc-mode', 'stm32-recharge-mode'].forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      el.textContent = on ? '回充中' : '未开启';
+      el.classList.remove('ok', 'warn');
+      if (on) el.classList.add('warn');
+    });
+    if (stm32RechargeMode !== on) {
+      stm32RechargeMode = on;
+      addStm32Log(on ? '固件已进入自动回充模式（充电桩红外引导控制底盘，低压不禁动）'
+        : '固件已退出自动回充模式');
     }
   }
 
@@ -1500,6 +1584,83 @@
       if (v) v.innerHTML = '';
     });
   }
+
+  // ---------- 自动回充 / 安全等级 / RGB 灯带（底盘控制页，对齐新固件协议） ----------
+  // 回充与安全等级都只是驱动里的标志位，要随下一帧 cmd_vel 序列化进串口帧
+  // （frame[1]=AutoRecharge / frame[2]=SecurityPLY）才真正到达固件，所以
+  // 发布标志位后都补发一帧 cmd_vel 立即生效。
+  function setCardMsg(id, text) {
+    const el = $(id);
+    if (!el) return;
+    el.textContent = text ? (text + ' · ' + new Date().toLocaleTimeString()) : '';
+  }
+
+  function sendRechargeFlag(v) {
+    if (!rechargeFlagPub) { setCardMsg('rc-msg', '未连接 rosbridge'); return; }
+    rechargeFlagPub.publish(new ROSLIB.Message({ data: v }));
+    publishCmd(0, 0);   // 推一帧零速把标志位带下去（同时确保寻桩从静止开始）
+    setCardMsg('rc-msg', v ? '已下发回充指令' : '已退出回充');
+    addStm32Log(v ? '> 开始自动回充（/robot_recharge_flag=1，等待固件回读确认）'
+      : '> 退出自动回充（/robot_recharge_flag=0）');
+  }
+  const rcStart = $('rc-start');
+  if (rcStart) rcStart.addEventListener('click', () => {
+    if (!window.confirm('开始自动回充？小车将由充电桩红外引导自主移动寻桩' +
+        '（手动遥控可随时打断）。')) return;
+    sendRechargeFlag(1);
+  });
+  const rcStop = $('rc-stop');
+  if (rcStop) rcStop.addEventListener('click', () => sendRechargeFlag(0));
+
+  const secApply = $('sec-apply');
+  if (secApply) secApply.addEventListener('click', () => {
+    const sel = $('sec-level');
+    const v = sel ? parseInt(sel.value, 10) : 0;
+    if (!securityPub) { setCardMsg('sec-msg', '未连接 rosbridge'); return; }
+    if (v === 1 && !window.confirm('安全等级 1：固件将保持最后一次速度，' +
+        '速度流中断（断网/节点崩溃）后小车不会自动停车。确认切换？')) return;
+    securityPub.publish(new ROSLIB.Message({ data: v }));
+    publishCmd(curVx, curWz);   // 重发当前速度把等级带下去
+    setCardMsg('sec-msg', '已应用等级 ' + v);
+    addStm32Log('> 底盘安全等级 → ' + v + (v === 0 ? '（速度流中断自动停车）' : '（保持最后速度，注意安全）'));
+  });
+
+  // RGB 灯带：颜色选择器 -> /set_rgb_color 服务（驱动转 0x04 串口帧）。
+  const rgbColor = $('rgb-color');
+  function rgbFromPicker() {
+    const hex = (rgbColor && rgbColor.value || '#000000').replace('#', '');
+    return {
+      r: parseInt(hex.slice(0, 2), 16) || 0,
+      g: parseInt(hex.slice(2, 4), 16) || 0,
+      b: parseInt(hex.slice(4, 6), 16) || 0,
+    };
+  }
+  function showRgbText() {
+    const el = $('rgb-rgbtext');
+    if (!el) return;
+    const c = rgbFromPicker();
+    el.textContent = `R ${c.r} · G ${c.g} · B ${c.b}`;
+  }
+  if (rgbColor) rgbColor.addEventListener('input', showRgbText);
+  showRgbText();
+
+  function callSetRgb(en, c) {
+    if (!ros) { setCardMsg('rgb-msg', '未连接 rosbridge'); return; }
+    const srv = new ROSLIB.Service({
+      ros, name: '/set_rgb_color', serviceType: 'robot_interfaces/srv/SetRgb',
+    });
+    srv.callService(new ROSLIB.ServiceRequest({ en: !!en, r: c.r, g: c.g, b: c.b }), (res) => {
+      const ok = res && /success/i.test(res.res || '');
+      setCardMsg('rgb-msg', (ok ? '✓ ' : '✗ ') + ((res && res.res) || '无响应'));
+    }, (err) => {
+      setCardMsg('rgb-msg', '✗ 调用失败（驱动是否已重编译启用 set_rgb_color？）');
+      console.error('set_rgb_color failed', err);
+    });
+  }
+  const rgbApply = $('rgb-apply');
+  if (rgbApply) rgbApply.addEventListener('click', () => callSetRgb(true, rgbFromPicker()));
+  const rgbOff = $('rgb-off');
+  if (rgbOff) rgbOff.addEventListener('click', () => callSetRgb(false, { r: 0, g: 0, b: 0 }));
 
   // ---------- 机械臂 (Lebai LM3: lebai_driver + grab_demo) ----------
   // 状态显示走 /robot_status、/gripper_status、/joint_states 等话题；控制走
