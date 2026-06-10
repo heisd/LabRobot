@@ -1,0 +1,26 @@
+vla_navigator:
+  ros__parameters:
+    # ---- 本地 Ollama 多模态大模型 ----
+    ollama_url: "http://localhost:11434"
+    vlm_model: "qwen2.5vl:3b"   # 需先在机器人上 ollama pull 该模型
+    vlm_timeout: 60.0
+    vlm_temperature: 0.2
+    send_image: true            # 是否把摄像头画面一起喂给模型
+    jpeg_quality: 70
+
+    # ---- ROS 话题 / 坐标系 ----
+    image_topic: "/camera/color/image_raw"  # S300 自带 Orbbec Gemini; 若用 usb_cam 改成 /image_raw
+    voice_topic: "voice_words"          # wheeltec_mic 离线识别结果
+    instruction_topic: "/vla/instruction"  # 方便不说话也能打字测试
+    awake_topic: "awake_flag"           # 唤醒标志, 用于语音问候
+    goal_topic: "goal_pose"             # Nav2 目标点话题
+    tts_topic: "tts_text"               # 发给 tts 节点的播报文本
+    status_topic: "vla/status"          # 可读状态(指令/决策/导航), 供 dashboard 展示
+    map_frame: "map"
+    base_frame: "base_footprint"
+
+    # ---- 行为 ----
+    use_action: false           # false=发布 goal_pose; true=用 navigate_to_pose action
+    max_relative_distance: 2.0  # relative_move 单次最大距离(米)
+    debounce_sec: 3.0           # 相同指令去抖时间(秒)
+    waypoints_file: ""          # 为空则使用本包 config/waypoints.yaml

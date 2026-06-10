@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>vla_navigation</name>
+  <version>0.0.1</version>
+  <description>
+    Vision-Language-Action (VLA) 自主导航: 把语音/文字指令与机器人前方摄像头画面
+    交给本地 Ollama 多模态大模型推理, 输出导航动作(前往命名航点 或 相对目标),
+    发布 Nav2 目标点, 并通过 TTS 语音反馈。
+  </description>
+  <maintainer email="wheeltec@todo.todo">wheeltec</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav2_msgs</depend>
+  <depend>action_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>ament_index_python</depend>
+  <exec_depend>python3-requests</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <!-- 一键启动 launch 复用的其它包(读取其 share 目录/include 其 launch) -->
+  <exec_depend>wheeltec_mic_ros2</exec_depend>
+  <exec_depend>tts</exec_depend>
+  <exec_depend>turn_on_wheeltec_robot</exec_depend>
+  <exec_depend>wheeltec_nav2</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>wheeltec_dashboard</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

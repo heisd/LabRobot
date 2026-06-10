@@ -1,0 +1,41 @@
+# 命名航点 (map 坐标系下的位姿)
+# x, y 单位米; yaw 单位弧度(机器人朝向, 绕 z 轴)
+# aliases 为可选别名, 方便大模型/语音匹配中英文叫法
+# 这些坐标需要按你自己建好的地图(WHEELTEC.yaml)实测标定, 下面仅为示例,
+# 其中 I/J/K 沿用 wheeltec_mic command_recognition 的默认航点。
+waypoints:
+  - name: "原点"
+    aliases: ["起点", "出发点", "origin"]
+    x: 0.0
+    y: 0.0
+    yaw: 0.0
+  - name: "I点"
+    aliases: ["i点", "一号点"]
+    x: 2.0
+    y: 0.0
+    yaw: 0.0
+  - name: "J点"
+    aliases: ["j点", "二号点"]
+    x: 1.0
+    y: -1.0
+    yaw: 0.0
+  - name: "K点"
+    aliases: ["k点", "三号点"]
+    x: 2.0
+    y: 1.0
+    yaw: 0.0
+  - name: "厨房"
+    aliases: ["kitchen", "做饭的地方"]
+    x: 3.0
+    y: 2.0
+    yaw: 1.57
+  - name: "充电桩"
+    aliases: ["充电", "回充", "recharge", "dock"]
+    x: 0.0
+    y: 0.0
+    yaw: 3.14
+  - name: "门口"
+    aliases: ["大门", "出口", "door"]
+    x: -1.0
+    y: 2.5
+    yaw: 0.0

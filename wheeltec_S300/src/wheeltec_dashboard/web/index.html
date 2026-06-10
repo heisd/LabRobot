@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wheeltec S300 Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/eventemitter2@6.4.9/lib/eventemitter2.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/roslib@1.4.1/build/roslib.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.118.3/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.118.3/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+  <div class="topbar">
+    <header>
+      <h1>Wheeltec S300 Dashboard</h1>
+      <div class="conn">
+        <label for="ws-url">rosbridge</label>
+        <input id="ws-url" type="text" />
+        <button id="ws-connect">连接</button>
+        <span id="ws-status" class="status status-off">未连接</span>
+        <span id="ctrl-source" class="ctrl-src ctrl-src-idle" title="cmd_arbiter 当前控制源（键盘 > 巡线/KCF/YOLO）">控制源: —</span>
+      </div>
+    </header>
+
+    <nav class="tabs" id="main-nav">
+      <button class="tab-btn active" data-tab="overview">系统总览</button>
+      <button class="tab-btn" data-tab="components">各组件状态</button>
+      <button class="tab-btn" data-tab="control">控制模块</button>
+      <button class="tab-btn" data-tab="function">功能模块</button>
+      <button class="tab-btn" data-tab="contact">联系作者</button>
+    </nav>
+  </div>
+
+  <main>
+    <!-- ============ 系统总览 ============ -->
+    <div class="tab-panel active" id="panel-overview">
+      <section class="card card-wide">
+        <h2>3D 视图 <span class="muted">(three.js · 雷达)</span></h2>
+        <div class="viewer-controls">
+          <label>Fixed frame
+            <input id="vw-fixed" type="text" value="odom_combined" />
+          </label>
+          <label>/scan
+            <input id="vw-scan" type="text" value="/scan" />
+          </label>
+          <label>/odom
+            <input id="vw-odom" type="text" value="/odom" />
+          </label>
+          <button id="vw-apply">应用</button>
+          <button id="vw-clear-path">清空轨迹</button>
+        </div>
+        <div id="viewer" class="viewer"></div>
+        <div id="viewer-status" class="viewer-status"></div>
+        <p class="hint">图层：Grid / 坐标轴 / LaserScan(<code>/scan</code>) / Odom 轨迹。TF 直接订阅 <code>/tf</code>+<code>/tf_static</code>，无需 tf2_web_republisher。融合输出 <code>/scan</code> 来自 double_lidar_fusion；单台故障时可把 <code>/scan</code> 改成 <code>/scan1</code> 或 <code>/scan2</code> 看单雷达。</p>
+      </section>
+
+      <section class="card">
+        <h2>遥测</h2>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">电池电压</div>
+            <div id="m-voltage" class="metric-value">— V</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">充电中</div>
+            <div id="m-charging" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">充电电流</div>
+            <div id="m-charge-current" class="metric-value">— A</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">急停 (red flag)</div>
+            <div id="m-red" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">自检数据</div>
+            <div id="m-selfcheck" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">里程计 X / Y</div>
+            <div id="m-odom-xy" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">里程计 Yaw</div>
+            <div id="m-odom-yaw" class="metric-value">— °</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">IMU R / P / Y</div>
+            <div id="m-imu-rpy" class="metric-value">—</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>图表</h2>
+        <div class="charts">
+          <div class="chart-wrap"><canvas id="chart-voltage"></canvas></div>
+          <div class="chart-wrap"><canvas id="chart-cmdvel"></canvas></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ 各组件状态 ============ -->
+    <div class="tab-panel" id="panel-components">
+      <section class="card">
+        <h2>雷达 <span class="muted">(double_lidar_fusion)</span></h2>
+        <div class="lidar-cfg">
+          <label>融合
+            <input id="lidar-fused" type="text" value="/scan" />
+          </label>
+          <label>雷达1
+            <input id="lidar-scan1" type="text" value="/scan1" />
+          </label>
+          <label>雷达2
+            <input id="lidar-scan2" type="text" value="/scan2" />
+          </label>
+          <button id="lidar-apply">应用</button>
+        </div>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">融合 /scan</div>
+            <div id="lidar-fused-val" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">最近障碍</div>
+            <div id="lidar-fused-min" class="metric-value">— m</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">雷达1 /scan1</div>
+            <div id="lidar-s1-val" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">雷达2 /scan2</div>
+            <div id="lidar-s2-val" class="metric-value">—</div>
+          </div>
+        </div>
+        <p class="hint">double_lidar_fusion 订阅 <code>/scan1</code>+<code>/scan2</code> 融合为 <code>/scan</code>（360°）。某台离线时自动只用在线雷达；两台都离线则停止输出。点云可视化见"系统总览"的 3D 视图。</p>
+      </section>
+
+      <section class="card">
+        <h2>超声波 (m)</h2>
+        <div id="sonar-grid" class="sonar-grid">
+          <div class="sonar"><span class="sl">A</span><span id="s-a" class="sv">—</span></div>
+          <div class="sonar"><span class="sl">B</span><span id="s-b" class="sv">—</span></div>
+          <div class="sonar"><span class="sl">C</span><span id="s-c" class="sv">—</span></div>
+          <div class="sonar"><span class="sl">D</span><span id="s-d" class="sv">—</span></div>
+          <div class="sonar"><span class="sl">E</span><span id="s-e" class="sv">—</span></div>
+          <div class="sonar"><span class="sl">F</span><span id="s-f" class="sv">—</span></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>语音组件 <span class="muted">(wheeltec_mic)</span></h2>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">麦克风 (/voice_flag)</div>
+            <div id="voice-mic" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">唤醒 (/awake_flag)</div>
+            <div id="voice-awake" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">声源角度 (/awake_angle)</div>
+            <div id="voice-angle" class="metric-value">— °</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">最近识别 (/voice_words)</div>
+            <div id="voice-words" class="metric-value">—</div>
+          </div>
+        </div>
+        <div class="vla-row">
+          <input id="voice-tts-input" type="text" placeholder="让小车说话…（发布到 /tts_text）" />
+          <button id="voice-tts-send">播报</button>
+        </div>
+        <p class="hint">来自 wheeltec_mic：唤醒 <code>/awake_flag</code>、声源角 <code>/awake_angle</code>、识别 <code>/voice_words</code>；播报经 tts_make 订阅 <code>/tts_text</code>。需先启动麦克风语音 launch（如 <code>mic_init.launch.py</code> / <code>base.launch.py</code>）。</p>
+      </section>
+
+      <section class="card card-wide">
+        <h2>相机 <span class="muted">(web_video_server MJPEG)</span></h2>
+        <div class="cam-toolbar">
+          <label>video_server 端口
+            <input id="cam-port" type="number" value="8081" min="1" max="65535" />
+          </label>
+          <label>画质 (1-100)
+            <input id="cam-quality" type="number" value="60" min="1" max="100" />
+          </label>
+          <label class="cam-base-wrap">Base URL (覆盖端口)
+            <input id="cam-base" type="text" placeholder="例如 https://robot.example/video" />
+          </label>
+          <button id="cam-reload">刷新</button>
+        </div>
+        <div class="cam-grid">
+          <div class="cam-tile">
+            <div class="cam-head">
+              <span>车上相机</span>
+              <input class="cam-topic" data-slot="car" type="text" value="/camera/color/image_raw" />
+              <label class="cam-check"><input type="checkbox" class="cam-enable" data-slot="car" checked /> 启用</label>
+            </div>
+            <div class="cam-frame">
+              <img class="cam-img" data-slot="car" src="placeholder.svg" alt="car camera" />
+              <div class="cam-err" data-slot="car" hidden>无法加载流</div>
+            </div>
+          </div>
+          <div class="cam-tile">
+            <div class="cam-head">
+              <span>机械臂相机</span>
+              <input class="cam-topic" data-slot="arm" type="text" value="/camera_arm/color/image_raw" />
+              <label class="cam-check"><input type="checkbox" class="cam-enable" data-slot="arm" checked /> 启用</label>
+            </div>
+            <div class="cam-frame">
+              <img class="cam-img" data-slot="arm" src="placeholder.svg" alt="arm camera" />
+              <div class="cam-err" data-slot="arm" hidden>无法加载流</div>
+            </div>
+          </div>
+        </div>
+        <p class="hint">流从 <code>http://&lt;host&gt;:&lt;port&gt;/stream?topic=...</code> 拉取。astra_camera 默认发布车上 <code>/camera/color/image_raw</code> 与机械臂 <code>/camera_arm/color/image_raw</code>（含 depth/ir）。深度流把 topic 改成 <code>/camera/depth/image_raw</code> 即可。</p>
+      </section>
+
+      <section class="card card-wide">
+        <h2>日志 <span class="muted">(/rosout)</span></h2>
+        <div class="log-toolbar">
+          <label>等级
+            <select id="log-level">
+              <option value="10">DEBUG</option>
+              <option value="20" selected>INFO</option>
+              <option value="30">WARN</option>
+              <option value="40">ERROR</option>
+              <option value="50">FATAL</option>
+            </select>
+          </label>
+          <label>节点过滤
+            <input id="log-filter" type="text" placeholder="子串匹配, 留空=全部" />
+          </label>
+          <label>缓冲行数
+            <input id="log-buffer" type="number" min="50" max="5000" step="50" value="500" />
+          </label>
+          <label class="log-check">
+            <input id="log-autoscroll" type="checkbox" checked /> 自动滚动
+          </label>
+          <button id="log-pause">暂停</button>
+          <button id="log-clear">清空</button>
+          <span class="log-stats"><span id="log-count">0</span> 行 · 丢弃 <span id="log-dropped">0</span></span>
+        </div>
+        <div id="log-view" class="log-view"></div>
+      </section>
+    </div>
+
+    <!-- ============ 控制模块 ============ -->
+    <div class="tab-panel" id="panel-control">
+      <section class="card">
+        <h2>速度控制 (/cmd_vel)</h2>
+        <div class="teleop">
+          <div class="teleop-grid">
+            <button class="tk" data-vx="1" data-wz="0">▲</button>
+            <button class="tk" data-vx="1" data-wz="1">↖</button>
+            <button class="tk" data-vx="0" data-wz="1">◀</button>
+            <button class="tk" data-stop="1">■</button>
+            <button class="tk" data-vx="0" data-wz="-1">▶</button>
+            <button class="tk" data-vx="-1" data-wz="0">▼</button>
+            <button class="tk" data-vx="1" data-wz="-1">↗</button>
+            <button class="tk" data-vx="-1" data-wz="1">↙</button>
+            <button class="tk" data-vx="-1" data-wz="-1">↘</button>
+          </div>
+          <div class="teleop-sliders">
+            <label>线速度上限 <span id="lin-val">0.30</span> m/s
+              <input id="lin-max" type="range" min="0" max="1.5" step="0.05" value="0.3" />
+            </label>
+            <label>角速度上限 <span id="ang-val">1.00</span> rad/s
+              <input id="ang-max" type="range" min="0" max="3" step="0.1" value="1.0" />
+            </label>
+            <label>
+              <input id="hold-mode" type="checkbox" checked />
+              连发 (松开停)
+            </label>
+            <div class="cmd-readout">
+              当前指令: <span id="cmd-current">vx=0.00, wz=0.00</span>
+            </div>
+            <button id="e-stop" class="e-stop" type="button" title="立即发送 (0,0) 到 /cmd_vel">急停 STOP</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card card-wide">
+        <h2>参数 (/wheeltec_robot)</h2>
+        <div class="params param-group">
+          <div class="param-row">
+            <label>节点</label>
+            <input id="param-node" class="pg-node" type="text" value="/wheeltec_robot" list="node-list" />
+            <button id="param-refresh" class="pg-refresh">读取当前值</button>
+          </div>
+          <datalist id="node-list"></datalist>
+          <div id="param-list">
+            <div class="param-row" data-param="odom_x_scale" data-type="double">
+              <label>odom_x_scale</label>
+              <input type="number" step="0.01" />
+              <button class="param-apply">应用</button>
+              <span class="param-current">—</span>
+            </div>
+            <div class="param-row" data-param="odom_y_scale" data-type="double">
+              <label>odom_y_scale</label>
+              <input type="number" step="0.01" />
+              <button class="param-apply">应用</button>
+              <span class="param-current">—</span>
+            </div>
+            <div class="param-row" data-param="odom_z_scale_positive" data-type="double">
+              <label>odom_z_scale_positive</label>
+              <input type="number" step="0.01" />
+              <button class="param-apply">应用</button>
+              <span class="param-current">—</span>
+            </div>
+            <div class="param-row" data-param="odom_z_scale_negative" data-type="double">
+              <label>odom_z_scale_negative</label>
+              <input type="number" step="0.01" />
+              <button class="param-apply">应用</button>
+              <span class="param-current">—</span>
+            </div>
+          </div>
+          <p class="hint">提示：参数对静态变量生效需要重启机器人节点；odom_*_scale 在运行中可即时使用。节点下拉来自 <code>ros.getNodes()</code>，连接后自动填充。</p>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ 功能模块 ============ -->
+    <div class="tab-panel" id="panel-function">
+      <nav class="subtabs" id="function-subnav">
+        <button class="subtab-btn active" data-subtab="line">巡线</button>
+        <button class="subtab-btn" data-subtab="kcf">KCF 跟踪</button>
+        <button class="subtab-btn" data-subtab="yolo">YOLO 检测</button>
+        <button class="subtab-btn" data-subtab="vla">VLA 语音导航</button>
+      </nav>
+
+      <!-- 巡线 (二维码 / QR) -->
+      <div class="subtab-panel active" id="subpanel-line">
+        <section class="card card-wide">
+          <h2>巡线 <span class="muted">(二维码 / simple_follower_ros2)</span></h2>
+          <div class="fn-streams">
+            <div class="fn-stream-tile">
+              <div class="fn-cap">QR 检测画面 <span class="muted">(/qr_code/debug_image)</span></div>
+              <div class="cam-frame fn-frame">
+                <img id="line-stream" class="cam-img fn-img" data-topic="/qr_code/debug_image" src="placeholder.svg" alt="qr debug" />
+                <div class="cam-err" hidden>无法加载流</div>
+              </div>
+              <div class="fn-stream-toolbar">
+                <label>话题
+                  <input class="fn-topic" data-img="line-stream" type="text" value="/qr_code/debug_image" />
+                </label>
+                <button class="fn-reload" data-img="line-stream">刷新</button>
+              </div>
+            </div>
+            <div class="fn-stream-tile">
+              <div class="fn-cap">巡线掩码 <span class="muted">(/line_follow/debug_image)</span></div>
+              <div class="cam-frame fn-frame">
+                <img id="line-mask-stream" class="cam-img fn-img" data-topic="/line_follow/debug_image" src="placeholder.svg" alt="line mask" />
+                <div class="cam-err" hidden>无法加载流</div>
+              </div>
+              <div class="fn-stream-toolbar">
+                <label>话题
+                  <input class="fn-topic" data-img="line-mask-stream" type="text" value="/line_follow/debug_image" />
+                </label>
+                <button class="fn-reload" data-img="line-mask-stream">刷新</button>
+              </div>
+            </div>
+          </div>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">二维码检测 (/qr_code/detected)</div>
+              <div id="line-qr-detected" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">二维码内容 (/qr_code/data)</div>
+              <div id="line-qr-data" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">二维码面积占比 (/qr_code/area_ratio)</div>
+              <div id="line-qr-area" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">当前 /cmd_vel (cmd_arbiter)</div>
+              <div id="line-cmd" class="metric-value">vx=0.00, wz=0.00</div>
+            </div>
+          </div>
+          <p class="hint">启动：<code>ros2 launch simple_follower_ros2 line_follow_qr_fixed.launch.py</code>。纯巡线 <code>line_follow_plain</code>（无随机分叉）+ <code>qr_detector</code> + <code>cmd_arbiter</code>：二维码内容如 <code>path:left30</code> / <code>path:right45</code> / <code>path:stop</code> 经 <code>/qr_code/data</code> 让 <code>cmd_arbiter</code> 在路口定角转向，输出最终 <code>/cmd_vel</code>。<strong>OpenCV 窗口转发</strong>：节点把原本 <code>cv2.imshow</code> 的画面发布成 Image（<code>publish_debug</code> 默认开）——QR 检测 HUD → <code>/qr_code/debug_image</code>、巡线掩码 → <code>/line_follow/debug_image</code>，经 web_video_server 在此显示，机器人无显示器也能看。需本地窗口时启动加 <code>show_image:=true</code>；无 trackbar 时巡线颜色用参数 <code>line_color</code>(0红/1绿/2蓝/3黄/4黑)。</p>
+        </section>
+      </div>
+
+      <!-- KCF 跟踪 -->
+      <div class="subtab-panel" id="subpanel-kcf">
+        <section class="card card-wide">
+          <h2>KCF 跟踪画面 <span class="muted">(/KCF_image)</span></h2>
+          <div class="fn-stream-toolbar">
+            <label>跟踪画面话题
+              <input class="fn-topic" data-img="kcf-stream" type="text" value="/KCF_image" />
+            </label>
+            <button class="fn-reload" data-img="kcf-stream">刷新</button>
+          </div>
+          <div class="cam-frame fn-frame">
+            <img id="kcf-stream" class="cam-img fn-img" data-topic="/KCF_image" src="placeholder.svg" alt="kcf tracking" />
+            <div class="cam-err" hidden>无法加载流</div>
+          </div>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">当前 /cmd_vel</div>
+              <div id="kcf-cmd" class="metric-value">vx=0.00, wz=0.00</div>
+            </div>
+          </div>
+          <div class="dist-slider" data-node="/image_converter" data-param="targetDist_">
+            <label>跟踪距离</label>
+            <input type="range" class="ds-range" min="0.3" max="3.0" step="0.1" value="0.8" />
+            <span class="ds-val">0.80 m</span>
+            <button class="ds-get">读取</button>
+          </div>
+          <p class="hint">启动：<code>ros2 launch wheeltec_robot_kcf wheeltec_robot_kcf.launch.py</code>（经仲裁器：<code>wheeltec_robot_kcf_arbiter.launch.py</code>）。目标框需在机器人端 OpenCV 窗口用鼠标框选；标注画面发布到 <code>/KCF_image</code>。<strong>跟踪距离</strong>可用上方滑块实时调（参数 <code>/image_converter targetDist_</code>）。经仲裁器时跟踪速度走 <code>kcf/cmd_vel</code>，键盘可随时打断。</p>
+        </section>
+
+        <section class="card card-wide">
+          <h2>KCF 参数 <span class="muted">(/image_converter)</span></h2>
+          <div class="params param-group">
+            <div class="param-row">
+              <label>节点</label>
+              <input class="pg-node" type="text" value="/image_converter" list="node-list" />
+              <button class="pg-refresh">读取当前值</button>
+            </div>
+            <div>
+              <div class="param-row" data-param="targetDist_" data-type="double">
+                <label>targetDist_ (m)</label>
+                <input type="number" step="0.05" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="linear_KP_" data-type="double">
+                <label>linear_KP_</label>
+                <input type="number" step="0.1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="linear_KI_" data-type="double">
+                <label>linear_KI_</label>
+                <input type="number" step="0.1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="linear_KD_" data-type="double">
+                <label>linear_KD_</label>
+                <input type="number" step="0.1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="angular_KP_" data-type="double">
+                <label>angular_KP_</label>
+                <input type="number" step="0.1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="angular_KI_" data-type="double">
+                <label>angular_KI_</label>
+                <input type="number" step="0.1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="angular_KD_" data-type="double">
+                <label>angular_KD_</label>
+                <input type="number" step="0.1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+            </div>
+            <p class="hint">距离 / 转向 PID 可在此实时调参（等价 <code>ros2 param set /image_converter ...</code>）。先点"读取当前值"拉取，再修改"应用"。线速度/角速度在节点内被限制在 ±0.35。</p>
+          </div>
+        </section>
+      </div>
+
+      <!-- YOLO 检测 -->
+      <div class="subtab-panel" id="subpanel-yolo">
+        <section class="card card-wide">
+          <h2>YOLO 检测 <span class="muted">(yolo_ros / mgonzs13)</span></h2>
+          <div class="fn-stream-toolbar">
+            <label>图像话题
+              <input class="fn-topic" data-img="yolo-stream" type="text" value="/yolo/debug_image" />
+            </label>
+            <label>检测话题
+              <input id="yolo-det-topic" type="text" value="/yolo/detections" />
+            </label>
+            <button class="fn-reload" data-img="yolo-stream">刷新画面</button>
+            <button id="yolo-det-apply">订阅检测</button>
+          </div>
+          <div class="cam-frame fn-frame">
+            <img id="yolo-stream" class="cam-img fn-img" data-topic="/yolo/debug_image" src="placeholder.svg" alt="yolo" />
+            <div class="cam-err" hidden>无法加载流</div>
+          </div>
+          <div class="dist-slider" data-node="/yolo_follow" data-param="desired_distance">
+            <label>跟随距离</label>
+            <input type="range" class="ds-range" min="0.1" max="1.5" step="0.05" value="0.20" />
+            <span class="ds-val">0.20 m</span>
+            <button class="ds-get">读取</button>
+          </div>
+          <div class="yolo-det-head">
+            <span>检测结果</span>
+            <span id="yolo-det-count" class="muted">0 个目标</span>
+          </div>
+          <div id="yolo-detections" class="yolo-detections"></div>
+          <p class="hint">由 <a href="https://github.com/mgonzs13/yolo_ros" target="_blank" rel="noopener">yolo_ros</a> 提供检测。启动：<code>ros2 launch yolo_bringup yolo_wheeltec.launch.py</code>（已把输入设为 <code>/camera/color/image_raw</code>）。标注画面来自 <code>/yolo/debug_image</code>（<code>use_debug</code>），目标列表来自 <code>/yolo/detections</code>（<code>yolo_msgs/msg/DetectionArray</code>：<code>class_name</code> / <code>score</code>，开启 <code>use_tracking</code> 时带跟踪 <code>id</code>）。改"检测话题"为 <code>/yolo/tracking</code> 可看带 ID 的跟踪结果。</p>
+        </section>
+      </div>
+
+      <!-- VLA 语音导航 -->
+      <div class="subtab-panel" id="subpanel-vla">
+        <section class="card card-wide">
+          <h2>VLA 语音导航 <span class="muted">(/vla)</span></h2>
+          <div class="vla">
+            <div class="vla-row">
+              <input id="vla-instr" type="text" placeholder="输入导航指令，如：去厨房 / 向前一米然后左转" />
+              <button id="vla-send">发送指令</button>
+            </div>
+            <div class="vla-quick">
+              <button class="vla-q" data-instr="去厨房">去厨房</button>
+              <button class="vla-q" data-instr="去充电桩">去充电桩</button>
+              <button class="vla-q" data-instr="去门口">去门口</button>
+              <button class="vla-q" data-instr="去原点">去原点</button>
+              <button class="vla-q vla-q-stop" data-instr="停">停</button>
+            </div>
+            <div class="grid">
+              <div class="metric">
+                <div class="metric-label">最近识别 (/voice_words)</div>
+                <div id="vla-heard" class="metric-value">—</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">语音播报 (/tts_text)</div>
+                <div id="vla-say" class="metric-value">—</div>
+              </div>
+            </div>
+            <div class="vla-row">
+              <input id="tts-input" type="text" placeholder="让小车说话…（发布到 /tts_text）" />
+              <button id="tts-send">播报</button>
+            </div>
+            <div class="vla-timeline-head">
+              <span>VLA 时间线 <span class="muted">(/vla/status)</span></span>
+              <button id="vla-clear">清空</button>
+            </div>
+            <div id="vla-timeline" class="vla-timeline"></div>
+          </div>
+          <p class="hint">指令发布到 <code>/vla/instruction</code>；麦克风识别走 <code>/voice_words</code>。决策与导航状态来自 <code>/vla/status</code>，目标点见 RViz 或 <code>/goal_pose</code>。需先启动 <code>vla_navigator</code> 节点与 rosbridge。</p>
+        </section>
+      </div>
+    </div>
+
+    <!-- ============ 联系作者 ============ -->
+    <div class="tab-panel" id="panel-contact">
+      <section class="card card-wide contact-card">
+        <h2>联系作者</h2>
+        <div class="contact">
+          <div class="contact-avatar">W</div>
+          <div class="contact-body">
+            <div class="contact-name">Wheeltec S300 Dashboard</div>
+            <p class="contact-desc">面向 Wheeltec S300 机器人的轻量级 Web 仪表盘：实时遥测、底盘控制、参数调节、3D 视图、相机预览、日志，以及巡线 / KCF / YOLO / VLA 等功能模块，全部通过 rosbridge 与 ROS 2 通信。</p>
+            <ul class="contact-list">
+              <li><span class="ck">项目仓库</span><a href="https://github.com/heisd/wheeltec_s300" target="_blank" rel="noopener">github.com/heisd/wheeltec_s300</a></li>
+              <li><span class="ck">维护者</span><span>heisd</span></li>
+              <li><span class="ck">问题反馈</span><a href="https://github.com/heisd/wheeltec_s300/issues" target="_blank" rel="noopener">GitHub Issues</a></li>
+              <li><span class="ck">许可证</span><span>Apache-2.0</span></li>
+            </ul>
+            <p class="hint">有问题或建议？欢迎在 GitHub 提交 Issue 或 Pull Request，一起把这个仪表盘做得更好。</p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
