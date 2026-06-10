@@ -106,8 +106,13 @@ public:
     select_sub_ = create_subscription<sensor_msgs::msg::RegionOfInterest>(
         "~/select_bbox", 1,
         [this](const sensor_msgs::msg::RegionOfInterest::ConstSharedPtr msg) {
-          if (msg->width == 0 || msg->height == 0) {
-            RCLCPP_WARN(get_logger(), "忽略空的手动框选 (w=%u h=%u)", msg->width, msg->height);
+          // 上限防御: 字段是 uint32, 超大值强转 int 会变负/溢出, 直接拒掉
+          constexpr uint32_t kMaxDim = 100000;
+          if (msg->width == 0 || msg->height == 0 ||
+              msg->x_offset > kMaxDim || msg->y_offset > kMaxDim ||
+              msg->width > kMaxDim || msg->height > kMaxDim) {
+            RCLCPP_WARN(get_logger(), "忽略非法的手动框选 (x=%u y=%u w=%u h=%u)",
+                        msg->x_offset, msg->y_offset, msg->width, msg->height);
             return;
           }
           manual_bbox_ = cv::Rect(static_cast<int>(msg->x_offset),

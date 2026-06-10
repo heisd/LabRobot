@@ -24,6 +24,7 @@
                            // the lidar card can re-subscribe on topic change)
   const lidarLast = {};    // key -> { time, points, min }
   let yoloDetSub = null;   // optional yolo_msgs/DetectionArray sub (yolo_ros)
+  let chassisTime = 0;     // 最近一次底盘遥测(/PowerVoltage)到达时间（架构卡在线点）
 
   function setStatus(state, text) {
     statusEl.className = 'status status-' + state;
@@ -138,12 +139,21 @@
       try { kcfBboxPub.unadvertise(); } catch (_) { /* ignore */ }
       kcfBboxPub = null;
     }
+    // 机械臂侧状态属于上一个连接：清掉，避免换机器人重连后残留
+    // 旧关节行 / 旧的 YOLO 目标选中态（armJointMap 也因此不会无限增长）。
+    armJointMap.clear();
+    armJointsDirty = true;
+    armYoloSelected = '';
+    armYoloLastHtml = '';
+    const yoloBtnsView = $('arm-yolo-buttons');
+    if (yoloBtnsView) yoloBtnsView.innerHTML = '';
   }
 
   function setupTopics() {
     teardownTopics();
 
     sub('/PowerVoltage', 'std_msgs/msg/Float32', (msg) => {
+      chassisTime = Date.now();
       const v = msg.data;
       const el = $('m-voltage');
       el.textContent = v.toFixed(2) + ' V';
@@ -302,11 +312,15 @@
     }, { throttle_rate: 200 });
     sub('/arm_arbiter/state', 'std_msgs/msg/String', (msg) => {
       const s = (msg.data || '').trim();
-      // 状态卡片与"抓取与仲裁"卡片各有一份显示。
-      ['arm-arb-state', 'arm-arb-state2'].forEach((id) => {
-        if (s === 'manual') setArmMetric(id, '手动接管', 'warn');
-        else if (s === 'idle') setArmMetric(id, '自动/空闲', 'ok');
-        else setArmMetric(id, s || '—');
+      let text = s || '—';
+      let cls = '';
+      if (s === 'manual') { text = '手动接管'; cls = 'warn'; }
+      else if (s === 'idle') { text = '自动/空闲'; cls = 'ok'; }
+      // 状态卡片与"抓取与仲裁"卡片各有一份显示（同 .arm-dist 的做法）。
+      document.querySelectorAll('.arm-arb').forEach((el) => {
+        el.textContent = text;
+        el.classList.remove('ok', 'warn', 'err');
+        if (cls) el.classList.add(cls);
       });
     });
     sub('/vlm/result', 'std_msgs/msg/String', (msg) => {
@@ -1201,6 +1215,17 @@
   function applyAllFnStreams() {
     document.querySelectorAll('.fn-img').forEach(applyFnStream);
   }
+  // 页签/子页激活时调用：只启动 root 下"当前可见且还停在占位图"的流。
+  // 已在播放的流不重启（避免来回切页时 MJPEG 闪断）；出错回落到占位图的流
+  // 会在下次切回时自动重试；手动重启用各自的"刷新"按钮。
+  function kickVisibleFnStreams(root) {
+    if (!root) return;
+    root.querySelectorAll('.fn-img').forEach((img) => {
+      if (!img.offsetParent) return;                                  // display:none
+      if ((img.src || '').indexOf(CAM_PLACEHOLDER) === -1) return;    // 已在播放
+      applyFnStream(img);
+    });
+  }
   document.querySelectorAll('.fn-topic').forEach((inp) => {
     inp.addEventListener('change', () => {
       const img = $(inp.dataset.img);
@@ -1331,8 +1356,9 @@
   // ---------- VLA voice navigation ----------
   const VLA_MAX_LINES = 200;
 
-  function addVlaStatus(text) {
-    const view = $('vla-timeline');
+  // 通用时间线：VLA 时间线与机械臂事件共用同一渲染（时间戳 + 文本 + 环形截断）。
+  function appendTimeline(viewId, maxLines, text) {
+    const view = $(viewId);
     if (!view) return;
     const row = document.createElement('div');
     row.className = 'vla-line';
@@ -1345,8 +1371,12 @@
     row.appendChild(t);
     row.appendChild(m);
     view.appendChild(row);
-    while (view.childElementCount > VLA_MAX_LINES) view.removeChild(view.firstChild);
+    while (view.childElementCount > maxLines) view.removeChild(view.firstChild);
     view.scrollTop = view.scrollHeight;
+  }
+
+  function addVlaStatus(text) {
+    appendTimeline('vla-timeline', VLA_MAX_LINES, text);
   }
 
   function sendInstruction(text) {
@@ -1440,6 +1470,18 @@
     else setArmMetric('arm-mode', '未知', 'warn');
   }
 
+  // 系统架构卡的在线指示点：底盘遥测 / 机械臂驱动 / 抓取目标 三路数据流。
+  function updateArchDots() {
+    const now = Date.now();
+    const set = (id, on) => {
+      const el = $(id);
+      if (el) el.classList.toggle('on', !!on);
+    };
+    set('arch-dot-chassis', chassisTime && now - chassisTime < 3000);
+    set('arch-dot-arm', armStatusTime && now - armStatusTime < 3000);
+    set('arch-dot-grab', armDistTime && now - armDistTime < 2500);
+  }
+
   // 驱动离线时把状态清回 "—"，避免一直显示陈旧值误导操作。
   setInterval(() => {
     if (armStatusTime && Date.now() - armStatusTime > 3000) {
@@ -1451,6 +1493,7 @@
       armDistTime = 0;
       setArmDist('— m');
     }
+    updateArchDots();
   }, 1000);
 
   function ingestArmJointState(msg) {
@@ -1467,9 +1510,12 @@
   // 关节表最高 5Hz 重绘（消息可能到得更快，合并渲染）。
   setInterval(() => {
     if (!armJointsDirty) return;
-    armJointsDirty = false;
     const view = $('arm-joints');
     if (!view) return;
+    // 面板隐藏时（display:none → offsetParent 为 null）不重绘，dirty 保留，
+    // 切回机械臂页的下一个周期再画 —— 隐藏期间不做无效 DOM churn。
+    if (!view.offsetParent) return;
+    armJointsDirty = false;
     const rows = [];
     armJointMap.forEach((v, name) => {
       rows.push(
@@ -1484,21 +1530,7 @@
 
   const ARM_LOG_MAX_LINES = 200;
   function addArmLog(text) {
-    const view = $('arm-log');
-    if (!view) return;
-    const row = document.createElement('div');
-    row.className = 'vla-line';
-    const t = document.createElement('span');
-    t.className = 'vt';
-    t.textContent = new Date().toLocaleTimeString();
-    const m = document.createElement('span');
-    m.className = 'vm';
-    m.textContent = text;          // textContent: never inject markup from ROS
-    row.appendChild(t);
-    row.appendChild(m);
-    view.appendChild(row);
-    while (view.childElementCount > ARM_LOG_MAX_LINES) view.removeChild(view.firstChild);
-    view.scrollTop = view.scrollHeight;
+    appendTimeline('arm-log', ARM_LOG_MAX_LINES, text);   // 与 VLA 时间线共用渲染
   }
 
   function callArmService(name, type, req, onRes) {
@@ -1553,9 +1585,9 @@
     });
   }
   const gripPosApply = $('arm-grip-pos-apply');
-  if (gripPosApply) gripPosApply.addEventListener('click', () => setGripper('position', gripPosRange.value));
+  if (gripPosApply && gripPosRange) gripPosApply.addEventListener('click', () => setGripper('position', gripPosRange.value));
   const gripForceApply = $('arm-grip-force-apply');
-  if (gripForceApply) gripForceApply.addEventListener('click', () => setGripper('force', gripForceRange.value));
+  if (gripForceApply && gripForceRange) gripForceApply.addEventListener('click', () => setGripper('force', gripForceRange.value));
   const gripOpen = $('arm-grip-open');
   if (gripOpen) gripOpen.addEventListener('click', () => {
     if (gripPosRange) { gripPosRange.value = 100; $('arm-grip-pos-val').textContent = '100'; }
@@ -1723,7 +1755,7 @@
       paramService(node(), 'get_parameters').callService(req, (res) => {
         (res.values || []).forEach((val, i) => {
           const row = sliders[i];
-          if (!row) return;
+          if (!row || !val) return;
           let v = null;
           if (val.type === PT_INTEGER) v = val.integer_value;
           else if (val.type === PT_DOUBLE) v = val.double_value;
@@ -1828,6 +1860,7 @@
   // 订阅 /yolo/detections，把每个类别渲染成按钮；点击把类别名写进桥接节点
   // (/yolo_ros_node) 的 target_label 参数 —— 调试图与 target_frame 立刻只跟该类别。
   let armYoloSelected = '';
+  let armYoloLastHtml = '';   // 上次渲染的按钮 HTML，内容没变就不重建（保留 hover/焦点）
 
   function armYoloNode() {
     const inp = document.querySelector('#arm-subpanel-yolo .pg-node');
@@ -1854,14 +1887,17 @@
     const sel = (armYoloSelected || '').toLowerCase();
     const html = [];
     byLabel.forEach((v, label) => {
-      const active = label.toLowerCase() === sel ? ' active' : '';
+      const active = (label.toLowerCase() === sel && sel !== '') ? ' active' : '';
       html.push(
         `<button type="button" data-label="${escapeHTML(label)}" class="yp${active}">` +
         `${escapeHTML(label)}${v.count > 1 ? ' ×' + v.count : ''}` +
         ` <span>${(v.best * 100).toFixed(0)}%</span></button>`
       );
     });
-    view.innerHTML = html.join('');
+    const out = html.join('');
+    if (out === armYoloLastHtml) return;   // 同样的检测结果不重建 DOM
+    armYoloLastHtml = out;
+    view.innerHTML = out;
   }
 
   function selectArmYoloTarget(label) {
@@ -2031,38 +2067,45 @@
       return activate;
     }
 
-    // Function sub-tabs: re-apply the sub-page's MJPEG stream when it becomes
-    // visible (an <img> in a display:none parent may never have fetched).
+    // 子页/页签激活时惰性启动该页可见的 MJPEG 流（kickVisibleFnStreams：
+    // 只拉还停在占位图的流，不打断已在播放的）。底盘功能模块与机械臂
+    // 各自独立一组 tab（类名/data 键不同，互不干扰），行为统一。
     initTabGroup({
       btnSel: '.subtab-btn', key: 'subtab', panelSel: '.subtab-panel', prefix: 'subpanel-',
-      onActivate: (val) => {
-        document.querySelectorAll('#subpanel-' + val + ' .fn-img').forEach(applyFnStream);
-      },
+      onActivate: (val) => kickVisibleFnStreams($('subpanel-' + val)),
     });
 
-    // 机械臂子页（监控与控制 / HSV / YOLO / KCF / ArUco / VLM）。独立于
-    // 功能模块的 .subtab-* 组，互不干扰。
     initTabGroup({
       btnSel: '.arm-subtab-btn', key: 'armsubtab', panelSel: '.arm-subtab-panel', prefix: 'arm-subpanel-',
-      onActivate: (val) => {
-        document.querySelectorAll('#arm-subpanel-' + val + ' .fn-img').forEach(applyFnStream);
-      },
+      onActivate: (val) => kickVisibleFnStreams($('arm-subpanel-' + val)),
     });
 
     const activateTop = initTabGroup({
       btnSel: '.tab-btn', key: 'tab', panelSel: '.tab-panel', prefix: 'panel-', hash: true,
-      onActivate: (val) => {
-        // 机械臂页的 MJPEG 流首次显示时才开始拉取（同子页面的处理方式），
-        // 只拉当前激活子页的流，避免一次拉起所有方案的调试画面。
-        if (val === 'arm') {
-          document.querySelectorAll('#panel-arm .arm-subtab-panel.active .fn-img').forEach(applyFnStream);
-        }
-      },
+      // 不对某个页签做特例：任何顶层面板激活，都把它里面可见的流启动起来
+      // （隐藏子页里的流等切到对应子页时再由上面两组的 onActivate 启动）。
+      onActivate: (val) => kickVisibleFnStreams($('panel-' + val)),
     });
 
     // Allow deep-linking to a top tab via #hash (e.g. .../#control).
     const initial = (location.hash || '').replace(/^#/, '');
     if (initial) activateTop(initial);
+
+    // 系统总览"系统架构"卡：点击模块芯片跳到对应页签（及功能/机械臂子页）。
+    document.querySelectorAll('.arch-link').forEach((el) => {
+      el.addEventListener('click', () => {
+        const tabBtn = document.querySelector(`.tab-btn[data-tab="${el.dataset.tab}"]`);
+        if (tabBtn) tabBtn.click();
+        if (el.dataset.subtab) {
+          const b = document.querySelector(`.subtab-btn[data-subtab="${el.dataset.subtab}"]`);
+          if (b) b.click();
+        }
+        if (el.dataset.armsubtab) {
+          const b = document.querySelector(`.arm-subtab-btn[data-armsubtab="${el.dataset.armsubtab}"]`);
+          if (b) b.click();
+        }
+      });
+    });
   })();
 
   // Auto-connect on load.

@@ -1,8 +1,76 @@
 # wheeltec_dashboard 变更记录
 
 本文件记录 `wheeltec_dashboard` 面板的 bug 修复与改进，按时间倒序排列。
-第 1–3 轮在分支 `claude/inspiring-thompson-LU7ql` 上完成，第 4 轮在
+第 1–3 轮在分支 `claude/inspiring-thompson-LU7ql` 上完成，第 4–5 轮在
 `claude/happy-ride-lzphg0` 上完成。
+
+---
+
+## 第 5 轮 — 代码评审修复 + 导航重组为"底盘 / 机械臂"两部分
+
+### 背景
+
+对第 4 轮（机械臂接入）做了一次多视角代码评审（逐行 / 删除行为 / 跨文件
+契约 / 语言陷阱 / 生命周期 / 复用 / 简化 / 效率 / 架构层次），并按
+"机器人 = Wheeltec 底盘 + Lebai 机械臂 两部分"重组界面信息架构。
+
+### 评审修复（app.js / kcf_track_node.cpp）
+
+- **断线状态残留**：`teardownTopics()` 现在清空 `armJointMap`、
+  `armYoloSelected`、YOLO 按钮区 —— 重连到另一台机器人不会再看到上一台的
+  关节行 / 目标选中态；`armJointMap` 也因此不会跨重连无限增长。
+- **隐藏面板的无效渲染**：关节表 200ms 渲染循环加 `offsetParent` 可见性
+  门控（隐藏时保留 dirty，切回再画）；YOLO 物体按钮渲染加 HTML 串比对，
+  检测结果没变化时不重建 DOM（保留 hover/焦点）。
+- **空值守卫**：HSV 滑条"读取当前值"对 `res.values[i]` 加空值守卫；
+  夹爪"设置位置/力度"按钮绑定同时要求滑块元素存在。
+- **kcf_track_node `~/select_bbox` 上限防御**：uint32 字段超大值强转 int
+  会变负/溢出，现在 >100000 的框直接拒收并告警。
+- **流懒加载泛化（去特例）**：顶层页签 onActivate 不再特判 `'arm'`，统一走
+  `kickVisibleFnStreams()` —— 只启动"可见且还停在占位图"的流；已在播放的
+  流不重启（修掉了之前来回切页时 MJPEG 闪断的问题），三组 tab（顶层 /
+  功能子页 / 机械臂子页）行为一致。
+- **去重**：`addArmLog` 与 `addVlaStatus` 合并为 `appendTimeline()`；
+  仲裁状态双 id（`arm-arb-state`/`arm-arb-state2`）改为 `.arm-arb` 类广播
+  （与 `.arm-dist` 同模式）；删除未使用的 `arm-target-dist` id。
+
+评审中核实为误报（保持原样）的：pointer capture 在 pointerup 后由浏览器
+自动释放；`contentBox()` 已有 naturalWidth/Height 零值守卫；离线看门狗因
+`armStatusTime=0` 复位只触发一次；`ROSLIB.Service` 按次创建与既有
+`paramService()` 模式一致。
+
+已记录未改（权衡后接受）的：`/kcf_node/select_bbox`、`/kcf_node/reinit`
+节点名硬编码（流话题可改但框选发布固定 —— 重命名节点需同步改前端）；
+机械臂订阅在未打开机械臂页时也保持活跃（与全文件订阅架构一致）。
+
+### 界面重组（底盘 / 机械臂 两部分）
+
+- 标题改为 **LabRobot Dashboard**，副标题"Wheeltec S300 底盘 · Lebai LM3
+  机械臂"；导航栏加分组标签：`系统总览 │ Wheeltec 底盘（组件状态 / 底盘
+  控制 / 功能模块）│ Lebai 机械臂（监控与抓取）│ 联系作者`。锚点不变。
+- **系统总览新增"系统架构"卡**：左右两栏分别列出底盘与机械臂的子模块
+  （点击芯片直接跳到对应页签/子页，含功能与抓取子页），中间标注两部分的
+  连接关系（同一工作空间 / rosbridge / video 端口）；三个在线状态点由
+  底盘遥测（`/PowerVoltage`）、机械臂驱动（`/robot_status`）、抓取目标
+  （`/grab_target/distance`）数据流驱动，1s 刷新。
+- 联系作者卡描述同步改为"底盘 + 机械臂"双部分口径。
+
+### 文件改动汇总（第 5 轮）
+
+| 文件 | 变化 |
+| --- | --- |
+| `web/app.js` | teardown 清理机械臂状态、渲染可见性门控、HTML 比对跳过重建、空值守卫、kickVisibleFnStreams 泛化、appendTimeline 合并、.arm-arb 类广播、chassisTime + 架构卡在线点 + 跳转 |
+| `web/index.html` | 标题/副标题、导航分组标签、系统架构卡、冗余 id 清理、联系卡文案 |
+| `web/style.css` | `.h1-sub`、`.nav-group-label`、`.arch-*` 架构卡样式（含窄屏纵排） |
+| `../grab_demo/src/kcf_track_node.cpp` | select_bbox 尺寸上限防御 |
+
+### 验证清单
+
+- [ ] 导航栏显示"Wheeltec 底盘 / Lebai 机械臂"分组标签，原 `#...` 锚点深链全部可用。
+- [ ] 系统总览顶部出现"系统架构"卡：连接 rosbridge 且底盘遥测到达后左侧绿点亮；启动 lebai_driver 后右侧绿点亮；启动任一抓取方案且识别到目标后"识别→抓取"流程点亮。
+- [ ] 点架构卡里的"KCF 抓取"芯片：直接落在 机械臂→KCF 子页。
+- [ ] 断开再重连 rosbridge：关节表清空重建、YOLO 按钮选中态清除。
+- [ ] 在机械臂页与其他页之间来回切换：已在播放的 MJPEG 流不再闪断。
 
 ---
 

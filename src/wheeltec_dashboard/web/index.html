@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Wheeltec S300 Dashboard</title>
+  <title>LabRobot Dashboard — Wheeltec 底盘 + Lebai 机械臂</title>
   <link rel="stylesheet" href="style.css" />
   <script src="https://cdn.jsdelivr.net/npm/eventemitter2@6.4.9/lib/eventemitter2.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/roslib@1.4.1/build/roslib.min.js"></script>
@@ -14,7 +14,7 @@
 <body>
   <div class="topbar">
     <header>
-      <h1>Wheeltec S300 Dashboard</h1>
+      <h1>LabRobot Dashboard <span class="h1-sub">Wheeltec S300 底盘 · Lebai LM3 机械臂</span></h1>
       <div class="conn">
         <label for="ws-url">rosbridge</label>
         <input id="ws-url" type="text" />
@@ -26,10 +26,13 @@
 
     <nav class="tabs" id="main-nav">
       <button class="tab-btn active" data-tab="overview">系统总览</button>
-      <button class="tab-btn" data-tab="components">各组件状态</button>
-      <button class="tab-btn" data-tab="control">控制模块</button>
+      <span class="nav-group-label">Wheeltec 底盘</span>
+      <button class="tab-btn" data-tab="components">组件状态</button>
+      <button class="tab-btn" data-tab="control">底盘控制</button>
       <button class="tab-btn" data-tab="function">功能模块</button>
-      <button class="tab-btn" data-tab="arm">机械臂</button>
+      <span class="nav-group-label">Lebai 机械臂</span>
+      <button class="tab-btn" data-tab="arm">监控与抓取</button>
+      <span class="nav-group-label nav-group-end"></span>
       <button class="tab-btn" data-tab="contact">联系作者</button>
     </nav>
   </div>
@@ -37,6 +40,53 @@
   <main>
     <!-- ============ 系统总览 ============ -->
     <div class="tab-panel active" id="panel-overview">
+      <section class="card card-wide">
+        <h2>系统架构 <span class="muted">(Wheeltec 底盘 + Lebai 机械臂 · 点击模块跳转)</span></h2>
+        <div class="arch">
+          <div class="arch-part">
+            <div class="arch-head">
+              <span class="arch-dot" id="arch-dot-chassis" title="底盘遥测 (/PowerVoltage) 在线"></span>
+              <span class="arch-name">Wheeltec S300 底盘</span>
+              <span class="arch-sub">turn_on_wheeltec_robot</span>
+            </div>
+            <div class="arch-items">
+              <button class="arch-link" data-tab="components">雷达 / 超声</button>
+              <button class="arch-link" data-tab="components">语音 / 相机</button>
+              <button class="arch-link" data-tab="control">速度控制</button>
+              <button class="arch-link" data-tab="function" data-subtab="line">巡线</button>
+              <button class="arch-link" data-tab="function" data-subtab="kcf">KCF 跟随</button>
+              <button class="arch-link" data-tab="function" data-subtab="yolo">YOLO 检测</button>
+              <button class="arch-link" data-tab="function" data-subtab="vla">VLA 语音导航</button>
+            </div>
+          </div>
+          <div class="arch-bridge">
+            <span class="arch-bridge-line"></span>
+            <span class="arch-bridge-text">同一 ROS 2 工作空间<br />rosbridge :9090 · video :8081</span>
+            <span class="arch-bridge-line"></span>
+          </div>
+          <div class="arch-part">
+            <div class="arch-head">
+              <span class="arch-dot" id="arch-dot-arm" title="机械臂驱动 (/robot_status) 在线"></span>
+              <span class="arch-name">Lebai LM3 机械臂</span>
+              <span class="arch-sub">lebai_driver · grab_demo</span>
+            </div>
+            <div class="arch-items">
+              <button class="arch-link" data-tab="arm" data-armsubtab="ctrl">驱动 / 夹爪 / 关节</button>
+              <button class="arch-link" data-tab="arm" data-armsubtab="hsv">HSV 抓取</button>
+              <button class="arch-link" data-tab="arm" data-armsubtab="yolo">YOLO 抓取</button>
+              <button class="arch-link" data-tab="arm" data-armsubtab="kcf">KCF 抓取</button>
+              <button class="arch-link" data-tab="arm" data-armsubtab="aruco">ArUco 抓取</button>
+              <button class="arch-link" data-tab="arm" data-armsubtab="vlm">VLM 语言抓取</button>
+            </div>
+            <div class="arch-flow">
+              <span class="arch-dot" id="arch-dot-grab" title="抓取目标 (/grab_target/distance) 在线"></span>
+              <span>识别 → <code>target_frame</code> TF → <code>/obj_grab_service</code> → 夹爪</span>
+            </div>
+          </div>
+        </div>
+        <p class="hint">绿点 = 对应数据流在线（底盘遥测 / 机械臂驱动 / 抓取目标）。底盘与机械臂合并在同一 colcon 工作空间，经同一个 rosbridge 通信；机械臂相机（<code>/camera_arm/*</code>）同时服务底盘 YOLO 跟随与机械臂抓取识别；五种抓取方案共用 <code>target_frame</code> + <code>/grab_target/distance</code> + <code>/obj_grab_service</code> 一套抓取流程。</p>
+      </section>
+
       <section class="card card-wide">
         <h2>3D 视图 <span class="muted">(three.js · 雷达)</span></h2>
         <div class="viewer-controls">
@@ -594,7 +644,7 @@
           </div>
           <div class="metric">
             <div class="metric-label">抓取控制权 (/arm_arbiter/state)</div>
-            <div id="arm-arb-state" class="metric-value">—</div>
+            <div class="metric-value arm-arb">—</div>
           </div>
         </div>
         <p class="hint">状态来自乐白驱动 <code>/robot_status</code>（lebai_interfaces/RobotStatus），3 秒无数据视为离线显示 "—"。需先启动驱动：<code>ros2 launch lebai_driver robot_state.launch.py</code>。抓取控制权来自 <code>arm_arbiter</code>（随抓取 launch 启动）。</p>
@@ -680,11 +730,11 @@
         <div class="grid">
           <div class="metric">
             <div class="metric-label">目标距离 (/grab_target/distance)</div>
-            <div id="arm-target-dist" class="metric-value arm-dist">— m</div>
+            <div class="metric-value arm-dist">— m</div>
           </div>
           <div class="metric">
             <div class="metric-label">抓取控制权 (/arm_arbiter/state)</div>
-            <div id="arm-arb-state2" class="metric-value">—</div>
+            <div class="metric-value arm-arb">—</div>
           </div>
         </div>
         <div class="vla-quick">
@@ -951,8 +1001,8 @@
         <div class="contact">
           <div class="contact-avatar">W</div>
           <div class="contact-body">
-            <div class="contact-name">Wheeltec S300 Dashboard</div>
-            <p class="contact-desc">面向 Wheeltec S300 机器人的轻量级 Web 仪表盘：实时遥测、底盘控制、参数调节、3D 视图、相机预览、日志，以及巡线 / KCF / YOLO / VLA 等功能模块，全部通过 rosbridge 与 ROS 2 通信。</p>
+            <div class="contact-name">LabRobot Dashboard</div>
+            <p class="contact-desc">面向"Wheeltec S300 移动底盘 + Lebai LM3 机械臂"移动抓取平台的轻量级 Web 仪表盘。底盘部分：实时遥测、速度控制、参数调节、3D 视图、相机预览、日志，以及巡线 / KCF / YOLO / VLA 功能模块；机械臂部分：驱动状态、系统/夹爪/关节控制，以及 HSV / YOLO / KCF / ArUco / VLM 五种视觉抓取方案。全部通过 rosbridge 与 ROS 2 通信。</p>
             <ul class="contact-list">
               <li><span class="ck">项目仓库</span><a href="https://github.com/heisd/wheeltec_s300" target="_blank" rel="noopener">github.com/heisd/wheeltec_s300</a></li>
               <li><span class="ck">维护者</span><span>heisd</span></li>

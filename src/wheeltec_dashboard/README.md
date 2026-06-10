@@ -47,16 +47,20 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 
 ## 功能
 
-页面顶部为导航栏，把所有功能分为六个板块，点击切换（也支持 `#overview`、
-`#components`、`#control`、`#function`、`#arm`、`#contact` 锚点深链）：
+页面顶部为导航栏，按机器人本体的两个部分 —— **Wheeltec 底盘** 与
+**Lebai 机械臂** —— 分组（也支持 `#overview`、`#components`、`#control`、
+`#function`、`#arm`、`#contact` 锚点深链）：
 
-- **系统总览**：3D 视图（雷达 `/scan`）、实时遥测、电压 / cmd_vel 折线图
-- **各组件状态**：雷达（双雷达融合健康）、超声波、语音组件、相机预览、
-  `/rosout` 日志面板
-- **控制模块**：速度控制（遥控）、参数调节
-- **功能模块**（含子页面）：巡线、KCF 跟踪、YOLO 检测、VLA 语音导航
-- **机械臂**（含子页面）：监控与控制、HSV / YOLO / KCF / ArUco / VLM 五种
-  grab_demo 抓取方案
+- **系统总览**：系统架构卡（底盘 / 机械臂两部分的模块总览 + 在线状态点 +
+  点击跳转）、3D 视图（雷达 `/scan`）、实时遥测、电压 / cmd_vel 折线图
+- **Wheeltec 底盘**
+  - **组件状态**：雷达（双雷达融合健康）、超声波、语音组件、相机预览、
+    `/rosout` 日志面板
+  - **底盘控制**：速度控制（遥控）、参数调节
+  - **功能模块**（含子页面）：巡线、KCF 跟踪、YOLO 检测、VLA 语音导航
+- **Lebai 机械臂**
+  - **监控与抓取**（含子页面）：监控与控制、HSV / YOLO / KCF / ArUco / VLM
+    五种 grab_demo 抓取方案
 - **联系作者**：项目仓库与反馈渠道
 
 各板块明细：
