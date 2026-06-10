@@ -47,14 +47,16 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 
 ## 功能
 
-页面顶部为导航栏，把所有功能分为五个板块，点击切换（也支持 `#overview`、
-`#components`、`#control`、`#function`、`#contact` 锚点深链）：
+页面顶部为导航栏，把所有功能分为六个板块，点击切换（也支持 `#overview`、
+`#components`、`#control`、`#function`、`#arm`、`#contact` 锚点深链）：
 
 - **系统总览**：3D 视图（雷达 `/scan`）、实时遥测、电压 / cmd_vel 折线图
 - **各组件状态**：雷达（双雷达融合健康）、超声波、语音组件、相机预览、
   `/rosout` 日志面板
 - **控制模块**：速度控制（遥控）、参数调节
 - **功能模块**（含子页面）：巡线、KCF 跟踪、YOLO 检测、VLA 语音导航
+- **机械臂**（含子页面）：监控与控制、HSV / YOLO / KCF / ArUco / VLM 五种
+  grab_demo 抓取方案
 - **联系作者**：项目仓库与反馈渠道
 
 各板块明细：
@@ -107,6 +109,43 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
   `/tts_text`，以及决策/导航时间线 `/vla/status`；还可向 `/tts_text` 发文本
   让小车开口说话。**需先启动 `vla_navigator`（如 `vla_bringup.launch.py`）**，
   目标点可在本面板 3D 视图或 RViz 的 `/goal_pose` 查看。
+- **机械臂**（Lebai LM3，`lebai_driver` + `grab_demo`，全部经 rosbridge，
+  含子页面）：
+  - **监控与控制** 子页：
+    - 状态监控：`/robot_status`（急停/上电/可运动/运动中/错误/模式）、
+      `/gripper_status`（夹爪位置/力度）、`/joint_states`（关节角度表，
+      度+弧度+速度）、`/grab_target/distance`（视觉目标深度）、
+      `/arm_arbiter/state`（抓取控制权）；驱动离线 3 秒自动回 "—"。
+    - 系统控制：上电/断电/使能/去使能/暂停/恢复/中止/进出示教/关机/急停，
+      即 `/system_service/*`（std_srvs/Empty）；危险操作有二次确认，急停
+      立即下发。
+    - 夹爪控制：位置/力度滑块 + 张开/闭合快捷键，调
+      `/io_service/set_gripper_position|set_gripper_force`（SetGripper）。
+    - 关节运动：6 关节角(rad) + acc/vel 调 `/motion_service/move_joint`
+      （MoveJoint，二次确认），可一键填入当前关节角。
+    - 抓取与仲裁（各方案共用）：调 `/obj_grab_service`（GrabObject）抓取
+      指定 TF 目标；`/arm_arbiter/manual_takeover|manual_release` 手动
+      接管/释放，可打断自动抓取；事件时间线记录所有命令与结果。
+    - 机械臂相机：MJPEG 预览 `/camera_arm/color/image_raw`（与组件页共用
+      web_video_server 设置）。
+  - **抓取方案子页**（对应 `grab_demo` 各 launch，共用 `target_frame` TF +
+    `/grab_target/distance` + `/obj_grab_service` 流程，每页含调试画面、
+    目标距离与"抓取目标"快捷键）：
+    - **HSV 颜色抓取**（`color_grab.launch.py`）：调试图
+      `/color_node/detection_image`；HSV 阈值（hue/sat/val/min_area）
+      实时调参（`/color_node`）。
+    - **YOLO 抓取**（`yolo_ros_grab.launch.py`）：调试图
+      `/yolo_ros_node/detection_image`（带框+距离）；`target_label` /
+      `target_class` / `conf_threshold` 实时调参（`/yolo_ros_node`）。
+    - **KCF 跟踪抓取**（`kcf_grab.launch.py`）：跟踪画面
+      `/kcf_node/tracking_image`；HSV 播种阈值实时调参（`/kcf_node`）。
+    - **ArUco 抓取**（`aruco_grab.launch.py`）：显示机械臂相机原图
+      （aruco_node 无调试图）。
+    - **VLM 语言抓取**（`vlm_grab.launch.py`）：框选画面
+      `/vlm_node/vlm_image`；自然语言指令 `/vlm/instruction` + 理解结果
+      `/vlm/result` + 确认/取消 `/vlm/confirm`。
+  - **需在机械臂上先启动**：`lebai_driver` 的 `robot_state` / `io_service` /
+    `system_service` / `motion`（或任一 `grab_demo` 抓取 launch，已含全套）。
 
 ## 网络说明
 

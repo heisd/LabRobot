@@ -79,17 +79,19 @@ nav.tabs {
   gap: 16px;
 }
 
-/* --------- Sub-tabs (inside 功能模块) --------- */
-/* The function panel hosts its own sub-navigation, so it lays out as a
-   block; each sub-panel is the grid instead. */
-#panel-function.active { display: block; }
+/* --------- Sub-tabs (功能模块 + 机械臂，两组独立的 JS tab 组共用样式) --------- */
+/* The function/arm panels host their own sub-navigation, so they lay out as
+   blocks; each sub-panel is the grid instead. */
+#panel-function.active,
+#panel-arm.active { display: block; }
 .subtabs {
   display: flex;
   gap: 2px;
   flex-wrap: wrap;
   border-bottom: 1px solid var(--border);
 }
-.subtab-btn {
+.subtab-btn,
+.arm-subtab-btn {
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
@@ -101,14 +103,18 @@ nav.tabs {
   white-space: nowrap;
   transition: color 0.12s ease, border-color 0.12s ease;
 }
-.subtab-btn:hover { color: var(--text); }
-.subtab-btn.active {
+.subtab-btn:hover,
+.arm-subtab-btn:hover { color: var(--text); }
+.subtab-btn.active,
+.arm-subtab-btn.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
   font-weight: 600;
 }
-.subtab-panel { display: none; }
-.subtab-panel.active {
+.subtab-panel,
+.arm-subtab-panel { display: none; }
+.subtab-panel.active,
+.arm-subtab-panel.active {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
   gap: 16px;
@@ -778,6 +784,119 @@ main {
 }
 .vla-line .vt { color: var(--muted); }
 .vla-line .vm { color: var(--text); }
+
+/* --------- 机械臂 (Lebai LM3) --------- */
+.sys-btns {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.sys-btns button {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.sys-btns button:hover { border-color: var(--accent); color: var(--accent); }
+.sys-btns button.danger { border-color: rgba(248, 81, 73, 0.5); color: var(--err); }
+.sys-btns button.danger:hover { background: var(--err); border-color: var(--err); color: #fff; }
+#panel-arm .e-stop { width: 100%; }
+
+.grip-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.grip-row label { flex: 0 0 32px; font-size: 12px; color: var(--muted); }
+.grip-row input[type=range] { flex: 1; min-width: 120px; }
+.grip-row .grip-val {
+  min-width: 32px;
+  text-align: right;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.grip-row button {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.grip-row button:hover { filter: brightness(1.15); }
+#panel-arm .vla-quick { margin-top: 10px; }
+#panel-arm .vla-row { margin-top: 10px; }
+#panel-arm .vla-timeline-head { margin-top: 10px; }
+
+.arm-joints { display: flex; flex-direction: column; gap: 4px; }
+.arm-joints:empty::after {
+  content: "等待 /joint_states …（机械臂驱动是否已启动？）";
+  color: var(--muted);
+  font-size: 12px;
+}
+.arm-joint-row {
+  display: grid;
+  grid-template-columns: 1fr 76px 86px 76px;
+  gap: 8px;
+  background: var(--panel-2);
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.arm-joint-row span:not(:first-child) { text-align: right; }
+.arm-joint-row .aj-name {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.arm-joint-head { background: none; padding-top: 0; padding-bottom: 2px; margin-bottom: 2px; }
+.arm-joint-head span { color: var(--muted); }
+.arm-joint-head span:not(:first-child) { text-align: right; }
+
+.mj-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.mj-grid label { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); }
+.mj-grid input {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 8px;
+  border-radius: 4px;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.mj-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.mj-actions button {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 7px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.mj-actions button:hover { border-color: var(--accent); color: var(--accent); }
+.mj-actions .mj-run { background: var(--accent); border-color: var(--accent); color: #fff; }
+.mj-actions .mj-run:hover { filter: brightness(1.15); color: #fff; }
+
+/* VLM 理解结果可能是整句话，缩小字号防止撑爆 metric 卡片。 */
+#arm-vlm-result { font-size: 13px; font-weight: 500; word-break: break-word; }
 
 /* --------- Mobile / narrow-screen tweaks --------- */
 @media (max-width: 640px) {

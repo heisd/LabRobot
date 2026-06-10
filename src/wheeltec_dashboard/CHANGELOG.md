@@ -1,7 +1,98 @@
 # wheeltec_dashboard 变更记录
 
 本文件记录 `wheeltec_dashboard` 面板的 bug 修复与改进，按时间倒序排列。
-所有修改都在分支 `claude/inspiring-thompson-LU7ql` 上完成。
+第 1–3 轮在分支 `claude/inspiring-thompson-LU7ql` 上完成，第 4 轮在
+`claude/happy-ride-lzphg0` 上完成。
+
+---
+
+## 第 4 轮 — 机械臂接入（新增"机械臂"导航页）
+
+### 背景
+
+仓库由移动底盘（Wheeltec S300）与机械臂（Lebai LM3）合并而来，但 dashboard
+此前只覆盖底盘。机械臂侧 lebai_driver 自带一个独立的小型网页面板
+（`lebai_driver/dashboard`，自建 HTTP API），与主面板割裂：两套入口、两个端口。
+本轮把机械臂功能直接接进主面板——所有交互均走既有的 rosbridge，对齐
+lebai_driver / grab_demo 暴露的 ROS2 接口，不需要任何新后端。
+
+### 改动
+
+**导航栏新增"机械臂"标签页**（`#arm` 锚点深链可用），与"功能模块"同构：
+自带子导航，分 **监控与控制 / HSV / YOLO / KCF / ArUco / VLM** 六个子页。
+机械臂子页用独立的 `.arm-subtab-btn`/`.arm-subtab-panel` 类 +
+`data-armsubtab` 键复用 `initTabGroup`，与功能模块的 `.subtab-*` 组互不干扰
+（若共用类名，一组的 activate 会把另一组的 active 面板全部关掉）。
+
+**监控与控制子页**：
+
+- **机械臂状态**：订阅 `/robot_status`（lebai_interfaces/RobotStatus），
+  TriState（1/0/-1）渲染急停/上电/可运动/运动中/错误 + 错误码 + 模式；
+  另显示 `/arm_arbiter/state` 抓取控制权。3 秒无数据自动回 "—"（离线水位，
+  避免陈旧状态误导操作）。
+- **系统控制**：`/system_service/*`（std_srvs/Empty）十个按钮 + 急停大按钮。
+  危险操作（断电/去使能/中止/关机）`confirm()` 二次确认；急停立即下发不确认。
+- **夹爪**：订阅 `/gripper_status`；滑块 + 张开/闭合快捷键调
+  `/io_service/set_gripper_position|set_gripper_force`（SetGripper，0–100）。
+- **关节状态**：订阅 `/joint_states` 进 `armJointMap`（按关节名合并，
+  底盘/机械臂同名话题共存也不互踩），最高 5Hz 重绘表格（度/弧度/速度）。
+- **关节运动**：6 关节角(rad) + acc/vel 调 `/motion_service/move_joint`
+  （MoveJoint）。请求按 rosbridge 习惯完整填充（cartesian_pose 单位四元数、
+  common.time/radius=0）。"填入当前关节角"优先取 `lebai_joint_*`（排序后
+  正好按编号），过滤掉夹爪/底盘关节。执行前二次确认。
+- **抓取与仲裁**（各方案共用）：目标深度 `/grab_target/distance`（2.5s 过期
+  回 "—"，经 `.arm-dist` 类同步到各子页）；TF 抓取调 `/obj_grab_service`
+  （GrabObject，二次确认，提示规划可能数十秒）；仲裁接管/释放调
+  `/arm_arbiter/manual_takeover|manual_release`（Trigger）。所有命令与结果
+  写入"机械臂事件"时间线（textContent 渲染，不注入标记）。
+- **机械臂相机**：复用 fn-img MJPEG 模式预览 `/camera_arm/color/image_raw`。
+
+**抓取方案子页**（对齐 grab_demo 各 launch 的节点名与私有调试话题；每页含
+调试画面 + 目标距离 + "抓取目标"快捷键，快捷键经 `.arm-grab-quick` 类共用
+`requestArmGrab()`）：
+
+- **HSV**（`color_grab` / `color_node`）：调试图 `/color_node/detection_image`；
+  HSV 阈值 hue/sat/val/min_area 复用 `.param-group` 调参机制（int 类型）。
+- **YOLO**（`yolo_ros_grab` / `yolo_ros_node`）：调试图
+  `/yolo_ros_node/detection_image`；`target_label`(string) /
+  `target_class`(int) / `conf_threshold`(double) 实时调参。
+- **KCF**（`kcf_grab` / `kcf_node`）：跟踪画面 `/kcf_node/tracking_image`；
+  HSV 播种阈值调参。
+- **ArUco**（`aruco_grab` / `aruco_node`）：节点无调试图发布，子页显示
+  机械臂相机原图。
+- **VLM**（`vlm_grab` / `vlm_node`）：框选画面 `/vlm_node/vlm_image`；指令发
+  `/vlm/instruction`、结果订 `/vlm/result`、确认/取消发 `/vlm/confirm`。
+
+**MJPEG 流的懒加载**：顶层 tab 切到机械臂时只拉当前激活子页的流；切换机械臂
+子页时再拉对应子页的流（同功能模块策略），不会一次拉起五个方案的调试画面。
+
+### 资源管理
+
+- `/vlm/instruction`、`/vlm/confirm` 两个 publisher 随 `setupTopics()`
+  advertise，`teardownTopics()` 时 unadvertise（同 cmd_vel 的处理）。
+- 状态订阅均带 `throttle_rate`（100–200ms），关节表渲染与消息解耦
+  （dirty 标记 + 200ms 定时器），高频 `/joint_states` 不会打爆 DOM。
+
+### 文件改动汇总（第 4 轮）
+
+| 文件 | 变化 |
+| --- | --- |
+| `web/index.html` | 导航栏加"机械臂" tab、新增 `#panel-arm`（子导航 + 监控与控制 / 五个抓取方案子页） |
+| `web/app.js` | 机械臂订阅/发布、TriState 渲染、关节表、系统/夹爪/运动/抓取服务调用、事件时间线、机械臂子页 tab 组、流懒加载 |
+| `web/style.css` | 子页样式扩展到 `.arm-subtab-*`、`.sys-btns`、`.grip-row`、`.arm-joint*`、`.mj-*` 等机械臂样式 |
+| `README.md` | 功能板块更新为六个，补机械臂子页明细与启动前提 |
+
+### 验证清单
+
+- [ ] 导航栏出现"机械臂"，`http://<host>:8080/#arm` 直达；子页六个 tab 可切换，且不影响"功能模块"页的子页状态。
+- [ ] 启动 `lebai_driver robot_state.launch.py` 后状态卡片有值；停掉 3 秒后回 "—"。
+- [ ] 夹爪滑块"设置位置"能开合真实夹爪（`/gripper_status` 数值跟随）。
+- [ ] "填入当前关节角"填进 `lebai_joint_1..6` 实时值；"执行运动"先弹确认。
+- [ ] 启动 `grab_demo color_grab.launch.py`：HSV 子页能看到调试画面，"读取当前值"拉回 hue/sat/val 阈值，改 `hue_min` 应用后画面掩码变化。
+- [ ] 启动 `grab_demo yolo_ros_grab.launch.py`：YOLO 子页调试图有框+距离，各子页"目标距离"同步有读数，"抓取目标"能完成一次抓取并在时间线显示结果。
+- [ ] VLM 子页发指令后 `/vlm/result` 显示理解结果，"确认抓取"触发执行。
+- [ ] "手动接管"后 `/arm_arbiter/state` 显示"手动接管"，自动抓取被拒绝；"释放控制权"恢复。
+- [ ] 断开 rosbridge 时点任何按钮：时间线提示"未连接"，不报 JS 错。
 
 ---
 

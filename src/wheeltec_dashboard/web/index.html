@@ -29,6 +29,7 @@
       <button class="tab-btn" data-tab="components">各组件状态</button>
       <button class="tab-btn" data-tab="control">控制模块</button>
       <button class="tab-btn" data-tab="function">功能模块</button>
+      <button class="tab-btn" data-tab="arm">机械臂</button>
       <button class="tab-btn" data-tab="contact">联系作者</button>
     </nav>
   </div>
@@ -543,6 +544,466 @@
             <div id="vla-timeline" class="vla-timeline"></div>
           </div>
           <p class="hint">指令发布到 <code>/vla/instruction</code>；麦克风识别走 <code>/voice_words</code>。决策与导航状态来自 <code>/vla/status</code>，目标点见 RViz 或 <code>/goal_pose</code>。需先启动 <code>vla_navigator</code> 节点与 rosbridge。</p>
+        </section>
+      </div>
+    </div>
+
+    <!-- ============ 机械臂 (Lebai LM3) ============ -->
+    <div class="tab-panel" id="panel-arm">
+      <nav class="subtabs" id="arm-subnav">
+        <button class="arm-subtab-btn active" data-armsubtab="ctrl">监控与控制</button>
+        <button class="arm-subtab-btn" data-armsubtab="hsv">HSV 颜色抓取</button>
+        <button class="arm-subtab-btn" data-armsubtab="yolo">YOLO 抓取</button>
+        <button class="arm-subtab-btn" data-armsubtab="kcf">KCF 跟踪抓取</button>
+        <button class="arm-subtab-btn" data-armsubtab="aruco">ArUco 抓取</button>
+        <button class="arm-subtab-btn" data-armsubtab="vlm">VLM 语言抓取</button>
+      </nav>
+
+      <!-- ---- 监控与控制 ---- -->
+      <div class="arm-subtab-panel active" id="arm-subpanel-ctrl">
+      <section class="card">
+        <h2>机械臂状态 <span class="muted">(lebai_driver /robot_status)</span></h2>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">急停</div>
+            <div id="arm-estop" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">上电</div>
+            <div id="arm-powered" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">可运动</div>
+            <div id="arm-motion-possible" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">运动中</div>
+            <div id="arm-in-motion" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">错误</div>
+            <div id="arm-in-error" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">错误码</div>
+            <div id="arm-error-code" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">模式</div>
+            <div id="arm-mode" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">抓取控制权 (/arm_arbiter/state)</div>
+            <div id="arm-arb-state" class="metric-value">—</div>
+          </div>
+        </div>
+        <p class="hint">状态来自乐白驱动 <code>/robot_status</code>（lebai_interfaces/RobotStatus），3 秒无数据视为离线显示 "—"。需先启动驱动：<code>ros2 launch lebai_driver robot_state.launch.py</code>。抓取控制权来自 <code>arm_arbiter</code>（随抓取 launch 启动）。</p>
+      </section>
+
+      <section class="card">
+        <h2>系统控制 <span class="muted">(/system_service)</span></h2>
+        <div class="sys-btns">
+          <button data-sys="power_on">上电</button>
+          <button data-sys="power_off" data-confirm="断电将切断机械臂动力，确认执行？" class="danger">断电</button>
+          <button data-sys="enable">使能</button>
+          <button data-sys="disable" data-confirm="去使能后机械臂将失去保持力，确认执行？" class="danger">去使能</button>
+          <button data-sys="pause_motion">暂停运动</button>
+          <button data-sys="resume_motion">恢复运动</button>
+          <button data-sys="abort_motion" data-confirm="将中止机械臂当前运动，确认执行？" class="danger">中止运动</button>
+          <button data-sys="entry_teach_mode">进入示教</button>
+          <button data-sys="exit_teach_mode">退出示教</button>
+          <button data-sys="turn_off_robot" data-confirm="将关闭机械臂控制器（关机），确认执行？" class="danger">关机</button>
+        </div>
+        <button id="arm-estop-btn" class="e-stop" type="button" title="立即调用 /system_service/emergency_stop">机械臂急停 STOP</button>
+        <p class="hint">按钮直接调用 <code>/system_service/*</code>（std_srvs/Empty），需启动 <code>system_service.launch.py</code>。红色按钮有二次确认；急停立即下发不确认。执行结果见下方"机械臂事件"。</p>
+      </section>
+
+      <section class="card">
+        <h2>夹爪 <span class="muted">(/gripper_status · /io_service)</span></h2>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">当前位置</div>
+            <div id="arm-grip-pos" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">当前力度</div>
+            <div id="arm-grip-force" class="metric-value">—</div>
+          </div>
+        </div>
+        <div class="grip-row">
+          <label>位置</label>
+          <input id="arm-grip-pos-range" type="range" min="0" max="100" step="1" value="50" />
+          <span id="arm-grip-pos-val" class="grip-val">50</span>
+          <button id="arm-grip-pos-apply">设置位置</button>
+        </div>
+        <div class="grip-row">
+          <label>力度</label>
+          <input id="arm-grip-force-range" type="range" min="0" max="100" step="1" value="50" />
+          <span id="arm-grip-force-val" class="grip-val">50</span>
+          <button id="arm-grip-force-apply">设置力度</button>
+        </div>
+        <div class="vla-quick">
+          <button id="arm-grip-open" class="vla-q">张开 (100)</button>
+          <button id="arm-grip-close" class="vla-q">闭合 (0)</button>
+        </div>
+        <p class="hint">0 = 闭合，100 = 张开。服务 <code>/io_service/set_gripper_position</code> / <code>set_gripper_force</code>（SetGripper），需启动 <code>io_service.launch.py</code>。</p>
+      </section>
+
+      <section class="card">
+        <h2>关节状态 <span class="muted">(/joint_states)</span></h2>
+        <div class="arm-joint-row arm-joint-head"><span>关节</span><span>角度 °</span><span>rad</span><span>速度</span></div>
+        <div id="arm-joints" class="arm-joints"></div>
+        <p class="hint">由 lebai_driver robot_state 发布（含夹爪关节 <code>gripper_*</code>）。</p>
+      </section>
+
+      <section class="card card-wide">
+        <h2>关节运动 <span class="muted">(/motion_service/move_joint)</span></h2>
+        <div class="mj-grid">
+          <label>关节1 (rad)<input class="mj-j" data-idx="0" type="number" step="0.01" value="0" /></label>
+          <label>关节2 (rad)<input class="mj-j" data-idx="1" type="number" step="0.01" value="0" /></label>
+          <label>关节3 (rad)<input class="mj-j" data-idx="2" type="number" step="0.01" value="0" /></label>
+          <label>关节4 (rad)<input class="mj-j" data-idx="3" type="number" step="0.01" value="0" /></label>
+          <label>关节5 (rad)<input class="mj-j" data-idx="4" type="number" step="0.01" value="0" /></label>
+          <label>关节6 (rad)<input class="mj-j" data-idx="5" type="number" step="0.01" value="0" /></label>
+          <label>加速度 acc<input id="arm-mj-acc" type="number" step="0.1" min="0" value="1.0" /></label>
+          <label>速度 vel<input id="arm-mj-vel" type="number" step="0.1" min="0" value="1.0" /></label>
+        </div>
+        <div class="mj-actions">
+          <button id="arm-mj-fill" type="button">填入当前关节角</button>
+          <button id="arm-mj-run" class="mj-run" type="button">执行运动</button>
+        </div>
+        <p class="hint">⚠ 调用 <code>/motion_service/move_joint</code>（MoveJoint）<strong>会真实移动机械臂</strong>，执行前有二次确认；需启动 <code>motion.launch.py</code>。"填入当前关节角"读取 <code>/joint_states</code> 中 <code>lebai_joint_1..6</code> 的实时值。</p>
+      </section>
+
+      <section class="card card-wide">
+        <h2>抓取与仲裁 <span class="muted">(grab_demo · 各方案共用)</span></h2>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">目标距离 (/grab_target/distance)</div>
+            <div id="arm-target-dist" class="metric-value arm-dist">— m</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">抓取控制权 (/arm_arbiter/state)</div>
+            <div id="arm-arb-state2" class="metric-value">—</div>
+          </div>
+        </div>
+        <div class="vla-quick">
+          <button id="arm-arb-takeover" class="vla-q">手动接管</button>
+          <button id="arm-arb-release" class="vla-q">释放控制权</button>
+        </div>
+        <div class="vla-row">
+          <input id="arm-grab-frame" type="text" value="target_frame" title="目标 TF 名（识别节点广播的 target_frame）" />
+          <button id="arm-grab-call">抓取该 TF 目标</button>
+        </div>
+        <div class="vla-timeline-head">
+          <span>机械臂事件</span>
+          <button id="arm-log-clear">清空</button>
+        </div>
+        <div id="arm-log" class="vla-timeline"></div>
+        <p class="hint">所有抓取方案（HSV / YOLO / KCF / ArUco / VLM，见上方子页）共用同一套流程：识别节点持续广播 <code>target_frame</code> TF 并把目标深度发到 <code>/grab_target/distance</code>，"抓取该 TF 目标"调用 <code>/obj_grab_service</code>（GrabObject）驱动机械臂执行。"手动接管 / 释放"经 <code>/arm_arbiter/manual_takeover|manual_release</code>，可随时打断自动抓取。事件时间线记录本页所有命令与结果。</p>
+      </section>
+
+      <section class="card card-wide">
+        <h2>机械臂相机 <span class="muted">(web_video_server MJPEG)</span></h2>
+        <div class="fn-stream-toolbar">
+          <label>话题
+            <input class="fn-topic" data-img="arm-cam-stream" type="text" value="/camera_arm/color/image_raw" />
+          </label>
+          <button class="fn-reload" data-img="arm-cam-stream">刷新</button>
+        </div>
+        <div class="cam-frame fn-frame">
+          <img id="arm-cam-stream" class="cam-img fn-img" data-topic="/camera_arm/color/image_raw" src="placeholder.svg" alt="arm camera" />
+          <div class="cam-err" hidden>无法加载流</div>
+        </div>
+        <p class="hint">与"各组件状态"页共用 web_video_server 端口/画质设置。各抓取方案的调试画面见对应子页。</p>
+      </section>
+      </div>
+
+      <!-- ---- HSV 颜色抓取 ---- -->
+      <div class="arm-subtab-panel" id="arm-subpanel-hsv">
+        <section class="card card-wide">
+          <h2>HSV 颜色抓取 <span class="muted">(color_grab / color_node)</span></h2>
+          <div class="fn-stream-toolbar">
+            <label>调试画面话题
+              <input class="fn-topic" data-img="arm-hsv-stream" type="text" value="/color_node/detection_image" />
+            </label>
+            <button class="fn-reload" data-img="arm-hsv-stream">刷新</button>
+          </div>
+          <div class="cam-frame fn-frame">
+            <img id="arm-hsv-stream" class="cam-img fn-img" data-topic="/color_node/detection_image" src="placeholder.svg" alt="hsv grab" />
+            <div class="cam-err" hidden>无法加载流</div>
+          </div>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">目标距离 (/grab_target/distance)</div>
+              <div class="metric-value arm-dist">— m</div>
+            </div>
+          </div>
+          <div class="vla-quick">
+            <button class="vla-q arm-grab-quick">抓取目标 (target_frame)</button>
+          </div>
+          <p class="hint">启动：<code>ros2 launch grab_demo color_grab.launch.py</code>（含相机 + 驱动 + MoveIt + 闭环抓取 + 仲裁）。按 HSV 阈值找最大色块，最轻量；默认红色（hue 0–10）。阈值可在下方实时调参，详见 <code>grab_demo/HSV_GUIDE.md</code>。</p>
+        </section>
+
+        <section class="card card-wide">
+          <h2>HSV 阈值参数 <span class="muted">(/color_node)</span></h2>
+          <div class="params param-group">
+            <div class="param-row">
+              <label>节点</label>
+              <input class="pg-node" type="text" value="/color_node" list="node-list" />
+              <button class="pg-refresh">读取当前值</button>
+            </div>
+            <div>
+              <div class="param-row" data-param="hue_min" data-type="int">
+                <label>hue_min (0-180)</label>
+                <input type="number" step="1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="hue_max" data-type="int">
+                <label>hue_max (0-180)</label>
+                <input type="number" step="1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="sat_min" data-type="int">
+                <label>sat_min (0-255)</label>
+                <input type="number" step="1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="sat_max" data-type="int">
+                <label>sat_max (0-255)</label>
+                <input type="number" step="1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="val_min" data-type="int">
+                <label>val_min (0-255)</label>
+                <input type="number" step="1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="val_max" data-type="int">
+                <label>val_max (0-255)</label>
+                <input type="number" step="1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="min_area" data-type="int">
+                <label>min_area (px²)</label>
+                <input type="number" step="50" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+            </div>
+            <p class="hint">等价 <code>ros2 param set /color_node hue_min ...</code>，改完立即生效（无 trackbar 也能调色）。先点"读取当前值"再修改"应用"。</p>
+          </div>
+        </section>
+      </div>
+
+      <!-- ---- YOLO 抓取 ---- -->
+      <div class="arm-subtab-panel" id="arm-subpanel-yolo">
+        <section class="card card-wide">
+          <h2>YOLO 抓取 <span class="muted">(yolo_ros_grab / yolo_ros_node)</span></h2>
+          <div class="fn-stream-toolbar">
+            <label>调试画面话题
+              <input class="fn-topic" data-img="arm-yolo-stream" type="text" value="/yolo_ros_node/detection_image" />
+            </label>
+            <button class="fn-reload" data-img="arm-yolo-stream">刷新</button>
+          </div>
+          <div class="cam-frame fn-frame">
+            <img id="arm-yolo-stream" class="cam-img fn-img" data-topic="/yolo_ros_node/detection_image" src="placeholder.svg" alt="yolo grab" />
+            <div class="cam-err" hidden>无法加载流</div>
+          </div>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">目标距离 (/grab_target/distance)</div>
+              <div class="metric-value arm-dist">— m</div>
+            </div>
+          </div>
+          <div class="vla-quick">
+            <button class="vla-q arm-grab-quick">抓取目标 (target_frame)</button>
+          </div>
+          <p class="hint">启动：<code>ros2 launch grab_demo yolo_ros_grab.launch.py</code>（yolo_ros + 桥接 + 闭环抓取，CPU/GPU 皆可）。桥接节点把 <code>/yolo/detections</code> 转成 <code>target_frame</code> TF，调试图带框 + 距离。选中目标可用下方 <code>target_label</code>（类别名）/ <code>conf_threshold</code> 实时调，详见 <code>grab_demo/YOLO_ROS_GUIDE.md</code>。Jetson TensorRT 版用 <code>yolo_grab.launch.py</code>。</p>
+        </section>
+
+        <section class="card card-wide">
+          <h2>目标筛选参数 <span class="muted">(/yolo_ros_node)</span></h2>
+          <div class="params param-group">
+            <div class="param-row">
+              <label>节点</label>
+              <input class="pg-node" type="text" value="/yolo_ros_node" list="node-list" />
+              <button class="pg-refresh">读取当前值</button>
+            </div>
+            <div>
+              <div class="param-row" data-param="target_label" data-type="string">
+                <label>target_label (类别名)</label>
+                <input type="text" placeholder="如 bottle / cup，空=全部" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="target_class" data-type="int">
+                <label>target_class (id, -1=全部)</label>
+                <input type="number" step="1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="conf_threshold" data-type="double">
+                <label>conf_threshold (0-1)</label>
+                <input type="number" step="0.05" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+            </div>
+            <p class="hint">target_label 优先于 target_class；多个候选时按 <code>select_mode</code>（默认置信度最高）选一个。</p>
+          </div>
+        </section>
+      </div>
+
+      <!-- ---- KCF 跟踪抓取 ---- -->
+      <div class="arm-subtab-panel" id="arm-subpanel-kcf">
+        <section class="card card-wide">
+          <h2>KCF 跟踪抓取 <span class="muted">(kcf_grab / kcf_node)</span></h2>
+          <div class="fn-stream-toolbar">
+            <label>跟踪画面话题
+              <input class="fn-topic" data-img="arm-kcf-stream" type="text" value="/kcf_node/tracking_image" />
+            </label>
+            <button class="fn-reload" data-img="arm-kcf-stream">刷新</button>
+          </div>
+          <div class="cam-frame fn-frame">
+            <img id="arm-kcf-stream" class="cam-img fn-img" data-topic="/kcf_node/tracking_image" src="placeholder.svg" alt="kcf grab" />
+            <div class="cam-err" hidden>无法加载流</div>
+          </div>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">目标距离 (/grab_target/distance)</div>
+              <div class="metric-value arm-dist">— m</div>
+            </div>
+          </div>
+          <div class="vla-quick">
+            <button class="vla-q arm-grab-quick">抓取目标 (target_frame)</button>
+          </div>
+          <p class="hint">启动：<code>ros2 launch grab_demo kcf_grab.launch.py</code>。KCF 相关滤波持续跟踪并刷新 <code>target_frame</code>，闭环节点据此反复修正位姿。初始框由 HSV 自动播种（阈值在下方调，默认红色），丢失后自动重播种（<code>reinit_on_loss</code>）。详见 <code>grab_demo/KCF_GUIDE.md</code>。</p>
+        </section>
+
+        <section class="card card-wide">
+          <h2>HSV 播种参数 <span class="muted">(/kcf_node)</span></h2>
+          <div class="params param-group">
+            <div class="param-row">
+              <label>节点</label>
+              <input class="pg-node" type="text" value="/kcf_node" list="node-list" />
+              <button class="pg-refresh">读取当前值</button>
+            </div>
+            <div>
+              <div class="param-row" data-param="hue_min" data-type="int">
+                <label>hue_min (0-180)</label>
+                <input type="number" step="1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="hue_max" data-type="int">
+                <label>hue_max (0-180)</label>
+                <input type="number" step="1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="sat_min" data-type="int">
+                <label>sat_min (0-255)</label>
+                <input type="number" step="1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="sat_max" data-type="int">
+                <label>sat_max (0-255)</label>
+                <input type="number" step="1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="val_min" data-type="int">
+                <label>val_min (0-255)</label>
+                <input type="number" step="1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="val_max" data-type="int">
+                <label>val_max (0-255)</label>
+                <input type="number" step="1" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+              <div class="param-row" data-param="min_area" data-type="int">
+                <label>min_area (px²)</label>
+                <input type="number" step="50" />
+                <button class="param-apply">应用</button>
+                <span class="param-current">—</span>
+              </div>
+            </div>
+            <p class="hint">播种 = 用 HSV 找到第一个目标框交给 KCF。跟踪开始后改这些参数只影响下次重播种。</p>
+          </div>
+        </section>
+      </div>
+
+      <!-- ---- ArUco 抓取 ---- -->
+      <div class="arm-subtab-panel" id="arm-subpanel-aruco">
+        <section class="card card-wide">
+          <h2>ArUco 标记抓取 <span class="muted">(aruco_grab / aruco_node)</span></h2>
+          <div class="fn-stream-toolbar">
+            <label>相机画面话题
+              <input class="fn-topic" data-img="arm-aruco-stream" type="text" value="/camera_arm/color/image_raw" />
+            </label>
+            <button class="fn-reload" data-img="arm-aruco-stream">刷新</button>
+          </div>
+          <div class="cam-frame fn-frame">
+            <img id="arm-aruco-stream" class="cam-img fn-img" data-topic="/camera_arm/color/image_raw" src="placeholder.svg" alt="aruco grab" />
+            <div class="cam-err" hidden>无法加载流</div>
+          </div>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">目标距离 (/grab_target/distance)</div>
+              <div class="metric-value arm-dist">— m</div>
+            </div>
+          </div>
+          <div class="vla-quick">
+            <button class="vla-q arm-grab-quick">抓取目标 (target_frame)</button>
+          </div>
+          <p class="hint">启动：<code>ros2 launch grab_demo aruco_grab.launch.py</code>。识别 ArUco 标记（边长默认 0.05m，launch 参数 <code>markerLength</code>）并广播目标 TF。aruco_node 不发布调试图，这里显示机械臂相机原始画面；标记位姿可在 RViz 查看。</p>
+        </section>
+      </div>
+
+      <!-- ---- VLM 语言抓取 ---- -->
+      <div class="arm-subtab-panel" id="arm-subpanel-vlm">
+        <section class="card card-wide">
+          <h2>VLM 自然语言抓取 <span class="muted">(vlm_grab / vlm_node)</span></h2>
+          <div class="fn-stream-toolbar">
+            <label>框选画面话题
+              <input class="fn-topic" data-img="arm-vlm-stream" type="text" value="/vlm_node/vlm_image" />
+            </label>
+            <button class="fn-reload" data-img="arm-vlm-stream">刷新</button>
+          </div>
+          <div class="cam-frame fn-frame">
+            <img id="arm-vlm-stream" class="cam-img fn-img" data-topic="/vlm_node/vlm_image" src="placeholder.svg" alt="vlm grab" />
+            <div class="cam-err" hidden>无法加载流</div>
+          </div>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">目标距离 (/grab_target/distance)</div>
+              <div class="metric-value arm-dist">— m</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">VLM 理解结果 (/vlm/result)</div>
+              <div id="arm-vlm-result" class="metric-value">—</div>
+            </div>
+          </div>
+          <div class="vla-row">
+            <input id="arm-vlm-instr" type="text" placeholder="自然语言指令，如：把香蕉拿给我 / 我渴了（发布到 /vlm/instruction）" />
+            <button id="arm-vlm-send">发送指令</button>
+          </div>
+          <div class="vla-quick">
+            <button id="arm-vlm-confirm" class="vla-q">确认抓取</button>
+            <button id="arm-vlm-cancel" class="vla-q vla-q-stop">取消抓取</button>
+          </div>
+          <p class="hint">启动：<code>ros2 launch grab_demo vlm_grab.launch.py</code>。视觉语言模型按一句话（可间接表达）选物抓取：指令发 <code>/vlm/instruction</code>，理解结果见 <code>/vlm/result</code>，需确认时点"确认抓取"（发 <code>/vlm/confirm</code>）。配 <code>voice_instruction_node</code>（本地 Whisper）可直接语音下指令。详见 <code>grab_demo/VLM_GUIDE.md</code>、<code>VOICE_GUIDE.md</code>。</p>
         </section>
       </div>
     </div>
