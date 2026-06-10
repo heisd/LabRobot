@@ -58,7 +58,8 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
     低压禁动 + 回充模式回读 + 事件日志）、雷达（双雷达融合健康）、超声波、
     语音组件、相机预览、`/rosout` 日志面板
   - **底盘控制**：速度控制（遥控 + 安全等级）、自动回充、RGB 灯带、参数调节
-  - **功能模块**（含子页面）：巡线、KCF 跟踪、YOLO 检测、VLA 语音导航
+  - **功能模块**（含子页面）：巡线、KCF 跟踪、YOLO 检测、骨架识别、
+    VLA 语音导航（含航点标定助手）
 - **Lebai 机械臂**
   - **监控与抓取**（含子页面）：监控与控制、HSV / YOLO / KCF / ArUco / VLM
     五种 grab_demo 抓取方案
@@ -90,6 +91,22 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 - **YOLO 检测**：本仓库未内置 YOLO 节点，提供通用查看器——可订阅任意
   `vision_msgs/msg/Detection2DArray` 检测话题（默认 `/yolo/detections`）并列出
   类别/置信度，图像话题可指向检测节点的标注输出。
+- **骨架识别 / 体感跟随**（`wheeltec_bodyreader`，Astra Body Tracking）：
+  骨架叠加画面 `/body/body_display`（MJPEG）；订阅 `/body_posture` 显示
+  锁定状态（无人/检测到/已锁定）、锁定 ID、目标距离与横向偏角、活跃姿态
+  （叉腰锁定/举手/平举/抬脚）与跌倒告警，`/bodylist` 显示视野人数；
+  按钮发布 `/mode`（1=姿态交互 2=跟随，切跟随需确认）与 `/recoveryid`
+  （找回锁定目标）；`/body_follower` 的 bodyfollow_x_p/x_d/z_p/z_d PID
+  可在线调。启动 `ros2 launch bodyreader bodyfollow.launch.py`。
+- **下发命令解析**：驱动把发给下位机的 11 字节控制帧回发到
+  `/robot_serial_tx`（需重编译），面板按通信协议表解析模式选择位
+  （0=速度控制 / 1、2=自动回充 / 3=红外对接速度 / 4=灯带 RGB）、目标速度
+  与 BCC 校验——STM32 卡"最近下发指令"实时刷新，命令类型变化写入
+  下位机事件栏。
+- **VLA 航点标定助手**（VLA 子页）：浏览器端 TF 合成 map→base_footprint
+  实时显示当前定位位姿；填航点名/别名一键生成 `waypoints.yaml` 片段并复制，
+  追加到 `vla_navigation/config/waypoints.yaml` 后重编译重启即可用
+  "去 X"指令导航。
 
 - 实时遥测：`/PowerVoltage`、`/robot_charging_flag`、`/robot_charging_current`、
   `/robot_red_flag`（**回充红外信号**——固件回充帧 rx[3] 是收到充电桩红外的

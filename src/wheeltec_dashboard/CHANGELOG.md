@@ -6,6 +6,74 @@
 
 ---
 
+## 第 8 轮 — 下发命令按协议解析进事件栏 + 骨架识别子页 + VLA 航点标定助手
+
+### 下位机事件显示"已解析的命令"（对照通信协议表）
+
+用户提供了 S 系列通信协议表（C63A↔ROS 串口部分），按表实现：
+
+- **驱动**：`Cmd_Vel_Callback` / `Red_Vel_Callback` / `Set_LightRgb_Callback`
+  每次串口写帧成功后，把 11 字节控制帧原样回发到新话题
+  `/robot_serial_tx`（UInt8MultiArray）。析构时的停车/复位帧不回发
+  （节点正在关闭）。
+- **面板**：`parseStm32Tx()` 按协议解析——帧头 `0x7B`/帧尾 `0x7D` 校验、
+  BCC（前 9 字节异或 = 第 9 字节）、模式选择位
+  （0=速度控制 / 1、2=自动回充 / 3=红外对接速度 / 4=灯带 RGB）、
+  三轴目标速度（short, mm/s → m/s）、安全级（速度帧第 2 字节）。
+- **防刷屏**：STM32 卡新增"最近下发指令（已解析）"指标实时刷新（BCC 错
+  标红）；事件栏只在**命令签名变化**时追加一条（含解析文本 + 原始 hex），
+  连续速度帧数值变化不重复记录。
+
+### 新增"骨架识别 / 体感跟随"子页（功能模块，wheeltec_bodyreader）
+
+读包源码对齐接口（`main/bodydata_process/follower/interaction/display.py`）：
+
+- 骨架叠加画面 `/body/body_display`（display.py 发布，走 web_video_server
+  MJPEG，复用 fn-img 懒加载）。
+- 状态卡：`/body_posture` → 锁定状态（0 无人/1 检测到未锁定/2 已锁定）、
+  锁定 ID、目标距离（centerofmass_z mm→m）、横向偏角（atan2(x,z)）、
+  活跃姿态（叉腰锁定/举左右手/平举左右臂/抬左右脚）、跌倒告警；
+  `/bodylist` → 视野人数；3 秒无数据自动回 "—"。
+- 控制：发布 `/mode`（2=跟随【二次确认，会动真车】、1=姿态交互）、
+  `/recoveryid`（Int16，找回锁定目标）。
+- `/body_follower` 的 bodyfollow_x_p/x_d/z_p/z_d 接入既有 param-group
+  在线调参。
+- 架构卡与功能子导航加"骨架识别"入口。
+
+### VLA 子页新增"航点标定助手"
+
+回答"怎么建立 VLA 导航点"：航点是 `vla_navigation/config/waypoints.yaml`
+里 map 坐标系的静态位姿，节点启动时加载。助手卡把标定流程工具化：
+
+- 独立 `makeTfClient(ros, 'map')` 在浏览器端合成 map→base_footprint，
+  500ms 刷新当前实测位姿（x/y/yaw，rad+deg）；未定位时显示提示；
+  子页不可见时不刷新。
+- 填航点名/别名 →"用当前位姿生成 YAML"产出可直接追加进
+  `waypoints.yaml` 的片段 + 一键复制；hint 写明完整流程
+  （建图→定位→开到点→生成→追加→colcon build→重启 vla_navigator）。
+
+### 文件改动汇总（第 8 轮）
+
+| 文件 | 变化 |
+| --- | --- |
+| `web/index.html` | 骨架识别子页、航点标定助手卡、STM32"最近下发指令"指标、导航/架构卡入口 |
+| `web/app.js` | parseStm32Tx/ingestStm32Tx、bodyreader 订阅与控制、wpTf 航点助手、teardown 清理 |
+| `web/style.css` | `.stm32-lastcmd` / `.body-recover` / `.wp-form` / `.wp-yaml` |
+| `../turn_on_wheeltec_robot/...` | `/robot_serial_tx` 发布（hpp + cpp 三处写帧后回发） |
+| `README.md` | 功能清单与明细更新 |
+
+### 验证清单
+
+- [ ] 重编译驱动后遥控小车：STM32 卡"最近下发指令"实时显示"速度控制 Vx=… Vy=… Vz=…"；事件栏出现一条"↓ 下发: 速度控制 …
+ [7B 00 00 …]"，持续遥控不重复刷。
+- [ ] 面板设置灯带红色：事件栏出现"↓ 下发: 设置灯带颜色 R255 G0 B0 [7B 04 01 FF 00 00 00 00 00 81 7D]"（与协议表示例一致）。
+- [ ] 开始自动回充：事件栏出现"↓ 下发: 自动回充模式 …"。
+- [ ] `ros2 launch bodyreader bodyfollow.launch.py` 后：骨架子页有叠加画面，人进入视野"锁定状态/人数"变化，叉腰后显示"已锁定"+ID；切"姿态交互模式"抬脚/举手时"活跃姿态"跟随显示。
+- [ ] 启动 Nav2 定位后打开 VLA 子页：航点助手显示当前 x/y/yaw 并随小车移动刷新；填名字生成 YAML 片段、复制、追加到 waypoints.yaml、重编译重启后"去新航点"可导航。
+- [ ] 未启动 Nav2 时航点助手显示"未定位（map TF 不可用）"。
+
+---
+
 ## 第 7 轮 — 对齐新固件 KeilSingleChipProject：回充红外语义修正 + 自动回充 / RGB 灯带 / 安全等级 / 固件使能位
 
 ### 背景

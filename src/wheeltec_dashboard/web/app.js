@@ -22,6 +22,9 @@
   let kcfBboxPub = null;       // /kcf_node/select_bbox publisher (KCF 手动框选)
   let rechargeFlagPub = null;  // /robot_recharge_flag publisher (自动回充 1开/0关)
   let securityPub = null;      // /chassis_security publisher (固件安全等级 0/1)
+  let bodyModePub = null;      // /mode publisher (骨架识别 1=姿态交互 2=跟随)
+  let bodyRecoveryPub = null;  // /recoveryid publisher (骨架识别找回锁定目标)
+  let wpTf = null;             // map→base_footprint TF (VLA 航点标定助手)
   let lidarSubs = [];      // per-source LaserScan subs (managed separately so
                            // the lidar card can re-subscribe on topic change)
   const lidarLast = {};    // key -> { time, points, min }
@@ -149,6 +152,18 @@
       try { securityPub.unadvertise(); } catch (_) { /* ignore */ }
       securityPub = null;
     }
+    if (bodyModePub) {
+      try { bodyModePub.unadvertise(); } catch (_) { /* ignore */ }
+      bodyModePub = null;
+    }
+    if (bodyRecoveryPub) {
+      try { bodyRecoveryPub.unadvertise(); } catch (_) { /* ignore */ }
+      bodyRecoveryPub = null;
+    }
+    if (wpTf) {
+      try { wpTf.dispose(); } catch (_) { /* ignore */ }
+      wpTf = null;
+    }
     // 机械臂侧状态属于上一个连接：清掉，避免换机器人重连后残留
     // 旧关节行 / 旧的 YOLO 目标选中态（armJointMap 也因此不会无限增长）。
     armJointMap.clear();
@@ -265,6 +280,39 @@
       ros, name: '/chassis_security', messageType: 'std_msgs/msg/Int8',
     });
     securityPub.advertise();
+
+    // 驱动发给下位机的 11 字节控制帧原样回发（/robot_serial_tx，需重编译驱动），
+    // 按通信协议表解析后进 STM32 卡的"最近下发指令"与事件栏。
+    sub('/robot_serial_tx', 'std_msgs/msg/UInt8MultiArray', (msg) => {
+      ingestStm32Tx(msg.data || []);
+    }, { throttle_rate: 100 });
+
+    // 骨架识别 (wheeltec_bodyreader)：姿态/人数/模式订阅 + 模式切换/找回目标发布。
+    bodyModePub = new ROSLIB.Topic({
+      ros, name: '/mode', messageType: 'std_msgs/msg/Int8',
+    });
+    bodyModePub.advertise();
+    bodyRecoveryPub = new ROSLIB.Topic({
+      ros, name: '/recoveryid', messageType: 'std_msgs/msg/Int16',
+    });
+    bodyRecoveryPub.advertise();
+    sub('/body_posture', 'bodyreader_msg/msg/Bodyposture', renderBodyPosture, { throttle_rate: 200 });
+    sub('/bodylist', 'bodyreader_msg/msg/Bodylist', (msg) => {
+      const el = $('body-count');
+      if (el) el.textContent = String(msg.count != null ? msg.count : '—');
+    }, { throttle_rate: 500 });
+    sub('/mode', 'std_msgs/msg/Int8', (msg) => {
+      const el = $('body-mode');
+      if (!el) return;
+      const m = +msg.data;
+      el.textContent = m === 2 ? '跟随' : (m === 1 ? '姿态交互' : String(m));
+      el.classList.remove('ok', 'warn');
+      el.classList.add(m === 2 ? 'warn' : 'ok');   // 跟随会动真车，标 warn 提醒
+    });
+
+    // VLA 航点标定助手：独立 TF 客户端固定以 map 为参考系（3D 视图那份的
+    // fixed frame 跟随用户输入，默认 odom_combined，不能复用）。
+    wpTf = makeTfClient(ros, 'map');
 
     // VLA: publish instructions / TTS text, watch recognition + status.
     vlaInstrPub = new ROSLIB.Topic({
@@ -1661,6 +1709,185 @@
   if (rgbApply) rgbApply.addEventListener('click', () => callSetRgb(true, rgbFromPicker()));
   const rgbOff = $('rgb-off');
   if (rgbOff) rgbOff.addEventListener('click', () => callSetRgb(false, { r: 0, g: 0, b: 0 }));
+
+  // ---------- 下发串口帧解析（/robot_serial_tx，按通信协议表） ----------
+  // 11 字节控制帧: 7B [模式选择位] [预留/安全级] [Vx高 Vx低 Vy高 Vy低 Vz高 Vz低] BCC 7D
+  // 模式选择位: 0=速度控制(关闭自动回充) 1/2=自动回充 3=红外对接速度 4=灯带RGB。
+  // "最近下发指令"实时刷新；命令类型(签名)变化才写事件栏，速度数值变化不刷屏。
+  let stm32TxLastSig = null;
+
+  function parseStm32Tx(bytes) {
+    if (!bytes || bytes.length < 11 || bytes[0] !== 0x7B || bytes[10] !== 0x7D) return null;
+    let bcc = 0;
+    for (let i = 0; i < 9; i++) bcc ^= bytes[i];
+    const bccOk = bcc === bytes[9];
+    const s16 = (h, l) => { let v = ((h & 0xff) << 8) | (l & 0xff); if (v > 32767) v -= 65536; return v; };
+    const mode = bytes[1];
+    let text, sig;
+    if (mode === 4) {
+      text = bytes[2]
+        ? `设置灯带颜色 R${bytes[3]} G${bytes[4]} B${bytes[5]}`
+        : '灯带恢复默认模式';
+      sig = `rgb|${bytes[2]}|${bytes[3]},${bytes[4]},${bytes[5]}`;
+    } else {
+      const vx = s16(bytes[3], bytes[4]) / 1000;
+      const vy = s16(bytes[5], bytes[6]) / 1000;
+      const vz = s16(bytes[7], bytes[8]) / 1000;
+      const vel = `Vx=${vx.toFixed(2)} Vy=${vy.toFixed(2)} Vz=${vz.toFixed(2)}`;
+      if (mode === 3) {
+        text = `红外对接速度 ${vel}`;
+        sig = 'red_vel';
+      } else if (mode === 1 || mode === 2) {
+        text = `自动回充模式 ${vel}`;
+        sig = 'recharge';
+      } else {
+        text = `速度控制 ${vel}` + (bytes[2] === 1 ? '（安全级1·保持速度）' : '');
+        sig = `vel|sec${bytes[2]}`;
+      }
+    }
+    if (!bccOk) { text += ' [BCC 校验错]'; sig += '|badbcc'; }
+    return { text, sig, bccOk };
+  }
+
+  function ingestStm32Tx(bytes) {
+    const p = parseStm32Tx(bytes);
+    const el = $('stm32-lastcmd');
+    if (!p) {
+      if (el) el.textContent = '无法解析（帧头/帧尾不符）';
+      return;
+    }
+    if (el) {
+      el.textContent = p.text;
+      el.classList.remove('ok', 'err');
+      el.classList.add(p.bccOk ? 'ok' : 'err');
+    }
+    if (p.sig !== stm32TxLastSig) {
+      stm32TxLastSig = p.sig;
+      const hex = Array.from(bytes.slice(0, 11), (b) => (b & 0xff).toString(16).padStart(2, '0').toUpperCase()).join(' ');
+      addStm32Log('↓ 下发: ' + p.text + ' [' + hex + ']');
+    }
+  }
+
+  // ---------- 骨架识别 (wheeltec_bodyreader) ----------
+  // /body_posture: 锁定状态/质心(mm)/姿态标志; /bodylist: 人数; /mode: 1交互 2跟随。
+  let bodyPostureTime = 0;
+
+  function renderBodyPosture(msg) {
+    bodyPostureTime = Date.now();
+    const lock = +msg.lock_status;
+    const lockEl = $('body-lock');
+    if (lockEl) {
+      lockEl.textContent = lock === 2 ? '已锁定' : (lock === 1 ? '检测到人（未锁定）' : '无人');
+      lockEl.classList.remove('ok', 'warn', 'err');
+      lockEl.classList.add(lock === 2 ? 'ok' : 'warn');
+    }
+    const idEl = $('body-id');
+    if (idEl) idEl.textContent = lock === 2 ? String(msg.bodyid) : '—';
+    const z = +msg.centerofmass_z;   // mm，深度方向
+    const x = +msg.centerofmass_x;
+    const distEl = $('body-dist');
+    if (distEl) distEl.textContent = z > 0 ? (z / 1000).toFixed(2) + ' m' : '— m';
+    const angEl = $('body-angle');
+    if (angEl) angEl.textContent = z > 0 ? (Math.atan2(x, z) * 180 / Math.PI).toFixed(1) + ' °' : '— °';
+    const gestures = [];
+    if (msg.akimibo) gestures.push('叉腰(锁定)');
+    if (msg.left_hand_raised) gestures.push('举左手');
+    if (msg.right_hand_raised) gestures.push('举右手');
+    if (msg.left_arm_out) gestures.push('平举左臂');
+    if (msg.right_arm_out) gestures.push('平举右臂');
+    if (msg.left_foot_up) gestures.push('抬左脚');
+    if (msg.right_foot_up) gestures.push('抬右脚');
+    const gEl = $('body-gesture');
+    if (gEl) gEl.textContent = gestures.length ? gestures.join('、') : '—';
+    const fEl = $('body-fall');
+    if (fEl) {
+      fEl.textContent = msg.fall ? '⚠ 跌倒' : '正常';
+      fEl.classList.remove('ok', 'err');
+      fEl.classList.add(msg.fall ? 'err' : 'ok');
+    }
+  }
+
+  // 节点停止 3 秒后清回 "—"，避免陈旧姿态误导。
+  setInterval(() => {
+    if (bodyPostureTime && Date.now() - bodyPostureTime > 3000) {
+      bodyPostureTime = 0;
+      ['body-lock', 'body-id', 'body-gesture', 'body-fall'].forEach((id) => {
+        const el = $(id);
+        if (el) { el.textContent = '—'; el.classList.remove('ok', 'warn', 'err'); }
+      });
+      const d = $('body-dist'); if (d) d.textContent = '— m';
+      const a = $('body-angle'); if (a) a.textContent = '— °';
+    }
+  }, 1000);
+
+  function sendBodyMode(m) {
+    if (!bodyModePub) { alert('未连接 rosbridge'); return; }
+    bodyModePub.publish(new ROSLIB.Message({ data: m }));
+  }
+  const bodyModeFollow = $('body-mode-follow');
+  if (bodyModeFollow) bodyModeFollow.addEventListener('click', () => {
+    if (!window.confirm('切换到跟随模式？锁定目标后机器人会直接发 /cmd_vel 跟人移动。')) return;
+    sendBodyMode(2);
+  });
+  const bodyModeInteract = $('body-mode-interact');
+  if (bodyModeInteract) bodyModeInteract.addEventListener('click', () => sendBodyMode(1));
+  const bodyRecoverSend = $('body-recover-send');
+  if (bodyRecoverSend) bodyRecoverSend.addEventListener('click', () => {
+    if (!bodyRecoveryPub) { alert('未连接 rosbridge'); return; }
+    const v = parseInt(($('body-recover-id') || {}).value, 10);
+    if (Number.isNaN(v)) { alert('请输入数字 ID'); return; }
+    bodyRecoveryPub.publish(new ROSLIB.Message({ data: v }));
+  });
+
+  // ---------- VLA 航点标定助手 ----------
+  // wpTf 持续合成 map→base_footprint；把当前实测位姿生成 waypoints.yaml 片段。
+  let wpPose = null;   // { x, y, yaw } 最近一次有效位姿
+
+  setInterval(() => {
+    const el = $('wp-cur');
+    if (!el || !el.offsetParent) return;   // 子页不可见时不刷新
+    const tf = wpTf ? wpTf.lookup('base_footprint') : null;
+    if (!tf) {
+      wpPose = null;
+      el.textContent = ros ? '未定位（map TF 不可用，需启动 Nav2/AMCL）' : '未连接';
+      el.classList.remove('ok');
+      return;
+    }
+    const yaw = yawFromQuat(tf.rotation);
+    wpPose = { x: tf.translation.x, y: tf.translation.y, yaw };
+    el.textContent = `x=${wpPose.x.toFixed(3)}  y=${wpPose.y.toFixed(3)}  yaw=${yaw.toFixed(3)} rad (${(yaw * 180 / Math.PI).toFixed(1)}°)`;
+    el.classList.add('ok');
+  }, 500);
+
+  const wpGen = $('wp-gen');
+  if (wpGen) wpGen.addEventListener('click', () => {
+    const out = $('wp-yaml');
+    if (!out) return;
+    if (!wpPose) { alert('当前没有有效定位（map→base_footprint TF 不可用）'); return; }
+    const name = (($('wp-name') || {}).value || '').trim();
+    if (!name) { alert('请先填航点名（如：厨房）'); return; }
+    const aliases = (($('wp-alias') || {}).value || '')
+      .split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+    const lines = [
+      `  - name: "${name}"`,
+    ];
+    if (aliases.length) lines.push(`    aliases: [${aliases.map((a) => `"${a}"`).join(', ')}]`);
+    lines.push(`    x: ${wpPose.x.toFixed(3)}`);
+    lines.push(`    y: ${wpPose.y.toFixed(3)}`);
+    lines.push(`    yaw: ${wpPose.yaw.toFixed(3)}`);
+    out.value = lines.join('\n');
+  });
+  const wpCopy = $('wp-copy');
+  if (wpCopy) wpCopy.addEventListener('click', () => {
+    const out = $('wp-yaml');
+    if (!out || !out.value) return;
+    out.select();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(out.value).catch(() => document.execCommand('copy'));
+    } else {
+      document.execCommand('copy');
+    }
+  });
 
   // ---------- 机械臂 (Lebai LM3: lebai_driver + grab_demo) ----------
   // 状态显示走 /robot_status、/gripper_status、/joint_states 等话题；控制走

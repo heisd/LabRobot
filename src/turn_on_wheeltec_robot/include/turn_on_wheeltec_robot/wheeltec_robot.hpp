@@ -9,6 +9,7 @@
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/u_int32.hpp>
+#include <std_msgs/msg/u_int8_multi_array.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include "serial/serial.h"
@@ -205,6 +206,7 @@ class turn_on_robot :public rclcpp::Node
 		rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr SelfCheck_publisher;         // CHANGE
 		rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr Enable_publisher;       //下位机使能位 en_flag (24字节帧 rx[1])
 		rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr RechargeMode_publisher; //下位机自动回充模式 ChargeMode (回充帧 rx[5])
+		rclcpp::Publisher<std_msgs::msg::UInt8MultiArray>::SharedPtr SerialTx_publisher; //下发给下位机的11字节控制帧回发(供面板按协议解析)
 		rclcpp::Service<robot_interfaces::srv::SetRgb>::SharedPtr SetRgb_Service;
 
 
@@ -222,6 +224,7 @@ class turn_on_robot :public rclcpp::Node
 		void Publish_RED();             //Pub the topic whether the robot finds the infrared signal (charging station) //发布机器人是否寻找到红外信号(充电桩)的话题
 		void Publish_EnableFlag();      //发布下位机使能位（en_flag：急停开关/驱动器离线报错/低压等任一条件触发失能）
 		void Publish_RechargeMode();    //发布下位机自动回充模式（固件确认的 ChargeMode，区别于上位机意图 /robot_recharge_flag）
+		void Publish_TxFrame();         //把刚写入串口的11字节控制帧原样发布到 /robot_serial_tx
 
         //从串口(ttyUSB)读取运动底盘速度、IMU、电源电压数据
         //Read motion chassis speed, IMU, power supply voltage data from serial port (ttyUSB)

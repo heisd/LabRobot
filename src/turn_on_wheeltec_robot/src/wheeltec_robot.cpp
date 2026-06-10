@@ -67,6 +67,7 @@ void turn_on_robot::Set_LightRgb_Callback(const std::shared_ptr<robot_interfaces
   try
   {
     Stm32_Serial.write(Send_Data.tx,sizeof (Send_Data.tx)); //Sends data to the downloader via serial port //通过串口向下位机发送数据
+    Publish_TxFrame(); //控制帧回发，供面板解析显示
   }
   catch (serial::IOException& e)
   {
@@ -115,9 +116,10 @@ void turn_on_robot::Cmd_Vel_Callback(const geometry_msgs::msg::Twist &twist_aux)
   Send_Data.tx[10]=FRAME_TAIL; //frame tail 0x7D //帧尾0X7D
   try
   {
-    Stm32_Serial.write(Send_Data.tx,sizeof (Send_Data.tx)); //Sends data to the downloader via serial port //通过串口向下位机发送数据 
+    Stm32_Serial.write(Send_Data.tx,sizeof (Send_Data.tx)); //Sends data to the downloader via serial port //通过串口向下位机发送数据
+    Publish_TxFrame(); //控制帧回发，供面板解析显示
   }
-  catch (serial::IOException& e)   
+  catch (serial::IOException& e)
   {
     RCLCPP_ERROR(this->get_logger(),("Unable to send data through serial port")); //If sending data fails, an error message is printed //如果发送数据失败，打印错误信息
   }
@@ -161,9 +163,10 @@ void turn_on_robot::Red_Vel_Callback(const geometry_msgs::msg::Twist &twist_aux)
   Send_Data.tx[10]=FRAME_TAIL; //frame tail 0x7D //帧尾0X7D
   try
   {
-    Stm32_Serial.write(Send_Data.tx,sizeof (Send_Data.tx)); //Sends data to the downloader via serial port //通过串口向下位机发送数据 
+    Stm32_Serial.write(Send_Data.tx,sizeof (Send_Data.tx)); //Sends data to the downloader via serial port //通过串口向下位机发送数据
+    Publish_TxFrame(); //控制帧回发，供面板解析显示
   }
-  catch (serial::IOException& e)   
+  catch (serial::IOException& e)
   {
     RCLCPP_ERROR(this->get_logger(),("Unable to send data through serial port")); //If sending data fails, an error message is printed //如果发送数据失败，打印错误信息
   }
@@ -315,6 +318,17 @@ void turn_on_robot::Publish_RechargeMode()
     std_msgs::msg::Bool msg;
     msg.data = RechargeMode;
     RechargeMode_publisher->publish(msg);
+}
+/**************************************
+功能: 把刚写入串口的11字节控制帧原样发布到 /robot_serial_tx。
+Dashboard 按通信协议表解析模式选择位（0速度/1、2回充/3红外对接/4灯带）
+与目标速度，在"下位机事件"中显示已解析的命令。
+***************************************/
+void turn_on_robot::Publish_TxFrame()
+{
+    std_msgs::msg::UInt8MultiArray msg;
+    msg.data.assign(Send_Data.tx, Send_Data.tx + sizeof(Send_Data.tx));
+    SerialTx_publisher->publish(msg);
 }
 /**************************************
 Date: January 14, 2022
@@ -714,6 +728,7 @@ turn_on_robot::turn_on_robot(std::string node_name):Node(node_name),Sampling_Tim
   SelfCheck_publisher        =     create_publisher<std_msgs::msg::UInt32>("/self_check_data", 20);    // CHANGE
   Enable_publisher           =     create_publisher<std_msgs::msg::Bool>("robot_enable_flag", 10);     //下位机使能位（24字节帧 rx[1]）
   RechargeMode_publisher     =     create_publisher<std_msgs::msg::Bool>("robot_recharge_mode", 20);   //下位机回充模式（回充帧 rx[5]）
+  SerialTx_publisher         =     create_publisher<std_msgs::msg::UInt8MultiArray>("robot_serial_tx", 20); //下发控制帧回发（面板按协议解析显示）
   //RGB 灯带设置服务（固件 0x04 帧）。Dashboard 经 rosbridge 调用。
   SetRgb_Service=create_service<robot_interfaces::srv::SetRgb>("set_rgb_color",std::bind(&turn_on_robot::Set_LightRgb_Callback,this,std::placeholders::_1,std::placeholders::_2));
 
