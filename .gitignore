@@ -1,0 +1,13 @@
+build/
+install/
+log/
+.vscode/
+.marscode/
+__pycache__/
+*.pyc
+
+# TF tree dumps (ros2 run tf2_tools view_frames) - keep curated copies under docs/
+*.gv
+*.pdf
+!docs/**/*.gv
+!docs/**/*.pdf

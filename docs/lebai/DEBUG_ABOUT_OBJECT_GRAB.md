@@ -9,7 +9,7 @@ git pull lebai WSL
 ## 1.问题一
 问题出现在TF树的转换上
 我们的TF树看这个文件
-[TF](../frames_2025-11-12_16.06.38.pdf)
+[TF](frames_2025-11-12_16.06.38.pdf)
 可以看到我们的color_link并没有和我们的base_link建立联系
 修改hsv_range.cpp的坐标转换部分
 ```cpp

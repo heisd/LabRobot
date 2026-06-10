@@ -1,8 +1,9 @@
-# Wheeltec S300 ROS2 工作空间（src）
+# Wheeltec S300 移动底盘（src/）
 
-本目录为 **Wheeltec S300** 移动机器人的 ROS2 源码工作空间，基于 **ROS2 Humble** 开发，包含底盘驱动、传感器驱动、SLAM 建图、Nav2 导航、视觉/雷达跟随、语音交互、自动回充等完整功能包。
+**Wheeltec S300** 移动机器人部分，基于 **ROS2 Humble** 开发，包含底盘驱动、传感器驱动、SLAM 建图、Nav2 导航、视觉/雷达跟随、语音交互、自动回充等完整功能包。所有功能包均位于仓库统一工作空间的
+[`src/`](../src) 目录下，与机械臂（[`docs/lebai.md`](lebai.md)）共用同一个 colcon 工作空间。
 
-> 配套常用指令速查见同目录下的 `ROS2-V3.5(humble)常用指令.txt`。
+> 配套常用指令速查见 [`wheeltec/ROS2-V3.5(humble)常用指令.txt`](wheeltec/ROS2-V3.5(humble)常用指令.txt)。
 
 ---
 
@@ -32,9 +33,12 @@
 rosdep install --from-paths src --ignore-src -r -y
 ```
 
-> 外部依赖 `yolo_ros`（YOLO 检测 / 3D 跟随）不并入本仓库，用 vcstool 拉取：
-> `vcs import src < yolo_ros.repos`，再装 `ultralytics`。详见
-> [`wheeltec_yolo/README.md`](wheeltec_yolo/README.md)。
+> 外部依赖 `yolo_ros`（YOLO 检测 / 3D 跟随，与 `grab_demo` 共用）以 **git submodule** 形式位于
+> `src/yolo_ros`，克隆仓库后执行 `git submodule update --init --recursive` 拉取，再装
+> `ultralytics`。详见 [`wheeltec_yolo/README.md`](../src/wheeltec_yolo/README.md)。
+>
+> 串口通信库 `serial_ros2`（`turn_on_wheeltec_robot` 依赖）同样以 **git submodule** 形式位于
+> `src/serial_ros2`，随 `git submodule update --init --recursive` 一并拉取。
 
 ---
 
@@ -101,7 +105,7 @@ source install/setup.bash
 | --- | --- |
 | `simple_follower_ros2` | 简单跟随：雷达跟随、视觉巡线（含二维码路径选择）、视觉跟踪；`cmd_arbiter` 速度仲裁（键盘 > 巡线/KCF/YOLO 平级） |
 | `wheeltec_robot_kcf` | KCF 视觉目标跟随（需在 ROS 主机上运行）；跟踪距离 `targetDist_` 可实时调，可经 `cmd_arbiter` 仲裁 |
-| `wheeltec_yolo` | YOLO 检测 / 3D 跟随：集成 [yolo_ros](https://github.com/mgonzs13/yolo_ros)（vcs 拉取），保持设定距离，结果接入 Web 仪表盘 |
+| `wheeltec_yolo` | YOLO 检测 / 3D 跟随：集成 [yolo_ros](https://github.com/mgonzs13/yolo_ros)（git submodule，见 `src/yolo_ros`），保持设定距离，结果接入 Web 仪表盘 |
 | `aruco_ros-humble-devel` | ArUco 二维码识别（`aruco`、`aruco_msgs`、`aruco_ros`） |
 | `wheeltec_bodyreader` | 人体骨架识别、姿态控制与人体跟随（`bodyreader`、`bodyreader_msg`） |
 
@@ -162,8 +166,8 @@ ros2 launch simple_follower_ros2 visual_follower.launch.py
 # KCF 跟随（需在 ROS 主机上运行）
 ros2 launch wheeltec_robot_kcf wheeltec_robot_kcf.launch.py
 
-# —— YOLO 检测 / 3D 跟随 —— 先拉取 yolo_ros 源码并装 ultralytics（见 wheeltec_yolo/README.md）
-vcs import src < yolo_ros.repos        # 仅首次：拉取 yolo_msgs / yolo_ros / yolo_bringup
+# —— YOLO 检测 / 3D 跟随 —— 先拉取 yolo_ros 子模块并装 ultralytics（见 wheeltec_yolo/README.md）
+git submodule update --init --recursive   # 仅首次：拉取 src/yolo_ros (yolo_msgs / yolo_ros / yolo_bringup)
 # 仅检测（结果给仪表盘 YOLO 页：/yolo/detections、/yolo/debug_image）
 ros2 launch wheeltec_yolo yolo.launch.py
 # 3D 跟随，保持 ~0.2m（需相机 depth_registration:=true 让深度与彩色对齐）
