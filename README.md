@@ -56,12 +56,12 @@ source install/setup.bash
 | 子模块 | 路径 | 用途 |
 | --- | --- | --- |
 | [yolo_ros](https://github.com/mgonzs13/yolo_ros) | `src/yolo_ros` | YOLO 检测（Ultralytics），底盘 `wheeltec_yolo` 视觉跟随与机械臂 `grab_demo` YOLO 抓取共用 |
-| [serial-ros2](https://github.com/RoverRobotics-forks/serial-ros2) | `src/serial_ros2` | 底盘 `turn_on_wheeltec_robot` 依赖的串口通信库 |
+| [ros2_serial](https://github.com/RozaGkliva/ros2_serial)（`ros2_cppserial` / `ros2_serial_interfaces`） | `src/serial_ros2` | 串口通信库 |
 
-> `serial_ros2` 子模块映射在合并前的历史记录中已遗失（仅保留指向某个提交的引用，未注册
-> `.gitmodules`），上面的 URL 是按 Wheeltec ROS2 工作空间的常见用法补充的最佳猜测。如果
-> `git submodule update --init` 报错找不到对应提交，请确认/替换为你实际使用的
-> `serial_ros2` 仓库地址（`git submodule set-url src/serial_ros2 <url>`）。
+> 注意：`turn_on_wheeltec_robot` 的 `package.xml` / `CMakeLists.txt` 当前依赖的包名是
+> `serial`（`find_package(serial REQUIRED)`），与 `ros2_serial` 提供的包名
+> `ros2_cppserial` / `ros2_serial_interfaces` 不一致，编译 `turn_on_wheeltec_robot` 时
+> 可能找不到 `serial` 包，需要据此调整依赖声明或代码中的引用。
 
 ## 常用文档速查
 
