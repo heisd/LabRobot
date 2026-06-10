@@ -17,10 +17,14 @@
   let cmdVelPub = null;
   let vlaInstrPub = null;  // /vla/instruction publisher
   let ttsPub = null;       // /tts_text publisher
+  let armVlmInstrPub = null;   // /vlm/instruction publisher (机械臂 VLM 抓取)
+  let armVlmConfirmPub = null; // /vlm/confirm publisher (确认/取消抓取)
+  let kcfBboxPub = null;       // /kcf_node/select_bbox publisher (KCF 手动框选)
   let lidarSubs = [];      // per-source LaserScan subs (managed separately so
                            // the lidar card can re-subscribe on topic change)
   const lidarLast = {};    // key -> { time, points, min }
   let yoloDetSub = null;   // optional yolo_msgs/DetectionArray sub (yolo_ros)
+  let chassisTime = 0;     // 最近一次底盘遥测(/PowerVoltage)到达时间（架构卡在线点）
 
   function setStatus(state, text) {
     statusEl.className = 'status status-' + state;
@@ -123,12 +127,33 @@
       try { ttsPub.unadvertise(); } catch (_) { /* ignore */ }
       ttsPub = null;
     }
+    if (armVlmInstrPub) {
+      try { armVlmInstrPub.unadvertise(); } catch (_) { /* ignore */ }
+      armVlmInstrPub = null;
+    }
+    if (armVlmConfirmPub) {
+      try { armVlmConfirmPub.unadvertise(); } catch (_) { /* ignore */ }
+      armVlmConfirmPub = null;
+    }
+    if (kcfBboxPub) {
+      try { kcfBboxPub.unadvertise(); } catch (_) { /* ignore */ }
+      kcfBboxPub = null;
+    }
+    // 机械臂侧状态属于上一个连接：清掉，避免换机器人重连后残留
+    // 旧关节行 / 旧的 YOLO 目标选中态（armJointMap 也因此不会无限增长）。
+    armJointMap.clear();
+    armJointsDirty = true;
+    armYoloSelected = '';
+    armYoloLastHtml = '';
+    const yoloBtnsView = $('arm-yolo-buttons');
+    if (yoloBtnsView) yoloBtnsView.innerHTML = '';
   }
 
   function setupTopics() {
     teardownTopics();
 
     sub('/PowerVoltage', 'std_msgs/msg/Float32', (msg) => {
+      chassisTime = Date.now();
       const v = msg.data;
       const el = $('m-voltage');
       el.textContent = v.toFixed(2) + ' V';
@@ -264,6 +289,52 @@
       const el = $('line-qr-area');
       if (el) el.textContent = (typeof msg.data === 'number') ? (msg.data * 100).toFixed(1) + ' %' : '—';
     });
+
+    // 机械臂 (lebai_driver + grab_demo): 状态订阅 + VLM 抓取指令发布。
+    armVlmInstrPub = new ROSLIB.Topic({
+      ros, name: '/vlm/instruction', messageType: 'std_msgs/msg/String',
+    });
+    armVlmInstrPub.advertise();
+    armVlmConfirmPub = new ROSLIB.Topic({
+      ros, name: '/vlm/confirm', messageType: 'std_msgs/msg/Bool',
+    });
+    armVlmConfirmPub.advertise();
+
+    sub('/robot_status', 'lebai_interfaces/msg/RobotStatus', renderArmStatus, { throttle_rate: 200 });
+    sub('/gripper_status', 'lebai_interfaces/msg/GripperStatus', (msg) => {
+      setArmMetric('arm-grip-pos', (+msg.position).toFixed(0));
+      setArmMetric('arm-grip-force', (+msg.force).toFixed(0));
+    }, { throttle_rate: 200 });
+    sub('/joint_states', 'sensor_msgs/msg/JointState', ingestArmJointState, { throttle_rate: 100 });
+    sub('/grab_target/distance', 'std_msgs/msg/Float32', (msg) => {
+      armDistTime = Date.now();
+      setArmDist((+msg.data).toFixed(3) + ' m');
+    }, { throttle_rate: 200 });
+    sub('/arm_arbiter/state', 'std_msgs/msg/String', (msg) => {
+      const s = (msg.data || '').trim();
+      let text = s || '—';
+      let cls = '';
+      if (s === 'manual') { text = '手动接管'; cls = 'warn'; }
+      else if (s === 'idle') { text = '自动/空闲'; cls = 'ok'; }
+      // 状态卡片与"抓取与仲裁"卡片各有一份显示（同 .arm-dist 的做法）。
+      document.querySelectorAll('.arm-arb').forEach((el) => {
+        el.textContent = text;
+        el.classList.remove('ok', 'warn', 'err');
+        if (cls) el.classList.add(cls);
+      });
+    });
+    sub('/vlm/result', 'std_msgs/msg/String', (msg) => {
+      const el = $('arm-vlm-result');
+      if (el) el.textContent = msg.data || '—';
+      if (msg.data) addArmLog('VLM: ' + msg.data);
+    });
+    // KCF 手动框选: 在跟踪画面上拖拽框选 -> 发布像素框给 kcf_node 重新播种。
+    kcfBboxPub = new ROSLIB.Topic({
+      ros, name: '/kcf_node/select_bbox', messageType: 'sensor_msgs/msg/RegionOfInterest',
+    });
+    kcfBboxPub.advertise();
+    // YOLO 抓取子页: 把识别到的物体渲染成按钮, 点击设为抓取目标(target_label)。
+    sub('/yolo/detections', 'yolo_msgs/msg/DetectionArray', renderArmYoloButtons, { throttle_rate: 300 });
 
     // Lidar health (fused + per-sensor) and optional YOLO detections.
     subscribeLidar();
@@ -1144,6 +1215,17 @@
   function applyAllFnStreams() {
     document.querySelectorAll('.fn-img').forEach(applyFnStream);
   }
+  // 页签/子页激活时调用：只启动 root 下"当前可见且还停在占位图"的流。
+  // 已在播放的流不重启（避免来回切页时 MJPEG 闪断）；出错回落到占位图的流
+  // 会在下次切回时自动重试；手动重启用各自的"刷新"按钮。
+  function kickVisibleFnStreams(root) {
+    if (!root) return;
+    root.querySelectorAll('.fn-img').forEach((img) => {
+      if (!img.offsetParent) return;                                  // display:none
+      if ((img.src || '').indexOf(CAM_PLACEHOLDER) === -1) return;    // 已在播放
+      applyFnStream(img);
+    });
+  }
   document.querySelectorAll('.fn-topic').forEach((inp) => {
     inp.addEventListener('change', () => {
       const img = $(inp.dataset.img);
@@ -1274,8 +1356,9 @@
   // ---------- VLA voice navigation ----------
   const VLA_MAX_LINES = 200;
 
-  function addVlaStatus(text) {
-    const view = $('vla-timeline');
+  // 通用时间线：VLA 时间线与机械臂事件共用同一渲染（时间戳 + 文本 + 环形截断）。
+  function appendTimeline(viewId, maxLines, text) {
+    const view = $(viewId);
     if (!view) return;
     const row = document.createElement('div');
     row.className = 'vla-line';
@@ -1288,8 +1371,12 @@
     row.appendChild(t);
     row.appendChild(m);
     view.appendChild(row);
-    while (view.childElementCount > VLA_MAX_LINES) view.removeChild(view.firstChild);
+    while (view.childElementCount > maxLines) view.removeChild(view.firstChild);
     view.scrollTop = view.scrollHeight;
+  }
+
+  function addVlaStatus(text) {
+    appendTimeline('vla-timeline', VLA_MAX_LINES, text);
   }
 
   function sendInstruction(text) {
@@ -1337,6 +1424,510 @@
     const v = $('vla-timeline');
     if (v) v.innerHTML = '';
   });
+
+  // ---------- 机械臂 (Lebai LM3: lebai_driver + grab_demo) ----------
+  // 状态显示走 /robot_status、/gripper_status、/joint_states 等话题；控制走
+  // /system_service、/io_service、/motion_service 的服务以及 grab_demo 的
+  // /obj_grab_service、/arm_arbiter/*。全部经 rosbridge，无需额外后端。
+  let armStatusTime = 0;   // 最近一次 /robot_status 到达时间（离线检测）
+  let armDistTime = 0;     // 最近一次 /grab_target/distance 到达时间
+  const armJointMap = new Map(); // 关节名 -> { pos, vel }
+  let armJointsDirty = false;
+
+  function setArmMetric(id, text, cls) {
+    const el = $(id);
+    if (!el) return;
+    el.textContent = text;
+    el.classList.remove('ok', 'warn', 'err');
+    if (cls) el.classList.add(cls);
+  }
+
+  // 目标距离在"抓取与仲裁"卡片和每个抓取方案子页各有一份显示。
+  function setArmDist(text) {
+    document.querySelectorAll('.arm-dist').forEach((el) => { el.textContent = text; });
+  }
+
+  // lebai_interfaces/TriState: val 1/0/-1(未知)。labels = { on: [文本, 类名], off: [...] }
+  function renderArmTri(id, tri, labels) {
+    const v = (tri && typeof tri.val === 'number') ? tri.val : -1;
+    if (v === 1) setArmMetric(id, labels.on[0], labels.on[1]);
+    else if (v === 0) setArmMetric(id, labels.off[0], labels.off[1]);
+    else setArmMetric(id, '未知', 'warn');
+  }
+
+  function renderArmStatus(msg) {
+    armStatusTime = Date.now();
+    renderArmTri('arm-estop', msg.e_stopped, { on: ['触发', 'err'], off: ['正常', 'ok'] });
+    renderArmTri('arm-powered', msg.drives_powered, { on: ['已上电', 'ok'], off: ['未上电', 'warn'] });
+    renderArmTri('arm-motion-possible', msg.motion_possible, { on: ['可运动', 'ok'], off: ['不可运动', 'warn'] });
+    renderArmTri('arm-in-motion', msg.in_motion, { on: ['运动中', 'warn'], off: ['静止', 'ok'] });
+    renderArmTri('arm-in-error', msg.in_error, { on: ['有错误', 'err'], off: ['正常', 'ok'] });
+    const code = msg.error_code || 0;
+    setArmMetric('arm-error-code', String(code), code ? 'err' : 'ok');
+    const m = (msg.mode && typeof msg.mode.val === 'number') ? msg.mode.val : -1;
+    if (m === 2) setArmMetric('arm-mode', '自动', 'ok');
+    else if (m === 1) setArmMetric('arm-mode', '手动/示教', 'warn');
+    else setArmMetric('arm-mode', '未知', 'warn');
+  }
+
+  // 系统架构卡的在线指示点：底盘遥测 / 机械臂驱动 / 抓取目标 三路数据流。
+  function updateArchDots() {
+    const now = Date.now();
+    const set = (id, on) => {
+      const el = $(id);
+      if (el) el.classList.toggle('on', !!on);
+    };
+    set('arch-dot-chassis', chassisTime && now - chassisTime < 3000);
+    set('arch-dot-arm', armStatusTime && now - armStatusTime < 3000);
+    set('arch-dot-grab', armDistTime && now - armDistTime < 2500);
+  }
+
+  // 驱动离线时把状态清回 "—"，避免一直显示陈旧值误导操作。
+  setInterval(() => {
+    if (armStatusTime && Date.now() - armStatusTime > 3000) {
+      armStatusTime = 0;
+      ['arm-estop', 'arm-powered', 'arm-motion-possible', 'arm-in-motion',
+        'arm-in-error', 'arm-error-code', 'arm-mode'].forEach((id) => setArmMetric(id, '—'));
+    }
+    if (armDistTime && Date.now() - armDistTime > 2500) {
+      armDistTime = 0;
+      setArmDist('— m');
+    }
+    updateArchDots();
+  }, 1000);
+
+  function ingestArmJointState(msg) {
+    const names = msg.name || [];
+    for (let i = 0; i < names.length; i++) {
+      armJointMap.set(names[i], {
+        pos: (msg.position && typeof msg.position[i] === 'number') ? msg.position[i] : 0,
+        vel: (msg.velocity && typeof msg.velocity[i] === 'number') ? msg.velocity[i] : 0,
+      });
+    }
+    armJointsDirty = true;
+  }
+
+  // 关节表最高 5Hz 重绘（消息可能到得更快，合并渲染）。
+  setInterval(() => {
+    if (!armJointsDirty) return;
+    const view = $('arm-joints');
+    if (!view) return;
+    // 面板隐藏时（display:none → offsetParent 为 null）不重绘，dirty 保留，
+    // 切回机械臂页的下一个周期再画 —— 隐藏期间不做无效 DOM churn。
+    if (!view.offsetParent) return;
+    armJointsDirty = false;
+    const rows = [];
+    armJointMap.forEach((v, name) => {
+      rows.push(
+        `<div class="arm-joint-row"><span class="aj-name" title="${escapeHTML(name)}">${escapeHTML(name)}</span>` +
+        `<span>${(v.pos * 180 / Math.PI).toFixed(1)}</span>` +
+        `<span>${v.pos.toFixed(3)}</span>` +
+        `<span>${v.vel.toFixed(3)}</span></div>`
+      );
+    });
+    view.innerHTML = rows.join('');
+  }, 200);
+
+  const ARM_LOG_MAX_LINES = 200;
+  function addArmLog(text) {
+    appendTimeline('arm-log', ARM_LOG_MAX_LINES, text);   // 与 VLA 时间线共用渲染
+  }
+
+  function callArmService(name, type, req, onRes) {
+    if (!ros) { addArmLog('未连接 rosbridge，无法调用 ' + name); return; }
+    const srv = new ROSLIB.Service({ ros, name, serviceType: type });
+    srv.callService(new ROSLIB.ServiceRequest(req || {}), (res) => {
+      if (onRes) onRes(res);
+    }, (err) => addArmLog('✗ ' + name + ' 调用失败：' + err + '（对应驱动节点是否已启动？）'));
+  }
+
+  // 系统控制按钮：/system_service/<name>（std_srvs/Empty），危险操作二次确认。
+  document.querySelectorAll('#panel-arm .sys-btns button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const name = btn.dataset.sys;
+      if (!name) return;
+      if (btn.dataset.confirm && !window.confirm(btn.dataset.confirm)) return;
+      addArmLog('> 系统命令：' + btn.textContent.trim() + ' (' + name + ')');
+      callArmService('/system_service/' + name, 'std_srvs/srv/Empty', {},
+        () => addArmLog('✓ ' + name + ' 已执行'));
+    });
+  });
+
+  // 急停：立即下发，不做确认。
+  const armEstopBtn = $('arm-estop-btn');
+  if (armEstopBtn) {
+    armEstopBtn.addEventListener('click', () => {
+      addArmLog('> 机械臂急停 (emergency_stop)');
+      callArmService('/system_service/emergency_stop', 'std_srvs/srv/Empty', {},
+        () => addArmLog('✓ 急停已下发'));
+    });
+  }
+
+  // 夹爪：滑块 + 应用按钮 / 张开闭合快捷键 -> SetGripper 服务。
+  function initGripSlider(rangeId, valId) {
+    const range = $(rangeId);
+    const val = $(valId);
+    if (range && val) {
+      range.addEventListener('input', () => { val.textContent = range.value; });
+    }
+    return range;
+  }
+  const gripPosRange = initGripSlider('arm-grip-pos-range', 'arm-grip-pos-val');
+  const gripForceRange = initGripSlider('arm-grip-force-range', 'arm-grip-force-val');
+
+  function setGripper(kind, value) {
+    const v = Math.max(0, Math.min(100, +value || 0));
+    const srvName = kind === 'force'
+      ? '/io_service/set_gripper_force' : '/io_service/set_gripper_position';
+    addArmLog('> 夹爪' + (kind === 'force' ? '力度' : '位置') + ' → ' + v);
+    callArmService(srvName, 'lebai_interfaces/srv/SetGripper', { val: v }, (res) => {
+      addArmLog(res && res.ret ? '✓ 夹爪命令已执行' : '✗ 夹爪命令被拒绝');
+    });
+  }
+  const gripPosApply = $('arm-grip-pos-apply');
+  if (gripPosApply && gripPosRange) gripPosApply.addEventListener('click', () => setGripper('position', gripPosRange.value));
+  const gripForceApply = $('arm-grip-force-apply');
+  if (gripForceApply && gripForceRange) gripForceApply.addEventListener('click', () => setGripper('force', gripForceRange.value));
+  const gripOpen = $('arm-grip-open');
+  if (gripOpen) gripOpen.addEventListener('click', () => {
+    if (gripPosRange) { gripPosRange.value = 100; $('arm-grip-pos-val').textContent = '100'; }
+    setGripper('position', 100);
+  });
+  const gripClose = $('arm-grip-close');
+  if (gripClose) gripClose.addEventListener('click', () => {
+    if (gripPosRange) { gripPosRange.value = 0; $('arm-grip-pos-val').textContent = '0'; }
+    setGripper('position', 0);
+  });
+
+  // 关节运动：6 个角度(rad) + acc/vel -> /motion_service/move_joint。
+  const armMjInputs = Array.from(document.querySelectorAll('#panel-arm .mj-j'));
+
+  const armMjFill = $('arm-mj-fill');
+  if (armMjFill) {
+    armMjFill.addEventListener('click', () => {
+      // 优先取乐白本体关节（lebai_joint_1..6，按名排序即按编号排序），
+      // 取不到（如自定义关节名）时退回 /joint_states 里的前 6 个。
+      let names = Array.from(armJointMap.keys()).filter((n) => n.startsWith('lebai_joint')).sort();
+      if (names.length < armMjInputs.length) names = Array.from(armJointMap.keys());
+      if (names.length === 0) { addArmLog('未收到 /joint_states，无法填入（机械臂驱动是否已启动？）'); return; }
+      armMjInputs.forEach((inp, i) => {
+        const j = armJointMap.get(names[i]);
+        if (j) inp.value = j.pos.toFixed(4);
+      });
+      addArmLog('已填入当前关节角：' + names.slice(0, armMjInputs.length).join(', '));
+    });
+  }
+
+  const armMjRun = $('arm-mj-run');
+  if (armMjRun) {
+    armMjRun.addEventListener('click', () => {
+      const pose = armMjInputs.map((inp) => parseFloat(inp.value));
+      if (pose.some((v) => Number.isNaN(v))) { alert('关节角必须是数字（弧度）'); return; }
+      const acc = parseFloat($('arm-mj-acc').value);
+      const vel = parseFloat($('arm-mj-vel').value);
+      if (!(acc > 0) || !(vel > 0)) { alert('acc / vel 必须为正数'); return; }
+      const txt = pose.map((v) => v.toFixed(3)).join(', ');
+      if (!window.confirm('将真实移动机械臂到关节角 [' + txt + '] (rad)，确认执行？')) return;
+      addArmLog('> move_joint [' + txt + '] acc=' + acc + ' vel=' + vel);
+      // 完整填充请求，rosbridge 才能稳定接受（同 buildParameterValue 的做法）。
+      callArmService('/motion_service/move_joint', 'lebai_interfaces/srv/MoveJoint', {
+        is_joint_pose: true,
+        joint_pose: pose,
+        cartesian_pose: {
+          position: { x: 0, y: 0, z: 0 },
+          orientation: { x: 0, y: 0, z: 0, w: 1 },
+        },
+        common: { acc, vel, time: 0, radius: 0 },
+      }, (res) => {
+        addArmLog(res && res.ret ? '✓ move_joint 已执行' : '✗ move_joint 失败（看驱动日志）');
+      });
+    });
+  }
+
+  // 视觉抓取：VLM 指令 / 确认 / 取消 + 手动 TF 抓取 + 抓取仲裁接管。
+  const armVlmInstrInput = $('arm-vlm-instr');
+  function sendArmVlmInstruction() {
+    const t = (armVlmInstrInput && armVlmInstrInput.value || '').trim();
+    if (!t) return;
+    if (!armVlmInstrPub) { addArmLog('未连接 rosbridge，无法发送指令'); return; }
+    armVlmInstrPub.publish(new ROSLIB.Message({ data: t }));
+    addArmLog('> VLM 指令：' + t);
+    armVlmInstrInput.value = '';
+  }
+  const armVlmSend = $('arm-vlm-send');
+  if (armVlmSend) armVlmSend.addEventListener('click', sendArmVlmInstruction);
+  if (armVlmInstrInput) armVlmInstrInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') sendArmVlmInstruction();
+  });
+
+  function sendArmVlmConfirm(yes) {
+    if (!armVlmConfirmPub) { addArmLog('未连接 rosbridge，无法发送确认'); return; }
+    armVlmConfirmPub.publish(new ROSLIB.Message({ data: !!yes }));
+    addArmLog(yes ? '> 确认抓取 (/vlm/confirm true)' : '> 取消抓取 (/vlm/confirm false)');
+  }
+  const armVlmConfirm = $('arm-vlm-confirm');
+  if (armVlmConfirm) armVlmConfirm.addEventListener('click', () => sendArmVlmConfirm(true));
+  const armVlmCancel = $('arm-vlm-cancel');
+  if (armVlmCancel) armVlmCancel.addEventListener('click', () => sendArmVlmConfirm(false));
+
+  function callArmArbiter(action) {
+    addArmLog('> 抓取仲裁：' + (action === 'manual_takeover' ? '手动接管' : '释放控制权'));
+    callArmService('/arm_arbiter/' + action, 'std_srvs/srv/Trigger', {}, (res) => {
+      const msg = (res && res.message) || '';
+      addArmLog((res && res.success ? '✓ ' : '✗ ') + (msg || action));
+    });
+  }
+  const armArbTakeover = $('arm-arb-takeover');
+  if (armArbTakeover) armArbTakeover.addEventListener('click', () => callArmArbiter('manual_takeover'));
+  const armArbRelease = $('arm-arb-release');
+  if (armArbRelease) armArbRelease.addEventListener('click', () => callArmArbiter('manual_release'));
+
+  function requestArmGrab(frame) {
+    const f = (frame || '').trim();
+    if (!f) { alert('请填写目标 TF 名（如 target_frame）'); return; }
+    if (!window.confirm('将驱动机械臂抓取 TF 目标 "' + f + '"，确认执行？')) return;
+    addArmLog('> 抓取请求 /obj_grab_service (obj_link=' + f + ')，规划可能需要数十秒…');
+    callArmService('/obj_grab_service', 'grab_demo/srv/GrabObject', { obj_link: f }, (res) => {
+      const msg = (res && res.message) || '';
+      addArmLog((res && res.success ? '✓ 抓取成功' : '✗ 抓取失败') + (msg ? '：' + msg : ''));
+    });
+  }
+  const armGrabCall = $('arm-grab-call');
+  if (armGrabCall) {
+    armGrabCall.addEventListener('click', () => requestArmGrab($('arm-grab-frame').value));
+  }
+  // 各抓取方案子页的快捷按钮：直接抓 "抓取与仲裁" 卡片里填的 TF（默认 target_frame）。
+  document.querySelectorAll('#panel-arm .arm-grab-quick').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const inp = $('arm-grab-frame');
+      requestArmGrab((inp && inp.value) || 'target_frame');
+    });
+  });
+
+  const armLogClear = $('arm-log-clear');
+  if (armLogClear) armLogClear.addEventListener('click', () => {
+    const v = $('arm-log');
+    if (v) v.innerHTML = '';
+  });
+
+  // ---- HSV 阈值滑条 (HSV 抓取 /color_node、KCF 播种 /kcf_node 共用组件) ----
+  // 拖动即下发 set_parameters(int)（120ms 防抖，同 dist-slider 的做法），
+  // "读取当前值"用 get_parameters 把节点当前阈值同步回滑条。
+  function initHsvGroup(root) {
+    const nodeInput = root.querySelector('.hsv-node');
+    if (!nodeInput) return;
+    const node = () => nodeInput.value.trim();
+    const sliders = Array.from(root.querySelectorAll('.hsv-slider[data-param]'));
+
+    sliders.forEach((row) => {
+      const range = row.querySelector('input[type=range]');
+      const valEl = row.querySelector('.hs-val');
+      if (!range) return;
+      const show = () => { if (valEl) valEl.textContent = range.value; };
+      const send = () => {
+        if (!ros) return;
+        const value = buildParameterValue('int', range.value);
+        if (!value) return;
+        const req = new ROSLIB.ServiceRequest({
+          parameters: [{ name: row.dataset.param, value }],
+        });
+        paramService(node(), 'set_parameters').callService(req, () => {},
+          (err) => console.error(`set ${row.dataset.param} failed`, err));
+      };
+      let timer = null;
+      range.addEventListener('input', () => {
+        show();
+        if (timer) clearTimeout(timer);    // 拖动中防抖
+        timer = setTimeout(() => { timer = null; send(); }, 120);
+      });
+      range.addEventListener('change', () => {
+        if (timer) { clearTimeout(timer); timer = null; }  // 松手立即发一次
+        send();
+      });
+      show();
+    });
+
+    const refreshBtn = root.querySelector('.hsv-refresh');
+    if (refreshBtn) refreshBtn.addEventListener('click', () => {
+      if (!ros) { alert('未连接 rosbridge'); return; }
+      const names = sliders.map((r) => r.dataset.param);
+      const req = new ROSLIB.ServiceRequest({ names });
+      paramService(node(), 'get_parameters').callService(req, (res) => {
+        (res.values || []).forEach((val, i) => {
+          const row = sliders[i];
+          if (!row || !val) return;
+          let v = null;
+          if (val.type === PT_INTEGER) v = val.integer_value;
+          else if (val.type === PT_DOUBLE) v = val.double_value;
+          if (v === null) return;
+          const range = row.querySelector('input[type=range]');
+          const valEl = row.querySelector('.hs-val');
+          if (range) range.value = v;
+          if (valEl) valEl.textContent = String(v);
+        });
+      }, (err) => alert('读取失败：' + err + '（节点是否已启动？）'));
+    });
+  }
+  document.querySelectorAll('.hsv-group').forEach(initHsvGroup);
+
+  // ---- KCF: 在跟踪画面上拖拽框选目标 ----
+  // 显示坐标 -> object-fit:contain 内容区 -> 原始图像像素，发布
+  // sensor_msgs/RegionOfInterest 到 /kcf_node/select_bbox，节点收到即重新播种。
+  (function initKcfBoxSelect() {
+    const frame = $('arm-kcf-frame');
+    const img = $('arm-kcf-stream');
+    const rect = $('arm-kcf-rect');
+    if (!frame || !img || !rect) return;
+    let dragging = false;
+    let sx = 0, sy = 0;   // 起点（frame 内坐标）
+
+    function frameXY(e) {
+      const r = frame.getBoundingClientRect();
+      return {
+        x: Math.max(0, Math.min(r.width, e.clientX - r.left)),
+        y: Math.max(0, Math.min(r.height, e.clientY - r.top)),
+        fw: r.width, fh: r.height,
+      };
+    }
+    // object-fit: contain 的实际渲染区域（扣掉上下/左右黑边）
+    function contentBox(fw, fh) {
+      const nw = img.naturalWidth, nh = img.naturalHeight;
+      if (!nw || !nh) return null;
+      const s = Math.min(fw / nw, fh / nh);
+      return { x: (fw - nw * s) / 2, y: (fh - nh * s) / 2, scale: s, nw, nh };
+    }
+
+    frame.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if ((img.src || '').indexOf('placeholder') !== -1) {
+        addArmLog('跟踪画面尚未加载，无法框选（kcf_grab 是否已启动？）');
+        return;
+      }
+      dragging = true;
+      const p = frameXY(e);
+      sx = p.x; sy = p.y;
+      rect.hidden = false;
+      rect.style.left = sx + 'px';
+      rect.style.top = sy + 'px';
+      rect.style.width = '0px';
+      rect.style.height = '0px';
+      try { frame.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      e.preventDefault();
+    });
+    frame.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const p = frameXY(e);
+      rect.style.left = Math.min(sx, p.x) + 'px';
+      rect.style.top = Math.min(sy, p.y) + 'px';
+      rect.style.width = Math.abs(p.x - sx) + 'px';
+      rect.style.height = Math.abs(p.y - sy) + 'px';
+    });
+    frame.addEventListener('pointerup', (e) => {
+      if (!dragging) return;
+      dragging = false;
+      rect.hidden = true;
+      const p = frameXY(e);
+      const cb = contentBox(p.fw, p.fh);
+      if (!cb) { addArmLog('跟踪画面尺寸未知，无法框选'); return; }
+      const x0 = Math.min(sx, p.x), y0 = Math.min(sy, p.y);
+      const x1 = Math.max(sx, p.x), y1 = Math.max(sy, p.y);
+      const ix0 = Math.max(0, Math.round((x0 - cb.x) / cb.scale));
+      const iy0 = Math.max(0, Math.round((y0 - cb.y) / cb.scale));
+      const ix1 = Math.min(cb.nw, Math.round((x1 - cb.x) / cb.scale));
+      const iy1 = Math.min(cb.nh, Math.round((y1 - cb.y) / cb.scale));
+      const w = ix1 - ix0, h = iy1 - iy0;
+      if (w < 8 || h < 8) { addArmLog('框选太小（不足 8×8 像素），已忽略'); return; }
+      if (!kcfBboxPub) { addArmLog('未连接 rosbridge，无法发送框选'); return; }
+      kcfBboxPub.publish(new ROSLIB.Message({
+        x_offset: ix0, y_offset: iy0, height: h, width: w, do_rectify: false,
+      }));
+      addArmLog(`> KCF 手动框选 [x=${ix0} y=${iy0} w=${w} h=${h}] → /kcf_node/select_bbox`);
+    });
+    frame.addEventListener('pointercancel', () => { dragging = false; rect.hidden = true; });
+  })();
+
+  const armKcfReinit = $('arm-kcf-reinit');
+  if (armKcfReinit) {
+    armKcfReinit.addEventListener('click', () => {
+      addArmLog('> KCF 重新播种 (/kcf_node/reinit)');
+      callArmService('/kcf_node/reinit', 'std_srvs/srv/Trigger', {}, (res) => {
+        addArmLog((res && res.success ? '✓ ' : '✗ ') + ((res && res.message) || 'reinit'));
+      });
+    });
+  }
+
+  // ---- YOLO: 识别物体按钮 -> 选为抓取目标 ----
+  // 订阅 /yolo/detections，把每个类别渲染成按钮；点击把类别名写进桥接节点
+  // (/yolo_ros_node) 的 target_label 参数 —— 调试图与 target_frame 立刻只跟该类别。
+  let armYoloSelected = '';
+  let armYoloLastHtml = '';   // 上次渲染的按钮 HTML，内容没变就不重建（保留 hover/焦点）
+
+  function armYoloNode() {
+    const inp = document.querySelector('#arm-subpanel-yolo .pg-node');
+    return ((inp && inp.value) || '/yolo_ros_node').trim();
+  }
+
+  function renderArmYoloButtons(msg) {
+    const view = $('arm-yolo-buttons');
+    if (!view) return;
+    const dets = (msg && msg.detections) || [];
+    const cntEl = $('arm-yolo-count');
+    if (cntEl) cntEl.textContent = dets.length + ' 个';
+    // 同类合并: 显示一次 + 数量 + 最高置信度（target_label 按类别筛选，无法区分同类个体）
+    const byLabel = new Map();
+    dets.forEach((d) => {
+      const label = (d && d.class_name != null && d.class_name !== '')
+        ? String(d.class_name)
+        : String((d && d.class_id != null) ? d.class_id : '?');
+      const score = (d && typeof d.score === 'number') ? d.score : 0;
+      const cur = byLabel.get(label);
+      if (!cur) byLabel.set(label, { count: 1, best: score });
+      else { cur.count += 1; if (score > cur.best) cur.best = score; }
+    });
+    const sel = (armYoloSelected || '').toLowerCase();
+    const html = [];
+    byLabel.forEach((v, label) => {
+      const active = (label.toLowerCase() === sel && sel !== '') ? ' active' : '';
+      html.push(
+        `<button type="button" data-label="${escapeHTML(label)}" class="yp${active}">` +
+        `${escapeHTML(label)}${v.count > 1 ? ' ×' + v.count : ''}` +
+        ` <span>${(v.best * 100).toFixed(0)}%</span></button>`
+      );
+    });
+    const out = html.join('');
+    if (out === armYoloLastHtml) return;   // 同样的检测结果不重建 DOM
+    armYoloLastHtml = out;
+    view.innerHTML = out;
+  }
+
+  function selectArmYoloTarget(label) {
+    if (!ros) { addArmLog('未连接 rosbridge，无法设置抓取目标'); return; }
+    const value = buildParameterValue('string', label);
+    const req = new ROSLIB.ServiceRequest({ parameters: [{ name: 'target_label', value }] });
+    paramService(armYoloNode(), 'set_parameters').callService(req, (res) => {
+      const ok = res.results && res.results[0] && res.results[0].successful;
+      if (!ok) { addArmLog('✗ 设置 target_label 失败（节点是否已启动？）'); return; }
+      armYoloSelected = label;
+      addArmLog(label ? ('> 抓取目标类别 → ' + label) : '> 已清除类别筛选（抓任意类别）');
+      const view = $('arm-yolo-buttons');
+      if (view) {
+        view.querySelectorAll('button[data-label]').forEach((b) => {
+          b.classList.toggle('active', b.dataset.label.toLowerCase() === label.toLowerCase() && label !== '');
+        });
+      }
+    }, (err) => addArmLog('✗ 设置 target_label 失败：' + err));
+  }
+
+  const armYoloButtonsView = $('arm-yolo-buttons');
+  if (armYoloButtonsView) {
+    // 按钮随检测重渲染，用事件委托避免反复绑定
+    armYoloButtonsView.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-label]');
+      if (b) selectArmYoloTarget(b.dataset.label);
+    });
+  }
+  const armYoloClear = $('arm-yolo-clear');
+  if (armYoloClear) armYoloClear.addEventListener('click', () => selectArmYoloTarget(''));
 
   // ---------- Logs (/rosout) ----------
   const logView = $('log-view');
@@ -1476,22 +2067,45 @@
       return activate;
     }
 
-    // Function sub-tabs: re-apply the sub-page's MJPEG stream when it becomes
-    // visible (an <img> in a display:none parent may never have fetched).
+    // 子页/页签激活时惰性启动该页可见的 MJPEG 流（kickVisibleFnStreams：
+    // 只拉还停在占位图的流，不打断已在播放的）。底盘功能模块与机械臂
+    // 各自独立一组 tab（类名/data 键不同，互不干扰），行为统一。
     initTabGroup({
       btnSel: '.subtab-btn', key: 'subtab', panelSel: '.subtab-panel', prefix: 'subpanel-',
-      onActivate: (val) => {
-        document.querySelectorAll('#subpanel-' + val + ' .fn-img').forEach(applyFnStream);
-      },
+      onActivate: (val) => kickVisibleFnStreams($('subpanel-' + val)),
+    });
+
+    initTabGroup({
+      btnSel: '.arm-subtab-btn', key: 'armsubtab', panelSel: '.arm-subtab-panel', prefix: 'arm-subpanel-',
+      onActivate: (val) => kickVisibleFnStreams($('arm-subpanel-' + val)),
     });
 
     const activateTop = initTabGroup({
       btnSel: '.tab-btn', key: 'tab', panelSel: '.tab-panel', prefix: 'panel-', hash: true,
+      // 不对某个页签做特例：任何顶层面板激活，都把它里面可见的流启动起来
+      // （隐藏子页里的流等切到对应子页时再由上面两组的 onActivate 启动）。
+      onActivate: (val) => kickVisibleFnStreams($('panel-' + val)),
     });
 
     // Allow deep-linking to a top tab via #hash (e.g. .../#control).
     const initial = (location.hash || '').replace(/^#/, '');
     if (initial) activateTop(initial);
+
+    // 系统总览"系统架构"卡：点击模块芯片跳到对应页签（及功能/机械臂子页）。
+    document.querySelectorAll('.arch-link').forEach((el) => {
+      el.addEventListener('click', () => {
+        const tabBtn = document.querySelector(`.tab-btn[data-tab="${el.dataset.tab}"]`);
+        if (tabBtn) tabBtn.click();
+        if (el.dataset.subtab) {
+          const b = document.querySelector(`.subtab-btn[data-subtab="${el.dataset.subtab}"]`);
+          if (b) b.click();
+        }
+        if (el.dataset.armsubtab) {
+          const b = document.querySelector(`.arm-subtab-btn[data-armsubtab="${el.dataset.armsubtab}"]`);
+          if (b) b.click();
+        }
+      });
+    });
   })();
 
   // Auto-connect on load.

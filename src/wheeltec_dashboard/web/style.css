@@ -43,6 +43,13 @@ header h1 {
   font-size: 18px;
   font-weight: 600;
 }
+.h1-sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 10px;
+  white-space: nowrap;
+}
 
 /* --------- Navigation tabs --------- */
 nav.tabs {
@@ -71,6 +78,20 @@ nav.tabs {
   border-bottom-color: var(--accent);
   font-weight: 600;
 }
+/* 导航分组标签：把页签划成 底盘 / 机械臂 两部分 */
+.nav-group-label {
+  align-self: center;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 8px 2px 12px;
+  margin-left: 8px;
+  border-left: 1px solid var(--border);
+  white-space: nowrap;
+  user-select: none;
+}
+.nav-group-end { padding-right: 0; }
 
 .tab-panel { display: none; }
 .tab-panel.active {
@@ -79,17 +100,19 @@ nav.tabs {
   gap: 16px;
 }
 
-/* --------- Sub-tabs (inside 功能模块) --------- */
-/* The function panel hosts its own sub-navigation, so it lays out as a
-   block; each sub-panel is the grid instead. */
-#panel-function.active { display: block; }
+/* --------- Sub-tabs (功能模块 + 机械臂，两组独立的 JS tab 组共用样式) --------- */
+/* The function/arm panels host their own sub-navigation, so they lay out as
+   blocks; each sub-panel is the grid instead. */
+#panel-function.active,
+#panel-arm.active { display: block; }
 .subtabs {
   display: flex;
   gap: 2px;
   flex-wrap: wrap;
   border-bottom: 1px solid var(--border);
 }
-.subtab-btn {
+.subtab-btn,
+.arm-subtab-btn {
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
@@ -101,14 +124,18 @@ nav.tabs {
   white-space: nowrap;
   transition: color 0.12s ease, border-color 0.12s ease;
 }
-.subtab-btn:hover { color: var(--text); }
-.subtab-btn.active {
+.subtab-btn:hover,
+.arm-subtab-btn:hover { color: var(--text); }
+.subtab-btn.active,
+.arm-subtab-btn.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
   font-weight: 600;
 }
-.subtab-panel { display: none; }
-.subtab-panel.active {
+.subtab-panel,
+.arm-subtab-panel { display: none; }
+.subtab-panel.active,
+.arm-subtab-panel.active {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
   gap: 16px;
@@ -778,6 +805,306 @@ main {
 }
 .vla-line .vt { color: var(--muted); }
 .vla-line .vm { color: var(--text); }
+
+/* --------- 系统架构卡（系统总览：底盘 + 机械臂 关系图） --------- */
+.arch {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 12px;
+  align-items: stretch;
+}
+.arch-part {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.arch-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.arch-name { font-weight: 600; }
+.arch-sub {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.arch-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+  opacity: 0.35;
+  flex: 0 0 auto;
+}
+.arch-dot.on {
+  background: var(--ok);
+  opacity: 1;
+  box-shadow: 0 0 6px rgba(63, 185, 80, 0.7);
+}
+.arch-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.arch-link {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.arch-link:hover { border-color: var(--accent); color: var(--accent); }
+.arch-flow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+.arch-bridge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 140px;
+}
+.arch-bridge-line { flex: 1; width: 1px; background: var(--border); }
+.arch-bridge-text {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+@media (max-width: 900px) {
+  .arch { grid-template-columns: 1fr; }
+  .arch-bridge { flex-direction: row; min-width: 0; }
+  .arch-bridge-line { width: auto; height: 1px; flex: 1; }
+}
+
+/* --------- 机械臂 (Lebai LM3) --------- */
+.sys-btns {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.sys-btns button {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.sys-btns button:hover { border-color: var(--accent); color: var(--accent); }
+.sys-btns button.danger { border-color: rgba(248, 81, 73, 0.5); color: var(--err); }
+.sys-btns button.danger:hover { background: var(--err); border-color: var(--err); color: #fff; }
+#panel-arm .e-stop { width: 100%; }
+
+.grip-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.grip-row label { flex: 0 0 32px; font-size: 12px; color: var(--muted); }
+.grip-row input[type=range] { flex: 1; min-width: 120px; }
+.grip-row .grip-val {
+  min-width: 32px;
+  text-align: right;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.grip-row button {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.grip-row button:hover { filter: brightness(1.15); }
+#panel-arm .vla-quick { margin-top: 10px; }
+#panel-arm .vla-row { margin-top: 10px; }
+#panel-arm .vla-timeline-head { margin-top: 10px; }
+
+.arm-joints { display: flex; flex-direction: column; gap: 4px; }
+.arm-joints:empty::after {
+  content: "等待 /joint_states …（机械臂驱动是否已启动？）";
+  color: var(--muted);
+  font-size: 12px;
+}
+.arm-joint-row {
+  display: grid;
+  grid-template-columns: 1fr 76px 86px 76px;
+  gap: 8px;
+  background: var(--panel-2);
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.arm-joint-row span:not(:first-child) { text-align: right; }
+.arm-joint-row .aj-name {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.arm-joint-head { background: none; padding-top: 0; padding-bottom: 2px; margin-bottom: 2px; }
+.arm-joint-head span { color: var(--muted); }
+.arm-joint-head span:not(:first-child) { text-align: right; }
+
+.mj-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.mj-grid label { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); }
+.mj-grid input {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 8px;
+  border-radius: 4px;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.mj-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.mj-actions button {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 7px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.mj-actions button:hover { border-color: var(--accent); color: var(--accent); }
+.mj-actions .mj-run { background: var(--accent); border-color: var(--accent); color: #fff; }
+.mj-actions .mj-run:hover { filter: brightness(1.15); color: #fff; }
+
+/* VLM 理解结果可能是整句话，缩小字号防止撑爆 metric 卡片。 */
+#arm-vlm-result { font-size: 13px; font-weight: 500; word-break: break-word; }
+
+/* KCF 跟踪画面上的拖拽框选 */
+.bbox-select {
+  cursor: crosshair;
+  touch-action: none;   /* 触屏拖拽框选时不滚动页面 */
+  user-select: none;
+}
+.bbox-rect {
+  position: absolute;
+  border: 1.5px dashed var(--accent);
+  background: rgba(88, 166, 255, 0.15);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* HSV 阈值滑条组（HSV 抓取 / KCF 播种共用） */
+.hsv-group { display: flex; flex-direction: column; gap: 8px; }
+.hsv-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+.hsv-toolbar label {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  color: var(--muted);
+}
+.hsv-toolbar input {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-top: 2px;
+  width: 160px;
+  height: 28px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.hsv-toolbar button {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  height: 28px;
+}
+.hsv-toolbar button:hover { filter: brightness(1.15); }
+.hsv-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hsv-slider label {
+  flex: 0 0 72px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.hsv-slider input[type=range] { flex: 1; min-width: 140px; }
+.hsv-slider .hs-val {
+  flex: 0 0 40px;
+  text-align: right;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* YOLO 识别物体按钮（点击选为抓取目标） */
+.arm-yolo-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 34px;
+}
+.arm-yolo-buttons:empty::after {
+  content: "暂无检测（yolo_ros_grab 是否已启动？）";
+  color: var(--muted);
+  font-size: 12px;
+  align-self: center;
+}
+.arm-yolo-buttons .yp {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+.arm-yolo-buttons .yp:hover { border-color: var(--accent); color: var(--accent); }
+.arm-yolo-buttons .yp.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.arm-yolo-buttons .yp span { font-size: 11px; opacity: 0.75; }
 
 /* --------- Mobile / narrow-screen tweaks --------- */
 @media (max-width: 640px) {

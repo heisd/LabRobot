@@ -5,8 +5,10 @@
 //
 // 说明: KCF 是"跟踪"算法(cv::TrackerKCF), 不是逐帧检测器 —— 它需要一个初始目标框,
 // 之后逐帧跟踪。本节点的初始框来源(按优先级):
-//   1) 参数 init_bbox = [x, y, w, h] (w,h>0 时使用), 只用于第一次播种;
-//   2) 否则用 HSV 颜色阈值找最大色块自动播种(无需手动框选, headless 友好);
+//   1) 话题 ~/select_bbox (sensor_msgs/RegionOfInterest): 运行时手动框选,
+//      Dashboard 在跟踪画面上拖拽框选后发布到这里, 收到即重新播种;
+//   2) 参数 init_bbox = [x, y, w, h] (w,h>0 时使用), 只用于第一次播种;
+//   3) 否则用 HSV 颜色阈值找最大色块自动播种(无需手动框选, headless 友好);
 //   并提供 ~/reinit 服务(std_srvs/Trigger)随时强制重新播种; 跟丢时自动回到 HSV 重新播种。
 //
 // 接口与 HSV / YOLO 完全一致(统一接口):
@@ -20,6 +22,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
+#include <sensor_msgs/msg/region_of_interest.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <std_msgs/msg/header.hpp>
@@ -91,10 +94,35 @@ public:
         [this](const std::shared_ptr<std_srvs::srv::Trigger::Request>,
                std::shared_ptr<std_srvs::srv::Trigger::Response> res) {
           tracking_ = false;
+          have_manual_bbox_ = false;        // 丢弃未消费的手动框, 回到 HSV/init_bbox
           use_init_bbox_ = have_init_bbox();
           res->success = true;
           res->message = "KCF 将在下一帧重新播种";
           RCLCPP_INFO(get_logger(), "收到 reinit 请求, 重新播种跟踪目标");
+        });
+
+    // ~/select_bbox 话题: 运行时手动框选(Dashboard 在跟踪画面上拖拽框选)。
+    // 坐标为原始图像像素; 收到即放弃当前跟踪, 下一帧用该框播种。
+    select_sub_ = create_subscription<sensor_msgs::msg::RegionOfInterest>(
+        "~/select_bbox", 1,
+        [this](const sensor_msgs::msg::RegionOfInterest::ConstSharedPtr msg) {
+          // 上限防御: 字段是 uint32, 超大值强转 int 会变负/溢出, 直接拒掉
+          constexpr uint32_t kMaxDim = 100000;
+          if (msg->width == 0 || msg->height == 0 ||
+              msg->x_offset > kMaxDim || msg->y_offset > kMaxDim ||
+              msg->width > kMaxDim || msg->height > kMaxDim) {
+            RCLCPP_WARN(get_logger(), "忽略非法的手动框选 (x=%u y=%u w=%u h=%u)",
+                        msg->x_offset, msg->y_offset, msg->width, msg->height);
+            return;
+          }
+          manual_bbox_ = cv::Rect(static_cast<int>(msg->x_offset),
+                                  static_cast<int>(msg->y_offset),
+                                  static_cast<int>(msg->width),
+                                  static_cast<int>(msg->height));
+          have_manual_bbox_ = true;
+          tracking_ = false;   // 默认单线程执行器, 与图像回调串行, 无需加锁
+          RCLCPP_INFO(get_logger(), "收到手动框选 [x=%d y=%d w=%d h=%d], 将重新播种",
+                      manual_bbox_.x, manual_bbox_.y, manual_bbox_.width, manual_bbox_.height);
         });
 
     if (publish_debug_image_) {
@@ -200,7 +228,11 @@ private:
   bool seedTracker(const cv::Mat &bgr)
   {
     cv::Rect roi;
-    if (use_init_bbox_) {
+    if (have_manual_bbox_) {
+      // Dashboard 手动框选优先, 同样只消费一次
+      roi = manual_bbox_ & cv::Rect(0, 0, bgr.cols, bgr.rows);
+      have_manual_bbox_ = false;
+    } else if (use_init_bbox_) {
       roi = cv::Rect(static_cast<int>(init_bbox_[0]), static_cast<int>(init_bbox_[1]),
                      static_cast<int>(init_bbox_[2]), static_cast<int>(init_bbox_[3]));
       roi &= cv::Rect(0, 0, bgr.cols, bgr.rows);  // 裁剪到图像内
@@ -337,6 +369,7 @@ private:
   message_filters::Subscriber<sensor_msgs::msg::Image> depth_sub_;
   std::shared_ptr<message_filters::Synchronizer<SyncPolicy>> sync_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::RegionOfInterest>::SharedPtr select_sub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_pub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reinit_srv_;
   rclcpp::TimerBase::SharedPtr watchdog_;
@@ -347,6 +380,8 @@ private:
   cv::Rect bbox_;
   bool tracking_ = false;
   bool use_init_bbox_ = false;
+  cv::Rect manual_bbox_;           // Dashboard 手动框选(~/select_bbox), 一次性
+  bool have_manual_bbox_ = false;
 
   // 健康监控状态
   uint64_t last_frame_count_ = 0;   // 收到的帧计数(watchdog 据此判断帧流是否中断)
