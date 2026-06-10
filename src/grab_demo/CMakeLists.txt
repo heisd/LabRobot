@@ -314,11 +314,13 @@ endif()
 # 纯 Python 节点(用 ros2 run grab_demo <name>.py 运行):
 #   vlm_grab_node        —— VLM(视觉语言模型)抓取
 #   yolo_ros_detect_node —— 官方 yolo_ros 检测 -> 统一 target_frame 桥接
-#   arm_arbiter_node     —— 抓取仲裁(手动优先, 可打断自动抓取)
+#   arm_arbiter_node       —— 抓取仲裁(手动优先, 可打断自动抓取)
+#   voice_instruction_node —— 本地语音识别(Whisper) -> /vlm/instruction
 install(PROGRAMS
   scripts/vlm_grab_node.py
   scripts/yolo_ros_detect_node.py
   scripts/arm_arbiter_node.py
+  scripts/voice_instruction_node.py
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})

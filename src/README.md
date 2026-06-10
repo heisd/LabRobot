@@ -49,13 +49,15 @@
 | YOLO 检测 (yolo_ros) | `yolo_ros_detect_node.py` | 官方 [yolo_ros](https://github.com/mgonzs13/yolo_ros)（ultralytics）+ 闭环抓取，CPU/GPU 皆可 | `YOLO_ROS_GUIDE.md` |
 | KCF 跟踪 | `kcf_track_node` | KCF 相关滤波跟踪，需初始框（可由 HSV 自动播种） | `KCF_GUIDE.md` |
 | ArUco | `aruco_dectet` | ArUco 标记识别 | — |
-| VLM 自然语言 | `vlm_grab_node.py` | 视觉语言模型，按一句自然语言选物抓取 | `VLM_GUIDE.md` |
+| VLM 自然语言 | `vlm_grab_node.py` | 视觉语言模型，按一句自然语言选物抓取（支持语音输入） | `VLM_GUIDE.md` |
+| 语音指令 | `voice_instruction_node.py` | 本地 Whisper 把"说话"转文字喂给 VLM（离线） | `VOICE_GUIDE.md` |
 
 其它关键节点 / 资源：
 
 - `grab_service_node` — 抓取服务（订阅 `target_frame`，驱动机械臂抓取，开环）
 - `closed_loop_grab_node` — 闭环（PBVS）抓取服务：看-动-再看-修正后再抓，接口与开环版一致；并接入抓取仲裁可被手动打断（见 `YOLO_ROS_GUIDE.md`）
 - `arm_arbiter_node.py` — 抓取仲裁：手动优先，可随时打断 YOLO/KCF/HSV/VLM 的自动抓取（见 `ARBITER_GUIDE.md`）
+- `voice_instruction_node.py` — 本地语音识别（Whisper），把语音转文字发给 VLM（见 `VOICE_GUIDE.md`）
 - `start_grab` — 抓取流程入口
 - `hand_eye` / `charuco_dectet_node` — 手眼标定及 ChArUco 标定板识别（见 `point_cloud.md`、根目录 `serivce.md`）
 - `camera_info_node` / `point_cloud_node` — 相机内参与点云处理

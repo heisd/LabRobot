@@ -1,7 +1,9 @@
 import os
 from launch import LaunchDescription
-from launch.actions import TimerAction
+from launch.actions import TimerAction, DeclareLaunchArgument
 from launch.actions import IncludeLaunchDescription
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import PathJoinSubstitution
@@ -92,6 +94,25 @@ def generate_launch_description():
     camera_info = Node(package="grab_demo", executable="camera_info_node", name="camera_info")
     # 抓取仲裁: 手动优先, 可随时打断 VLM 触发的自动抓取
     arm_arbiter = Node(package="grab_demo", executable="arm_arbiter_node.py", name="arm_arbiter")
+
+    # ---- 语音指令(可选): 麦克风 -> 本地 Whisper 转写 -> /vlm/instruction ----
+    # 默认关闭(需 mic + 已 pip 安装 sounddevice/whisper)。用 use_voice:=true 开启。
+    use_voice = LaunchConfiguration("use_voice")
+    use_voice_arg = DeclareLaunchArgument(
+        "use_voice", default_value="false",
+        description="是否启用本地语音指令(需 mic + pip install sounddevice faster-whisper)")
+    voice_node = Node(
+        package="grab_demo", executable="voice_instruction_node.py", name="voice_node",
+        output="screen",
+        condition=IfCondition(use_voice),
+        parameters=[{
+            "instruction_topic": "/vlm/instruction",
+            "backend": "faster-whisper",
+            "model": "base",          # 中文建议 small/medium
+            "language": "zh",
+            "device": "cpu",          # 有 GPU 可设 cuda
+            "enabled": True,          # 持续聆听; 也可用 ~/listen_once 按一下说一句
+        }])
     # 闭环(PBVS)抓取: 与 yolo_ros/KCF/HSV 同一思路, 看-动-再看-修正后再抓。
     # VLM 仍走 /obj_grab_service, 由闭环节点统一执行并受仲裁管控(手动接管会打断它)。
     grab_service = Node(
@@ -109,10 +130,12 @@ def generate_launch_description():
     delay_task = TimerAction(period=15.0, actions=[grab_service])
 
     return LaunchDescription([
+        use_voice_arg,
         camera_launch,
         camera_info,
         arm_arbiter,
         lebai_lm3,
         vlm_node,
+        voice_node,
         delay_task,
     ])

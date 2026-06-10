@@ -353,6 +353,8 @@ class DashboardNode(Node):
             "target_distance": (None, 0.0),
             "vlm_result": (None, 0.0),
             "arbiter_state": (None, 0.0),
+            "voice_text": (None, 0.0),
+            "voice_status": (None, 0.0),
         }
 
         # ---- 订阅状态话题 ----
@@ -375,6 +377,12 @@ class DashboardNode(Node):
         # 抓取仲裁状态(arm_arbiter): idle / manual
         self.create_subscription(String, "/arm_arbiter/state",
                                  lambda m: self._store("arbiter_state", m), 10)
+        # 语音指令(voice_instruction_node): 识别文字 + 状态
+        self.create_subscription(String, "/voice/text",
+                                 lambda m: self._store("voice_text", m), 10)
+        self.create_subscription(String, "/voice/status",
+                                 lambda m: self._store("voice_status", m), 10)
+        self._voice_enable_pub = self.create_publisher(Bool, "/voice/enable", 10)
 
         # ---- 服务客户端 ----
         self._sys_clients = {
@@ -392,6 +400,8 @@ class DashboardNode(Node):
         # 抓取仲裁: 手动接管 / 释放
         self._cli_arbiter_takeover = self.create_client(Trigger, "/arm_arbiter/manual_takeover")
         self._cli_arbiter_release = self.create_client(Trigger, "/arm_arbiter/manual_release")
+        # 语音: 按一下说一句(录一句话并识别)
+        self._cli_voice_listen = self.create_client(Trigger, "/voice_node/listen_once")
 
         # ---- 功能启动任务管理器(YOLO/HSV 抓取等一键启停) ----
         self.tasks_ = TaskManager(self.get_logger())
@@ -497,6 +507,13 @@ class DashboardNode(Node):
         ar, _, _ = fresh("arbiter_state", max_age=1e12)
         out["arbiter"] = ar.data if ar is not None else "unknown"
 
+        # 语音指令: 状态 + 最近一次识别文字(常驻显示)
+        vs, _, _ = fresh("voice_status", max_age=1e12)
+        out["voice_status"] = vs.data if vs is not None else ""
+        vt, _, vt_age = fresh("voice_text", max_age=1e12)
+        if vt is not None:
+            out["voice_text"] = {"text": vt.data, "age": vt_age}
+
         out["stamp"] = round(now, 3)
         return out
 
@@ -529,6 +546,8 @@ class DashboardNode(Node):
                 return self._kcf_reinit()
             if cmd == "arbiter":
                 return self._arbiter(payload.get("action", ""))
+            if cmd == "voice":
+                return self._voice(payload.get("action", ""))
             return False, f"未知命令类型: {cmd}"
         except Exception as e:  # noqa: BLE001 - 网页错误需返回给前端
             self.get_logger().error(f"命令执行异常: {e}")
@@ -668,6 +687,20 @@ class DashboardNode(Node):
         cli.call_async(Trigger.Request())
         return True, ("已手动接管, 正在打断自动抓取" if action == "takeover"
                       else "已释放, 自动抓取可继续")
+
+    def _voice(self, action):
+        """语音指令: 说一句(录音并识别) / 开启或关闭持续聆听。"""
+        if action == "listen":
+            if not self._ready(self._cli_voice_listen, "语音录音"):
+                return False, "语音节点未就绪(是否以 use_voice:=true 启动, 并装了 sounddevice/whisper?)"
+            self._cli_voice_listen.call_async(Trigger.Request())
+            return True, "已开始录音, 请说话"
+        if action in ("enable", "disable"):
+            msg = Bool()
+            msg.data = (action == "enable")
+            self._voice_enable_pub.publish(msg)
+            return True, ("已开启持续聆听" if msg.data else "已停止持续聆听")
+        return False, f"未知语音操作: {action}"
 
     def _kcf_reinit(self):
         """触发 KCF 重新播种(调用 /kcf_node/reinit, std_srvs/Trigger)。"""
@@ -882,6 +915,20 @@ INDEX_HTML = """<!DOCTYPE html>
   </div>
 
   <div class="card" style="grid-column:1 / span 2;">
+    <h2>语音指令 (本地 Whisper → VLM)</h2>
+    <div class="row">
+      状态: <b id="voicestatus" style="font-size:14px;">—</b>
+      <button onclick="voiceCmd('listen')">🎤 说一句</button>
+      <button onclick="voiceCmd('enable')">开始持续聆听</button>
+      <button class="danger" onclick="voiceCmd('disable')">停止聆听</button>
+    </div>
+    <div id="voicetext" style="margin-top:6px; min-height:20px; color:#cfe3ff;">
+      <small>说话后这里显示识别文字, 并自动发给 VLM 理解。需用 use_voice:=true 启动 VLM 任务,
+        且已 pip 安装 sounddevice / faster-whisper。</small>
+    </div>
+  </div>
+
+  <div class="card" style="grid-column:1 / span 2;">
     <h2>YOLO / KCF / HSV / VLM 识别 + 闭环抓取 参数 (运行时可调)</h2>
     <div id="paramctrls"></div>
     <small>需先在"功能启动"页启动对应抓取任务(YOLO→/yolo_ros_node, KCF→/kcf_node,
@@ -1088,6 +1135,9 @@ function setArbiter(action){
   if (action==='takeover' && !confirm('手动接管? 会立刻打断正在运行的自动抓取!')) return;
   post({type:'arbiter', action: action});
 }
+function voiceCmd(action){
+  post({type:'voice', action: action});
+}
 function movej(){
   if (!confirm('确认执行关节运动? 机械臂会真实移动!')) return;
   const jp = [];
@@ -1131,6 +1181,19 @@ async function refresh(){
     if (a === 'manual'){ arb.textContent = '手动 (manual) — 自动抓取已暂停'; arb.style.color = '#f0a020'; }
     else if (a === 'idle'){ arb.textContent = '空闲 (idle) — 自动抓取可运行'; arb.style.color = '#3fb950'; }
     else { arb.textContent = '未知 (仲裁节点未启动?)'; arb.style.color = '#8b9bb0'; }
+  }
+
+  // 语音指令状态 + 最近识别文字
+  const vst = document.getElementById('voicestatus');
+  if (vst){
+    const st = s.voice_status || '';
+    vst.textContent = st || '未启动';
+    vst.style.color = st.startsWith('error') ? '#f85149'
+                      : (st === 'listening' || st === 'transcribing') ? '#f0a020' : '#8b9bb0';
+  }
+  const vtx = document.getElementById('voicetext');
+  if (vtx && s.voice_text){
+    vtx.textContent = '🗣 ' + s.voice_text.text + '  (' + s.voice_text.age + 's前)';
   }
 
   // 目标距离(大字显示, 无目标/数据过期则显示 —)
