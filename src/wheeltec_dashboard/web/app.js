@@ -30,6 +30,7 @@
   let goalPosePub = null;      // /goal_pose publisher (航点列表"导航"按钮直达)
   let chatMsgPub = null;       // /chat_message publisher (AI 对话·话题流式模式)
   let rrtClickPub = null;      // /clicked_point publisher (RRT 探索边界选点, 等价 RViz Publish Point)
+  let usTf = null;             // base_footprint 系 TF (超声波 ultrasonic_A..F 安装位姿)
   let lidarSubs = [];      // per-source LaserScan subs (managed separately so
                            // the lidar card can re-subscribe on topic change)
   const lidarLast = {};    // key -> { time, points, min }
@@ -192,6 +193,10 @@
     if (rrtClickPub) {
       try { rrtClickPub.unadvertise(); } catch (_) { /* ignore */ }
       rrtClickPub = null;
+    }
+    if (usTf) {
+      try { usTf.dispose(); } catch (_) { /* ignore */ }
+      usTf = null;
     }
     // 航点列表属于上一个连接的后端, 清掉避免误导; 地图位图保留(重连通常同一张图)
     vlaWaypoints = [];
@@ -539,6 +544,25 @@
     sub('/filtered_goal_points', 'wheeltec_rrt_msg/msg/PointArray', (msg) => {
       rrtFrontiers = ((msg && msg.points) || []).map((p) => ({ x: +p.x || 0, y: +p.y || 0 }));
       rrtFrontTime = Date.now();
+    }, { throttle_rate: 500 });
+
+    // 超声波转换 (wheeltec_ultrasonic): /Distance → 标准 Range + 点云。
+    // 安装位姿经 base_footprint 系 TF 取 ultrasonic_A..F（静态 TF，随底盘
+    // description launch 发布）；话题 3 秒内有数据 = 转换节点在线。
+    usTf = makeTfClient(ros, 'base_footprint');
+    usOnline = null;
+    Object.keys(usRanges).forEach((k) => { delete usRanges[k]; });
+    usPointsInfo = { n: 0, time: 0 };
+    US_LABELS.forEach((lb) => {
+      sub('/ultrasonic/' + lb, 'sensor_msgs/msg/Range', (msg) => {
+        // 无效/超量程时 converter 发 Infinity，rosbridge 序列化成 null
+        const r = (msg && typeof msg.range === 'number' && isFinite(msg.range)) ? msg.range : null;
+        usRanges[lb] = { range: r, time: Date.now() };
+      }, { throttle_rate: 200 });
+    });
+    sub('/ultrasonic/points', 'sensor_msgs/msg/PointCloud2', (msg) => {
+      const n = (msg && msg.width ? msg.width : 0) * (msg && msg.height ? msg.height : 1);
+      usPointsInfo = { n, time: Date.now() };
     }, { throttle_rate: 500 });
 
     // 建图 (wheeltec_robot_slam): Cartographer 跟踪位姿 + ORB-SLAM2 相机位姿。
@@ -3535,6 +3559,178 @@
     if (!wpMap && ros && !wpMapTried) { wpMapTried = true; fetchWpMap(); }
     mpRrtRedraw();
   }, 1000);
+
+  // ---------- 超声波转换 (wheeltec_ultrasonic) ----------
+  // supersonic_converter 把下位机 /Distance(Supersonic 多路打包, 源头是
+  // 固件 19 字节超声波帧 0xFA…0xFC)拆成标准 /ultrasonic/A..F(Range)与
+  // /ultrasonic/points(点云, base_footprint 系)供 Nav2 避障。面板按
+  // ultrasonic_A..F 的 TF 真实安装位姿画俯视波束图；话题有数据=节点在线，
+  // 上线边沿自动读参数（节点只在启动时读参，运行中改不生效，故不做调参）。
+  const US_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
+  const usRanges = {};            // 'A'.. -> { range|null(∞/无效), time }
+  let usPointsInfo = { n: 0, time: 0 };
+  let usOnline = null;            // 话题判活状态（null=未知）
+  const usCfg = { type: '', minR: 0.02, maxR: 0.8, fov: 0.5, cloud: null };
+
+  function usReadParams() {
+    paramService('/supersonic_converter', 'get_parameters').callService(
+      new ROSLIB.ServiceRequest({
+        names: ['robot_type', 'min_range', 'max_range', 'field_of_view', 'publish_pointcloud'],
+      }), (res) => {
+        const v = (res && res.values) || [];
+        if (v[0] && v[0].type === PT_STRING) usCfg.type = v[0].string_value;
+        if (v[1] && v[1].type === PT_DOUBLE) usCfg.minR = v[1].double_value;
+        if (v[2] && v[2].type === PT_DOUBLE) usCfg.maxR = v[2].double_value;
+        if (v[3] && v[3].type === PT_DOUBLE) usCfg.fov = v[3].double_value;
+        if (v[4] && v[4].type === PT_BOOL) usCfg.cloud = v[4].bool_value;
+        const el = $('us-cfg');
+        if (el) {
+          el.textContent = (usCfg.type || '?') + ' · ' + usCfg.minR.toFixed(2) + '–' +
+            usCfg.maxR.toFixed(2) + ' m · FOV ' + usCfg.fov.toFixed(2) + ' rad · 点云' +
+            (usCfg.cloud === false ? '关' : '开');
+        }
+      }, () => { /* 节点刚退出等竞态，忽略 */ });
+  }
+
+  function usDraw() {
+    const canvas = $('us-top');
+    if (!canvas || !canvas.offsetParent) return;
+    const wrap = canvas.parentElement;
+    const W = Math.max(240, Math.min((wrap && wrap.clientWidth) || 480, 640));
+    const H = 240;
+    if (canvas.width !== W || canvas.height !== H) {
+      canvas.width = W;
+      canvas.height = H;
+    }
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#161b22';
+    ctx.fillRect(0, 0, W, H);
+
+    // 传感器位姿：TF 优先；缺失时按均匀扇形近似摆放（A 左 → F 右）
+    const labels = usCfg.type === 's300_mini' ? US_LABELS.slice(0, 5) : US_LABELS;
+    const sensors = labels.map((lb, i) => {
+      const tf = usTf ? usTf.lookup('ultrasonic_' + lb) : null;
+      if (tf) {
+        return { lb, x: tf.translation.x, y: tf.translation.y, yaw: yawFromQuat(tf.rotation), approx: false };
+      }
+      return { lb, x: 0, y: 0, yaw: ((labels.length - 1) / 2 - i) * (Math.PI / 6), approx: true };
+    });
+    const anyTf = sensors.some((s) => !s.approx);
+
+    const maxR = usCfg.maxR || 0.8;
+    let extX = 0.3, extY = 0.3;
+    sensors.forEach((s) => {
+      extX = Math.max(extX, s.x + maxR);
+      extY = Math.max(extY, Math.abs(s.y) + maxR);
+    });
+    // 车头朝上：世界 x(前)→画布上、y(左)→画布左
+    const ox = W / 2;
+    const oy = H - 34;
+    const k = Math.min((oy - 16) / extX, (W / 2 - 16) / extY);
+    const toC = (wx, wy) => ({ x: ox - wy * k, y: oy - wx * k });
+
+    // 量程刻度弧线（每 0.25m，前半圆）
+    ctx.strokeStyle = 'rgba(139, 148, 158, 0.18)';
+    ctx.fillStyle = 'rgba(139, 148, 158, 0.55)';
+    ctx.font = '10px sans-serif';
+    ctx.lineWidth = 1;
+    for (let r = 0.25; r <= extX + 0.01; r += 0.25) {
+      ctx.beginPath();
+      ctx.arc(ox, oy, r * k, Math.PI, 2 * Math.PI);
+      ctx.stroke();
+      ctx.fillText(r.toFixed(2), ox + 3, oy - r * k - 2);
+    }
+
+    // 各路波束扇形
+    const now = Date.now();
+    const half = (usCfg.fov || 0.5) / 2;
+    sensors.forEach((s) => {
+      const st = usRanges[s.lb];
+      const fresh = st && (now - st.time) < 2500;
+      const r = (fresh && typeof st.range === 'number') ? st.range : null;
+      const valid = r !== null && r > 0;
+      const beamR = valid ? r : maxR;
+      const p0 = toC(s.x, s.y);
+      // 世界 yaw=0(正前) → 画布 -90°；yaw 增大(左转) → 画布角减小
+      const a0 = -Math.PI / 2 - s.yaw - half;
+      const a1 = -Math.PI / 2 - s.yaw + half;
+      ctx.beginPath();
+      ctx.moveTo(p0.x, p0.y);
+      ctx.arc(p0.x, p0.y, beamR * k, a0, a1);
+      ctx.closePath();
+      if (valid) {
+        const col = r < 0.3 ? '248, 81, 73' : (r < 0.6 ? '210, 153, 34' : '63, 185, 80');
+        ctx.fillStyle = 'rgba(' + col + ', 0.28)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(' + col + ', 0.9)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      } else {
+        ctx.strokeStyle = 'rgba(139, 148, 158, 0.35)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      // 传感器位置点 + 字母与读数（沿波束方向外侧）
+      ctx.fillStyle = '#58a6ff';
+      ctx.beginPath(); ctx.arc(p0.x, p0.y, 2.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = valid ? '#e6edf3' : 'rgba(139, 148, 158, 0.8)';
+      ctx.font = '11px sans-serif';
+      const tip = toC(s.x + Math.cos(s.yaw) * (beamR + 0.08), s.y + Math.sin(s.yaw) * (beamR + 0.08));
+      ctx.fillText(s.lb + (valid ? ' ' + r.toFixed(2) : ' ∞'), tip.x - 10, tip.y);
+    });
+
+    // 小车示意（base_footprint 原点 + 航向三角，车头朝上）
+    ctx.fillStyle = '#3fb950';
+    ctx.beginPath();
+    ctx.moveTo(ox, oy - 10);
+    ctx.lineTo(ox - 6, oy + 6);
+    ctx.lineTo(ox + 6, oy + 6);
+    ctx.closePath();
+    ctx.fill();
+    if (!anyTf) {
+      ctx.fillStyle = 'rgba(210, 153, 34, 0.9)';
+      ctx.font = '11px sans-serif';
+      ctx.fillText('无 ultrasonic_* TF——按近似角度摆放（启动底盘后为真实安装位姿）', 10, 14);
+    }
+  }
+
+  // 周期刷新（仅卡片可见时）：判活/上线读参 + 点云指标 + 俯视图重绘。
+  setInterval(() => {
+    const canvas = $('us-top');
+    if (!canvas || !canvas.offsetParent) return;
+    const now = Date.now();
+    let latest = 0;
+    US_LABELS.forEach((lb) => {
+      const s = usRanges[lb];
+      if (s && s.time > latest) latest = s.time;
+    });
+    const on = !!(ros && latest && (now - latest) < 3000);
+    if (on !== usOnline) {
+      if (on) usReadParams();
+      usOnline = on;
+    }
+    const convEl = $('us-conv');
+    if (convEl) {
+      convEl.textContent = !ros ? '未连接' : (on ? '在线' : '离线（converter launch 未启动？）');
+      convEl.classList.remove('ok', 'err');
+      if (on) convEl.classList.add('ok');
+    }
+    const ptsEl = $('us-points');
+    if (ptsEl) {
+      if (!usPointsInfo.time) {
+        ptsEl.textContent = usCfg.cloud === false ? '已关闭 (publish_pointcloud=false)' : '—';
+        ptsEl.classList.remove('ok');
+      } else {
+        const age = (now - usPointsInfo.time) / 1000;
+        ptsEl.classList.toggle('ok', age < 3);
+        ptsEl.textContent = usPointsInfo.n + ' 点' +
+          (age < 3 ? '（实时）' : '（' + Math.round(age) + ' 秒前）');
+      }
+    }
+    usDraw();
+  }, 500);
 
   // ---------- 机械臂 (Lebai LM3: lebai_driver + grab_demo) ----------
   // 状态显示走 /robot_status、/gripper_status、/joint_states 等话题；控制走

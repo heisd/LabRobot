@@ -80,7 +80,8 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
     车载相机/雷达1/雷达2/IMU/下位机 STM32/Lebai 机械臂/机械臂相机 绿红灯，
     udev 别名→占用串口→USB 设备 ID）、下位机 STM32F407（示意图 +
     串口在线检测 + 固件使能位 + 低压禁动 + 回充模式回读 + 事件日志）、
-    雷达（双雷达融合健康）、超声波、语音组件、相机预览、`/rosout` 日志面板
+    雷达（双雷达融合健康）、超声波（原始值 + wheeltec_ultrasonic 俯视
+    波束图/Range/点云）、语音组件、相机预览、`/rosout` 日志面板
   - **底盘控制**：速度控制（遥控 + 安全等级）、自动回充、RGB 灯带、参数调节
   - **功能模块**（含子页面）：巡线、KCF 跟踪、YOLO 检测、骨架识别、
     路径跟随（wheeltec_path_follow 录制/回放可视化）、
@@ -104,6 +105,17 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
 - **雷达**：订阅融合 `/scan` 与单雷达 `/scan1`/`/scan2`（`sensor_msgs/LaserScan`），
   显示每路在线状态、有效点数与融合最近障碍距离。融合由 `double_lidar_fusion`
   完成；点云可视化见"系统总览"3D 视图。
+- **超声波**（`wheeltec_ultrasonic`）：上排显示下位机原始 `/Distance`
+  （固件 `ultrasonic_task` 分组采集 → 19 字节 `0xFA…0xFC` 帧，A–F 各
+  int16 毫米值）；**俯视波束图**按 `ultrasonic_A..F` TF 的真实安装位姿
+  （随底盘 description launch 按 ROBOT_TYPE 发布，无 TF 时按均匀扇形
+  近似）画各路扇形波束——长度=测距、近红/中黄/远绿、灰虚线=∞/无效，
+  量程刻度弧线每 0.25m；`supersonic_converter` 节点以 `/ultrasonic/*`
+  话题 3 秒内有数据判在线，上线自动读取 robot_type / min_range /
+  max_range / field_of_view / publish_pointcloud 显示（节点仅启动时读参，
+  不做在线调参）；`/ultrasonic/points` 点云显示点数与新鲜度。Nav2 联用：
+  `range_sensor_layer` 填 `/ultrasonic/A`–`F`（大写），`obstacle/voxel_layer`
+  订阅 `/ultrasonic/points`。
 - **语音组件**：来自 `wheeltec_mic` 的麦克风初始化 `/voice_flag`、唤醒
   `/awake_flag`、声源角 `/awake_angle`、识别 `/voice_words`，并可向
   `/tts_text` 发文本播报（经 `tts_make`）。

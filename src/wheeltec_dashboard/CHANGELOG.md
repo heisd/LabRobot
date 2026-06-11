@@ -6,6 +6,32 @@
 
 ---
 
+## 第 21 轮 — 超声波卡接入 wheeltec_ultrasonic（俯视波束图 + Range/点云）
+
+### 超声波卡升级（组件状态页）
+
+- 原"超声波 (m)"卡升级：保留 `/Distance` A–F 原始值，新增
+  `wheeltec_ultrasonic`（`supersonic_converter`）整合。
+- **俯视波束图**：新增 canvas，按 `ultrasonic_A..F` TF 的**真实安装位姿**
+  （base_footprint 系独立 TF 客户端，静态 TF 随底盘 description launch
+  发布）画各路扇形波束——扇形长度=测距、FOV 取节点参数，近红(<0.3m)/
+  中黄(<0.6m)/远绿、灰虚线=无效或超量程(∞)，量程刻度弧线每 0.25m，
+  s300_mini 自动隐藏 F 路；无 TF 时按均匀扇形近似摆放并提示。
+- **转换节点判活**：`/ultrasonic/A..F`（sensor_msgs/Range）3 秒内有数据
+  即在线（converter 把无效值发成 Infinity，rosbridge 序列化为 null，已
+  处理）；上线边沿自动读 robot_type / min_range / max_range /
+  field_of_view / publish_pointcloud 显示在卡内——节点只在启动时读参，
+  运行中 set 不生效，故不提供调参（提示里注明需重启 launch 传参）。
+- **点云指标**：`/ultrasonic/points`（PointCloud2，≤6 点很轻量）显示
+  点数与新鲜度，publish_pointcloud=false 时显示"已关闭"。
+- 提示写明完整数据链路（对照仓库内固件源码 `sensor_ranger.c` /
+  `data_task.c`）：固件 ultrasonic_task 分组采集防串扰 → 19 字节
+  `0xFA…0xFC` 帧（A–F int16 毫米、BCC、字节 13–16 新固件恒 0）→
+  `/Distance` → converter 拆成 Range/点云；Nav2 接法
+  （range_sensor_layer 大写话题 / voxel_layer 订 points）。
+
+---
+
 ## 第 20 轮 — 建图页签新增"RRT 自主探索"子页（wheeltec_robot_rrt / wheeltec_rrt_msg）
 
 ### RRT 自主探索子页

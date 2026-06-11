@@ -319,7 +319,7 @@
       </section>
 
       <section class="card">
-        <h2>超声波 (m)</h2>
+        <h2>超声波 <span class="muted">(/Distance · wheeltec_ultrasonic)</span></h2>
         <div id="sonar-grid" class="sonar-grid">
           <div class="sonar"><span class="sl">A</span><span id="s-a" class="sv">—</span></div>
           <div class="sonar"><span class="sl">B</span><span id="s-b" class="sv">—</span></div>
@@ -328,6 +328,39 @@
           <div class="sonar"><span class="sl">E</span><span id="s-e" class="sv">—</span></div>
           <div class="sonar"><span class="sl">F</span><span id="s-f" class="sv">—</span></div>
         </div>
+        <div class="us-top-wrap">
+          <canvas id="us-top"></canvas>
+        </div>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">转换节点 (supersonic_converter)</div>
+            <div id="us-conv" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">避障点云 (/ultrasonic/points)</div>
+            <div id="us-points" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">转换参数（启动时读取）</div>
+            <div id="us-cfg" class="metric-value">—</div>
+          </div>
+        </div>
+        <p class="hint"><strong>数据链路</strong>：下位机固件（<code>firmware/KeilSingleChipProject</code> 的
+          <code>sensor_ranger.c</code>，FreeRTOS <code>ultrasonic_task</code> 按分组触发各探头防互相串扰）把 A–F 六路测距按
+          <strong>int16 毫米值</strong>打进 19 字节超声波帧（<code>0xFA…0xFC</code>，含 BCC 校验，字节 13–16 新固件恒 0）随 20Hz
+          上行帧发出 → <code>turn_on_wheeltec_robot</code> 校验后发布 <code>/Distance</code>（上排 A–F 原始值）。
+          <strong>俯视图</strong>按
+          <code>ultrasonic_A..F</code> TF 的真实安装位姿（底盘 description launch 按 <code>ROBOT_TYPE</code> 发布）画各路波束：
+          扇形长度=测距，<span style="color:var(--err)">红</span>&lt;0.3m /
+          <span style="color:var(--warn)">黄</span>&lt;0.6m / <span style="color:var(--ok)">绿</span>=更远，
+          灰色虚线=无效或超量程（∞）；无 TF 时按均匀扇形近似摆放。
+          <strong>wheeltec_ultrasonic</strong>（<code>supersonic_converter</code>）把 <code>/Distance</code> 拆成标准
+          <code>sensor_msgs/Range</code>（<code>/ultrasonic/A</code>…<code>/ultrasonic/F</code>，注意大写；mini 无 F）
+          与 <code>/ultrasonic/points</code> 点云（base_footprint 系），供 Nav2 避障消费——
+          <code>range_sensor_layer</code> 填 A–F 话题，<code>obstacle/voxel_layer</code> 订阅 points。
+          启动：<code>ros2 launch wheeltec_ultrasonic supersonic+converter.launch.py</code>
+          （wheeltec_nav2 启用超声避障时会自动包含）。"转换节点"以 <code>/ultrasonic/*</code> 话题 3 秒内有数据判在线；
+          参数（机型/量程/FOV/点云开关）在节点上线时自动读取，<strong>仅启动时生效</strong>，修改需重启 launch 传参。</p>
       </section>
 
       <section class="card">

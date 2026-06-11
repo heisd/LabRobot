@@ -1417,6 +1417,18 @@ main {
   cursor: crosshair;    /* RRT 探索：点 5 个点圈定边界 */
   touch-action: none;
 }
+/* 超声波俯视波束图（组件状态页） */
+.us-top-wrap {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--panel-2);
+  margin: 10px 0;
+}
+#us-top {
+  display: block;
+  width: 100%;
+}
 .wp-list {
   display: flex;
   flex-direction: column;
