@@ -116,6 +116,39 @@ ros2 topic pub --once /vla/instruction std_msgs/msg/String "{data: '向前走一
 ros2 topic pub --once /tts_text std_msgs/msg/String "{data: '你好，我是小车'}"
 ```
 
+## 航点的建立与持久化（dashboard 地图选点）
+
+航点不再只能改 `config/waypoints.yaml` 再重编译——节点支持**运行时增删 + 文件持久化**：
+
+- `vla/waypoint_cmd`（std_msgs/String, JSON）：
+  `{"action":"add","name":"厨房","aliases":["kitchen"],"x":3.0,"y":2.0,"yaw":1.57}`
+  或 `{"action":"remove","name":"厨房"}`。add 同名即覆盖；**立即生效**
+  （下一条指令的模型提示词就含新航点）。
+- 每次变更整表写入 **`user_waypoints_file`**（默认 `~/.ros/vla_waypoints.yaml`，
+  不会被 colcon build 覆盖）；**该文件存在时启动优先加载它**——在 dashboard
+  地图上标定一次，重启/重编译后都不用重新设置。删掉该文件即回到包内预设。
+- `vla/waypoints`（std_msgs/String, JSON）：航点列表广播（变更即发 + 3s 周期），
+  dashboard 的"地图航点管理"卡据此显示列表并叠加到地图画布上。
+
+Web 端用法见 `wheeltec_dashboard`（VLA 子页）：自动加载 `/map_server/map` 的
+已建地图，地图上按下选点、拖动定朝向，填名保存即可。
+
+## 导航仲裁（手动随时打断 Nav2 / VLA）
+
+新增 `nav_arbiter` 节点（随 `vla_bringup.launch.py` 自动启动，`start_arbiter:=false`
+可关）。原理：RViz/dashboard 的 `/goal_pose` 和 VLA 的目标都汇入 bt_navigator 的
+`navigate_to_pose`，所以**打断 = 取消该动作的全部目标**：
+
+- 订阅手动速度（`cmd_vel_manual` + `cmd_vel_keyboard`）：dashboard 遥控自动
+  双发到 `cmd_vel_manual`；实体键盘用
+  `ros2 run wheeltec_robot_keyboard wheeltec_keyboard --ros-args -r cmd_vel:=cmd_vel_manual`。
+- 收到手动速度 → 立即取消 navigate_to_pose 全部目标（零 UUID = cancel all），
+  并转发手动速度；手动窗口为滑动 `manual_timeout`（默认 2s）。
+- 手动期间若自主导航又输出（监听 `cmd_vel_nav`，humble 默认存在）→ 限频重复
+  取消——手动期间 VLA/Nav2 插不进来。
+- 窗口结束发一帧零速兜底并恢复 AUTO；状态在 `nav_arbiter/status`
+  （`MANUAL|AUTO: 说明`），dashboard VLA 卡实时显示。
+
 ## 配置
 
 - `config/vla_params.yaml`：Ollama 地址/模型、话题名、坐标系、`use_action`、相对移动上限等。

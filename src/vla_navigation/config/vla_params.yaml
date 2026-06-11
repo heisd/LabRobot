@@ -23,4 +23,12 @@ vla_navigator:
     use_action: false           # false=发布 goal_pose; true=用 navigate_to_pose action
     max_relative_distance: 2.0  # relative_move 单次最大距离(米)
     debounce_sec: 3.0           # 相同指令去抖时间(秒)
-    waypoints_file: ""          # 为空则使用本包 config/waypoints.yaml
+    waypoints_file: ""          # 为空则使用本包 config/waypoints.yaml(出厂预设)
+
+    # ---- 航点持久化(dashboard 地图选点) ----
+    # dashboard 通过 waypoint_cmd_topic 增/删航点, 节点立即生效并整表写入
+    # user_waypoints_file; 该文件存在时启动加载它(优先于 waypoints_file),
+    # 因此地图上标定一次, 重启/重编译后都不用再设。
+    user_waypoints_file: "~/.ros/vla_waypoints.yaml"
+    waypoints_topic: "vla/waypoints"        # 航点列表 JSON 广播(3s 周期 + 变更即发)
+    waypoint_cmd_topic: "vla/waypoint_cmd"  # 增删命令 {"action":"add|remove",...}

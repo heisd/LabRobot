@@ -775,6 +775,10 @@
                 <div class="metric-label">语音播报 (/tts_text)</div>
                 <div id="vla-say" class="metric-value">—</div>
               </div>
+              <div class="metric">
+                <div class="metric-label">导航仲裁 (nav_arbiter)</div>
+                <div id="vla-arbiter" class="metric-value">—</div>
+              </div>
             </div>
             <div class="vla-row">
               <input id="tts-input" type="text" placeholder="让小车说话…（发布到 /tts_text）" />
@@ -786,15 +790,29 @@
             </div>
             <div id="vla-timeline" class="vla-timeline"></div>
           </div>
-          <p class="hint">指令发布到 <code>/vla/instruction</code>；麦克风识别走 <code>/voice_words</code>。决策与导航状态来自 <code>/vla/status</code>，目标点见 RViz 或 <code>/goal_pose</code>。需先启动 <code>vla_navigator</code> 节点与 rosbridge。</p>
+          <p class="hint">指令发布到 <code>/vla/instruction</code>；麦克风识别走 <code>/voice_words</code>。决策与导航状态来自 <code>/vla/status</code>，目标点见 RViz 或 <code>/goal_pose</code>。需先启动 <code>vla_navigator</code> 节点与 rosbridge。<strong>手动打断</strong>：启动 <code>nav_arbiter</code>（随 <code>vla_bringup</code> 自动拉起）后，本面板的遥控按键/WASD 一动就会取消 Nav2/VLA 的当前导航目标（手动期间自主目标也插不进来，松手约 2s 后恢复）；实体键盘节点用 <code>ros2 run wheeltec_robot_keyboard wheeltec_keyboard --ros-args -r cmd_vel:=cmd_vel_manual</code> 同样可打断。</p>
         </section>
 
         <section class="card card-wide">
-          <h2>航点标定助手 <span class="muted">(vla_navigation/config/waypoints.yaml)</span></h2>
+          <h2>地图航点管理 <span class="muted">(在已建地图上选点 · /vla/waypoint_cmd 持久化)</span></h2>
+          <div class="wp-map-toolbar">
+            <label>地图服务
+              <input id="wp-map-srv" type="text" value="/map_server/map" />
+            </label>
+            <button id="wp-map-load" type="button">加载地图</button>
+            <span id="wp-map-status" class="muted"></span>
+          </div>
+          <div class="wp-map-wrap">
+            <canvas id="wp-map"></canvas>
+          </div>
           <div class="grid">
             <div class="metric">
               <div class="metric-label">当前位姿 (map → base_footprint)</div>
               <div id="wp-cur" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">选中位置（按下选点 · 拖动定朝向）</div>
+              <div id="wp-sel" class="metric-value">—</div>
             </div>
           </div>
           <div class="wp-form">
@@ -804,11 +822,19 @@
             <label>别名（逗号分隔，可空）
               <input id="wp-alias" type="text" placeholder="如：kitchen, 做饭的地方" />
             </label>
-            <button id="wp-gen" type="button">用当前位姿生成 YAML</button>
+            <button id="wp-save" type="button">保存到机器人</button>
+            <button id="wp-use-cur" type="button">用当前位姿</button>
+            <button id="wp-gen" type="button">生成 YAML 片段</button>
             <button id="wp-copy" type="button">复制</button>
+            <span id="wp-msg" class="muted"></span>
           </div>
-          <textarea id="wp-yaml" class="wp-yaml" rows="6" spellcheck="false" placeholder="把小车开到目标位置，点【用当前位姿生成 YAML】，将生成的片段追加进 src/vla_navigation/config/waypoints.yaml 的 waypoints: 列表"></textarea>
-          <p class="hint"><strong>建立 VLA 导航点流程</strong>：① 用 SLAM 建好图并保存（Nav2 用 <code>WHEELTEC.yaml</code>）→ ② 启动定位（<code>vla_bringup.launch.py</code> 或单独 Nav2，等 RViz 里 AMCL 定位收敛）→ ③ 把小车遥控开到目标点、朝向摆好 → ④ 本卡读到的就是 map 坐标系下的实测位姿，点生成并把 YAML 片段<strong>追加</strong>到 <code>src/vla_navigation/config/waypoints.yaml</code> → ⑤ <code>colcon build --packages-select vla_navigation</code>（config 要重新安装）并重启 <code>vla_navigator</code>（航点只在启动时加载）。之后就能对小车说/输入"去厨房"。位姿来自浏览器端 TF（<code>/tf</code> 合成 map→base_footprint），<strong>未定位时显示"未定位"</strong>。别忘了把常用新航点也加进上方快捷按钮（<code>index.html</code> 的 <code>.vla-q</code>）。</p>
+          <textarea id="wp-yaml" class="wp-yaml" rows="5" spellcheck="false" placeholder="（备用手动流程）生成的 YAML 片段会出现在这里，可追加进 vla_navigation/config/waypoints.yaml"></textarea>
+          <div class="vla-timeline-head">
+            <span>已保存的航点 <span class="muted">(/vla/waypoints)</span></span>
+            <span id="wp-count" class="muted"></span>
+          </div>
+          <div id="wp-list" class="wp-list"></div>
+          <p class="hint"><strong>用法</strong>：先建好图并启动定位（<code>vla_bringup.launch.py</code> 含 Nav2 + map_server），地图会自动加载（也可点"加载地图"，服务默认 <code>/map_server/map</code>；SLAM 建图中则直接订阅 <code>/map</code> 实时刷新）。在地图上<strong>按下选位置、拖动定朝向</strong>（同 RViz 2D Goal Pose），或点"用当前位姿"取小车所在点；填名字点【保存到机器人】→ <code>vla_navigator</code> <strong>立即生效</strong>（说"去厨房"马上可用）并整表写入 <code>~/.ros/vla_waypoints.yaml</code> —— <strong>该文件重启/重编译后优先加载，下次无需重新设置</strong>。列表里【导航】直接发 <code>/goal_pose</code> 去该点（不经大模型），【删除】同步持久化。绿色箭头=小车实时位姿，蓝点=已存航点，黄色箭头=当前选点。需要重编译并重启 <code>vla_navigation</code> 后端一次以获得 <code>/vla/waypoints</code> 能力；地图原点带旋转的罕见情况暂不支持。</p>
         </section>
       </div>
     </div>

@@ -23,6 +23,16 @@ class Waypoint:
         """把 yaw(弧度) 转成四元数的 (z, w) 分量 (平面机器人只绕 z 轴转)."""
         return math.sin(self.yaw / 2.0), math.cos(self.yaw / 2.0)
 
+    def to_dict(self):
+        """序列化为 dict (写回 yaml / 发给 dashboard 的 JSON 共用)."""
+        d = {'name': self.name,
+             'x': round(self.x, 4),
+             'y': round(self.y, 4),
+             'yaw': round(self.yaw, 4)}
+        if self.aliases:
+            d['aliases'] = list(self.aliases)
+        return d
+
     def __repr__(self):
         return 'Waypoint(name=%r, x=%.2f, y=%.2f, yaw=%.2f)' % (
             self.name, self.x, self.y, self.yaw)
@@ -59,6 +69,41 @@ class WaypointMap:
 
     def names(self):
         return [wp.name for wp in self.waypoints]
+
+    def upsert(self, wp):
+        """按名称替换或追加航点; 返回 True 表示替换了已有同名航点."""
+        for i, old in enumerate(self.waypoints):
+            if old.name == wp.name:
+                self.waypoints[i] = wp
+                return True
+        self.waypoints.append(wp)
+        return False
+
+    def remove(self, name):
+        """按名称(精确匹配)删除航点; 返回是否删除成功."""
+        n = str(name or '').strip()
+        for i, wp in enumerate(self.waypoints):
+            if wp.name == n:
+                del self.waypoints[i]
+                return True
+        return False
+
+    def to_dict_list(self):
+        return [wp.to_dict() for wp in self.waypoints]
+
+    def save(self, path):
+        """把当前航点写为 yaml 文件(自动创建目录); path 为空返回 False."""
+        if not path:
+            return False
+        d = os.path.dirname(path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write('# 由 vla_navigator 自动保存的命名航点 (map 坐标系下的位姿)\n'
+                    '# 来自 dashboard 地图选点; 此文件存在时优先于包内 config/waypoints.yaml 加载。\n')
+            yaml.safe_dump({'waypoints': self.to_dict_list()}, f,
+                           allow_unicode=True, sort_keys=False)
+        return True
 
     def describe(self):
         """生成给大模型看的航点清单文本."""

@@ -1261,6 +1261,87 @@ main {
   resize: vertical;
 }
 
+/* 地图航点管理：地图画布 + 工具条 + 航点列表 */
+.wp-map-toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.wp-map-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.wp-map-toolbar input {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 4px;
+  min-width: 160px;
+}
+.wp-map-toolbar button {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wp-map-toolbar button:hover { filter: brightness(1.15); }
+.wp-map-wrap {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--panel-2);
+  margin-bottom: 10px;
+}
+#wp-map {
+  display: block;
+  width: 100%;
+  cursor: crosshair;
+  touch-action: none;   /* 触屏拖动定朝向时不滚动页面 */
+}
+.wp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.wp-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 8px;
+  align-items: center;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 13px;
+}
+.wp-row-pos {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.wp-row button {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.wp-row button:hover { border-color: var(--accent); color: var(--accent); }
+.wp-row .wp-del:hover { border-color: var(--err); color: var(--err); }
+
 /* --------- Mobile / narrow-screen tweaks --------- */
 @media (max-width: 640px) {
   header {

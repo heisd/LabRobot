@@ -15,6 +15,7 @@
   let ros = null;
   const subs = [];   // active subscriptions
   let cmdVelPub = null;
+  let cmdVelManualPub = null;  // /cmd_vel_manual: 同步发给 nav_arbiter, 手动打断 Nav2/VLA
   let vlaInstrPub = null;  // /vla/instruction publisher
   let ttsPub = null;       // /tts_text publisher
   let armVlmInstrPub = null;   // /vlm/instruction publisher (机械臂 VLM 抓取)
@@ -24,7 +25,9 @@
   let securityPub = null;      // /chassis_security publisher (固件安全等级 0/1)
   let bodyModePub = null;      // /mode publisher (骨架识别 1=姿态交互 2=跟随)
   let bodyRecoveryPub = null;  // /recoveryid publisher (骨架识别找回锁定目标)
-  let wpTf = null;             // map→base_footprint TF (VLA 航点标定助手)
+  let wpTf = null;             // map→base_footprint TF (VLA 地图航点管理)
+  let wpCmdPub = null;         // /vla/waypoint_cmd publisher (航点增删, 后端持久化)
+  let goalPosePub = null;      // /goal_pose publisher (航点列表"导航"按钮直达)
   let lidarSubs = [];      // per-source LaserScan subs (managed separately so
                            // the lidar card can re-subscribe on topic change)
   const lidarLast = {};    // key -> { time, points, min }
@@ -124,6 +127,10 @@
       try { cmdVelPub.unadvertise(); } catch (_) { /* ignore */ }
       cmdVelPub = null;
     }
+    if (cmdVelManualPub) {
+      try { cmdVelManualPub.unadvertise(); } catch (_) { /* ignore */ }
+      cmdVelManualPub = null;
+    }
     if (vlaInstrPub) {
       try { vlaInstrPub.unadvertise(); } catch (_) { /* ignore */ }
       vlaInstrPub = null;
@@ -164,6 +171,17 @@
       try { wpTf.dispose(); } catch (_) { /* ignore */ }
       wpTf = null;
     }
+    if (wpCmdPub) {
+      try { wpCmdPub.unadvertise(); } catch (_) { /* ignore */ }
+      wpCmdPub = null;
+    }
+    if (goalPosePub) {
+      try { goalPosePub.unadvertise(); } catch (_) { /* ignore */ }
+      goalPosePub = null;
+    }
+    // 航点列表属于上一个连接的后端, 清掉避免误导; 地图位图保留(重连通常同一张图)
+    vlaWaypoints = [];
+    renderWpList();
     // 机械臂侧状态属于上一个连接：清掉，避免换机器人重连后残留
     // 旧关节行 / 旧的 YOLO 目标选中态（armJointMap 也因此不会无限增长）。
     armJointMap.clear();
@@ -269,6 +287,14 @@
       messageType: 'geometry_msgs/msg/Twist',
     });
     cmdVelPub.advertise();
+    // 同一份手动速度再发一路给 nav_arbiter（没跑仲裁节点时此话题无人订阅，
+    // 无副作用）：仲裁器收到即取消 Nav2/VLA 的导航目标，手动随时打断自主。
+    cmdVelManualPub = new ROSLIB.Topic({
+      ros, name: '/cmd_vel_manual', messageType: 'geometry_msgs/msg/Twist',
+    });
+    cmdVelManualPub.advertise();
+    // 导航仲裁状态（nav_arbiter）：VLA 卡显示 + 接管/释放边沿进时间线。
+    sub('/nav_arbiter/status', 'std_msgs/msg/String', renderNavArbiter);
 
     // 自动回充开关与固件安全等级：都是驱动里的标志位，随下一帧 cmd_vel
     // 序列化进串口帧（frame[1]/frame[2]）下发，因此发布后要补发一帧 cmd_vel。
@@ -310,9 +336,31 @@
       el.classList.add(m === 2 ? 'warn' : 'ok');   // 跟随会动真车，标 warn 提醒
     });
 
-    // VLA 航点标定助手：独立 TF 客户端固定以 map 为参考系（3D 视图那份的
+    // VLA 地图航点管理：独立 TF 客户端固定以 map 为参考系（3D 视图那份的
     // fixed frame 跟随用户输入，默认 odom_combined，不能复用）。
     wpTf = makeTfClient(ros, 'map');
+    wpCmdPub = new ROSLIB.Topic({
+      ros, name: '/vla/waypoint_cmd', messageType: 'std_msgs/msg/String',
+    });
+    wpCmdPub.advertise();
+    goalPosePub = new ROSLIB.Topic({
+      ros, name: '/goal_pose', messageType: 'geometry_msgs/msg/PoseStamped',
+    });
+    goalPosePub.advertise();
+    // 后端 vla_navigator 广播的航点列表（变更即发 + 3s 周期，晚连也能拿到）
+    sub('/vla/waypoints', 'std_msgs/msg/String', (msg) => {
+      let obj = null;
+      try { obj = JSON.parse(msg.data || '{}'); } catch (_) { return; }
+      vlaWaypoints = (obj && obj.waypoints) || [];
+      wpFile = (obj && obj.file) || '';
+      renderWpList();
+      wpRedraw();
+    });
+    // SLAM 建图中 /map 周期发布（volatile）可直接收到；map_server 的
+    // transient_local 帧可能收不到 —— 由 GetMap 服务兜底（fetchWpMap）。
+    sub('/map', 'nav_msgs/msg/OccupancyGrid', ingestWpMap,
+      { queue_length: 1, throttle_rate: 2000 });
+    wpMapTried = false;   // 每次连接自动尝试一次 GetMap
 
     // VLA: publish instructions / TTS text, watch recognition + status.
     vlaInstrPub = new ROSLIB.Topic({
@@ -474,10 +522,13 @@
     curVx = vx; curWz = wz;
     cmdReadout.textContent = `vx=${vx.toFixed(2)}, wz=${wz.toFixed(2)}`;
     if (!cmdVelPub) return;
-    cmdVelPub.publish(new ROSLIB.Message({
+    const msg = new ROSLIB.Message({
       linear: { x: vx, y: 0, z: 0 },
       angular: { x: 0, y: 0, z: wz },
-    }));
+    });
+    cmdVelPub.publish(msg);
+    // 手动通道：nav_arbiter 据此打断 Nav2/VLA 的自主导航
+    if (cmdVelManualPub) cmdVelManualPub.publish(msg);
   }
 
   function computeCmd(btn) {
@@ -1472,6 +1523,29 @@
     appendTimeline('vla-timeline', VLA_MAX_LINES, text);
   }
 
+  // 导航仲裁状态（nav_arbiter/status: "MANUAL|AUTO: 说明"）。
+  // 指标实时刷，MANUAL/AUTO 切换的边沿写进 VLA 时间线。
+  let navArbState = '';
+  function renderNavArbiter(msg) {
+    const text = (msg.data || '').trim();
+    const manual = /^MANUAL/i.test(text);
+    const el = $('vla-arbiter');
+    if (el) {
+      el.textContent = text.replace(/^(MANUAL|AUTO):\s*/i, '') || '—';
+      el.classList.remove('ok', 'warn');
+      el.classList.add(manual ? 'warn' : 'ok');
+    }
+    const state = manual ? 'MANUAL' : 'AUTO';
+    if (state !== navArbState) {
+      const first = navArbState === '';   // 首条状态只记录不渲染成"切换"
+      navArbState = state;
+      if (!first) {
+        addVlaStatus(manual ? '[仲裁] 手动接管，自主导航目标已取消'
+          : '[仲裁] 手动释放，自主导航恢复可用');
+      }
+    }
+  }
+
   function sendInstruction(text) {
     const t = (text || '').trim();
     if (!t) return;
@@ -1839,10 +1913,200 @@
     bodyRecoveryPub.publish(new ROSLIB.Message({ data: v }));
   });
 
-  // ---------- VLA 航点标定助手 ----------
-  // wpTf 持续合成 map→base_footprint；把当前实测位姿生成 waypoints.yaml 片段。
-  let wpPose = null;   // { x, y, yaw } 最近一次有效位姿
+  // ---------- VLA 地图航点管理 ----------
+  // 在已建好的地图(OccupancyGrid)上选点保存命名航点：后端 vla_navigator 收到
+  // /vla/waypoint_cmd 后立即生效并持久化到 ~/.ros/vla_waypoints.yaml（重启
+  // 优先加载）。地图来源：/map 话题（SLAM 建图中可直接收到）+ GetMap 服务
+  // 兜底（map_server 的 transient_local 帧 rosbridge 可能收不到）。
+  let wpPose = null;        // { x, y, yaw } 小车当前位姿（map 下）
+  let wpSel = null;         // { x, y, yaw } 地图上选中的目标位姿
+  let wpMap = null;         // { w, h, res, ox, oy, bmp } 已渲染地图位图
+  let wpMapTried = false;   // 本次连接是否已自动尝试 GetMap
+  let vlaWaypoints = [];    // 后端广播的航点列表
+  let wpFile = '';          // 后端持久化文件路径（显示用）
 
+  function setWpMapStatus(text) {
+    const el = $('wp-map-status');
+    if (el) el.textContent = text || '';
+  }
+
+  // OccupancyGrid.data: int8[]，rosbridge 可能给普通数组或 base64 串，都处理。
+  function decodeGridData(data) {
+    if (typeof data === 'string') {
+      const bin = atob(data);
+      const out = new Int8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) {
+        const b = bin.charCodeAt(i) & 0xff;
+        out[i] = b > 127 ? b - 256 : b;
+      }
+      return out;
+    }
+    return data || [];
+  }
+
+  function ingestWpMap(grid) {
+    if (!grid || !grid.info || !grid.info.width || !grid.info.height) return;
+    const w = grid.info.width, h = grid.info.height;
+    const data = decodeGridData(grid.data);
+    const bmp = document.createElement('canvas');
+    bmp.width = w; bmp.height = h;
+    const ctx = bmp.getContext('2d');
+    const img = ctx.createImageData(w, h);
+    for (let y = 0; y < h; y++) {
+      const srcRow = y * w;
+      const dstRow = (h - 1 - y) * w;   // 预翻转：map 的 y 向上，canvas 向下
+      for (let x = 0; x < w; x++) {
+        const v = data[srcRow + x];
+        let r, g, b;
+        if (v < 0) { r = 0x2d; g = 0x38; b = 0x45; }        // 未知
+        else if (v < 50) { r = 0xe6; g = 0xed; b = 0xf3; }  // 空闲
+        else { r = 0x0d; g = 0x11; b = 0x17; }              // 占用
+        const o = (dstRow + x) * 4;
+        img.data[o] = r; img.data[o + 1] = g; img.data[o + 2] = b; img.data[o + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    wpMap = {
+      w, h,
+      res: grid.info.resolution,
+      ox: grid.info.origin ? grid.info.origin.position.x : 0,
+      oy: grid.info.origin ? grid.info.origin.position.y : 0,
+      bmp,
+    };
+    setWpMapStatus(`${w}×${h} @ ${(+grid.info.resolution).toFixed(3)} m/格`);
+    wpRedraw();
+  }
+
+  function fetchWpMap() {
+    if (!ros) { setWpMapStatus('未连接 rosbridge'); return; }
+    const srvName = (($('wp-map-srv') || {}).value || '/map_server/map').trim();
+    setWpMapStatus('加载地图中…（大地图可能要几秒）');
+    const srv = new ROSLIB.Service({ ros, name: srvName, serviceType: 'nav_msgs/srv/GetMap' });
+    srv.callService(new ROSLIB.ServiceRequest({}), (res) => {
+      if (res && res.map && res.map.info && res.map.info.width) ingestWpMap(res.map);
+      else setWpMapStatus('地图服务返回空地图');
+    }, (err) => {
+      setWpMapStatus('加载失败：' + err + '（map_server 在跑吗？SLAM 建图中可等 /map 话题）');
+    });
+  }
+  const wpMapLoad = $('wp-map-load');
+  if (wpMapLoad) wpMapLoad.addEventListener('click', fetchWpMap);
+
+  // map 世界坐标 ↔ 显示画布坐标（位图已预翻转，y 轴只需一次镜像换算）
+  function wpWorldToCanvas(wx, wy, view) {
+    return {
+      x: (wx - wpMap.ox) / wpMap.res * view.s,
+      y: view.h - (wy - wpMap.oy) / wpMap.res * view.s,
+    };
+  }
+  function wpCanvasToWorld(cx, cy, view) {
+    return {
+      x: cx / view.s * wpMap.res + wpMap.ox,
+      y: (view.h - cy) / view.s * wpMap.res + wpMap.oy,
+    };
+  }
+
+  function drawWpArrow(ctx, p, worldYaw, color, r) {
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(-worldYaw);   // 画布 y 翻转 → 旋向取负
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(-r * 0.6, r * 0.55);
+    ctx.lineTo(-r * 0.6, -r * 0.55);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function wpRedraw() {
+    const canvas = $('wp-map');
+    if (!canvas || !canvas.offsetParent || !wpMap) return;
+    const wrap = canvas.parentElement;
+    const dispW = Math.max(240, Math.min(wrap.clientWidth || 640, 900));
+    const s = dispW / wpMap.w;
+    const dispH = Math.max(140, Math.round(wpMap.h * s));
+    if (canvas.width !== dispW || canvas.height !== dispH) {
+      canvas.width = dispW;
+      canvas.height = dispH;
+    }
+    const view = { s, w: dispW, h: dispH };
+    canvas._view = view;   // pointer 事件换算用
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, dispW, dispH);
+    ctx.drawImage(wpMap.bmp, 0, 0, dispW, dispH);
+    // 已保存航点（蓝点 + 名字）
+    ctx.font = '11px sans-serif';
+    vlaWaypoints.forEach((wp) => {
+      const p = wpWorldToCanvas(+wp.x, +wp.y, view);
+      ctx.fillStyle = '#58a6ff';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillText(wp.name, p.x + 6, p.y - 4);
+    });
+    // 小车实时位姿（绿色箭头）
+    const tf = wpTf ? wpTf.lookup('base_footprint') : null;
+    if (tf) {
+      drawWpArrow(ctx, wpWorldToCanvas(tf.translation.x, tf.translation.y, view),
+        yawFromQuat(tf.rotation), '#3fb950', 9);
+    }
+    // 当前选点（黄色箭头）
+    if (wpSel) {
+      drawWpArrow(ctx, wpWorldToCanvas(wpSel.x, wpSel.y, view), wpSel.yaw, '#d29922', 9);
+    }
+  }
+
+  function updateWpSelText() {
+    const el = $('wp-sel');
+    if (!el) return;
+    if (!wpSel) { el.textContent = '—'; return; }
+    el.textContent = `x=${wpSel.x.toFixed(3)}  y=${wpSel.y.toFixed(3)}  yaw=${wpSel.yaw.toFixed(3)} rad (${(wpSel.yaw * 180 / Math.PI).toFixed(1)}°)`;
+  }
+
+  // 地图取点交互：按下定位置，按住拖动定朝向（同 RViz 2D Goal Pose），触屏可用。
+  (function initWpMapPick() {
+    const canvas = $('wp-map');
+    if (!canvas) return;
+    let downWorld = null;
+    function evWorld(e) {
+      const view = canvas._view;
+      if (!view || !wpMap) return null;
+      const r = canvas.getBoundingClientRect();
+      if (!r.width || !r.height) return null;
+      const cx = (e.clientX - r.left) * (canvas.width / r.width);
+      const cy = (e.clientY - r.top) * (canvas.height / r.height);
+      return wpCanvasToWorld(cx, cy, view);
+    }
+    canvas.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const w = evWorld(e);
+      if (!w) return;
+      downWorld = w;
+      wpSel = { x: w.x, y: w.y, yaw: wpSel ? wpSel.yaw : 0 };
+      updateWpSelText();
+      wpRedraw();
+      try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      e.preventDefault();
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!downWorld) return;
+      const w = evWorld(e);
+      if (!w) return;
+      const dx = w.x - downWorld.x, dy = w.y - downWorld.y;
+      // 拖出 3 个栅格以上才算在定朝向，避免手抖把 yaw 打飞
+      if (Math.hypot(dx, dy) > wpMap.res * 3) wpSel.yaw = Math.atan2(dy, dx);
+      updateWpSelText();
+      wpRedraw();
+    });
+    const finish = () => { downWorld = null; };
+    canvas.addEventListener('pointerup', finish);
+    canvas.addEventListener('pointercancel', finish);
+  })();
+
+  // 周期刷新：当前位姿 + 地图重绘 + 首次自动拉地图（仅子页可见时工作）。
   setInterval(() => {
     const el = $('wp-cur');
     if (!el || !el.offsetParent) return;   // 子页不可见时不刷新
@@ -1851,30 +2115,117 @@
       wpPose = null;
       el.textContent = ros ? '未定位（map TF 不可用，需启动 Nav2/AMCL）' : '未连接';
       el.classList.remove('ok');
-      return;
+    } else {
+      const yaw = yawFromQuat(tf.rotation);
+      wpPose = { x: tf.translation.x, y: tf.translation.y, yaw };
+      el.textContent = `x=${wpPose.x.toFixed(3)}  y=${wpPose.y.toFixed(3)}  yaw=${yaw.toFixed(3)} rad (${(yaw * 180 / Math.PI).toFixed(1)}°)`;
+      el.classList.add('ok');
     }
-    const yaw = yawFromQuat(tf.rotation);
-    wpPose = { x: tf.translation.x, y: tf.translation.y, yaw };
-    el.textContent = `x=${wpPose.x.toFixed(3)}  y=${wpPose.y.toFixed(3)}  yaw=${yaw.toFixed(3)} rad (${(yaw * 180 / Math.PI).toFixed(1)}°)`;
-    el.classList.add('ok');
+    if (!wpMap && ros && !wpMapTried) { wpMapTried = true; fetchWpMap(); }
+    wpRedraw();
   }, 500);
 
+  function wpAliases() {
+    return (($('wp-alias') || {}).value || '')
+      .split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+  }
+
+  function sendWpCmd(obj) {
+    if (!wpCmdPub) { setCardMsg('wp-msg', '未连接 rosbridge'); return false; }
+    wpCmdPub.publish(new ROSLIB.Message({ data: JSON.stringify(obj) }));
+    return true;
+  }
+
+  const wpSave = $('wp-save');
+  if (wpSave) wpSave.addEventListener('click', () => {
+    const name = (($('wp-name') || {}).value || '').trim();
+    if (!name) { alert('请先填航点名（如：厨房）'); return; }
+    const pose = wpSel || wpPose;
+    if (!pose) { alert('请先在地图上选点，或等定位收敛后用当前位姿'); return; }
+    const ok = sendWpCmd({
+      action: 'add',
+      name,
+      aliases: wpAliases(),
+      x: +pose.x.toFixed(3),
+      y: +pose.y.toFixed(3),
+      yaw: +pose.yaw.toFixed(3),
+    });
+    if (ok) setCardMsg('wp-msg', '已发送保存 "' + name + '"（等列表刷新确认）');
+  });
+
+  const wpUseCur = $('wp-use-cur');
+  if (wpUseCur) wpUseCur.addEventListener('click', () => {
+    if (!wpPose) { alert('当前没有有效定位（map→base_footprint TF 不可用）'); return; }
+    wpSel = { x: wpPose.x, y: wpPose.y, yaw: wpPose.yaw };
+    updateWpSelText();
+    wpRedraw();
+  });
+
+  // 航点列表：来自后端广播，带"导航 / 删除"操作（事件委托，重渲染不丢绑定）。
+  function renderWpList() {
+    const view = $('wp-list');
+    if (!view) return;
+    const cnt = $('wp-count');
+    if (cnt) cnt.textContent = vlaWaypoints.length + ' 个' + (wpFile ? ' · ' + wpFile : '');
+    if (!vlaWaypoints.length) {
+      view.innerHTML = '<div class="muted">（后端暂无航点，或 vla_navigator 未启动 / 未重编译）</div>';
+      return;
+    }
+    view.innerHTML = vlaWaypoints.map((wp) => {
+      const alias = (wp.aliases && wp.aliases.length)
+        ? ` <span class="muted">(${escapeHTML(wp.aliases.join('/'))})</span>` : '';
+      return `<div class="wp-row" data-name="${escapeHTML(wp.name)}">` +
+        `<span class="wp-row-name">${escapeHTML(wp.name)}${alias}</span>` +
+        `<span class="wp-row-pos">x=${(+wp.x).toFixed(2)} y=${(+wp.y).toFixed(2)} yaw=${(+(wp.yaw || 0)).toFixed(2)}</span>` +
+        `<button type="button" data-act="goto">导航</button>` +
+        `<button type="button" data-act="del" class="wp-del">删除</button></div>`;
+    }).join('');
+  }
+
+  const wpList = $('wp-list');
+  if (wpList) wpList.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    const row = btn.closest('.wp-row');
+    const name = row && row.dataset.name;
+    const wp = vlaWaypoints.find((w) => w.name === name);
+    if (!wp) return;
+    if (btn.dataset.act === 'del') {
+      if (!window.confirm('删除航点 "' + name + '"？（会同步写入持久化文件）')) return;
+      if (sendWpCmd({ action: 'remove', name })) {
+        setCardMsg('wp-msg', '已发送删除 "' + name + '"');
+      }
+    } else if (btn.dataset.act === 'goto') {
+      if (!goalPosePub) { setCardMsg('wp-msg', '未连接 rosbridge'); return; }
+      if (!window.confirm('导航到 "' + name + '" (x=' + (+wp.x).toFixed(2) +
+          ', y=' + (+wp.y).toFixed(2) + ')？小车将开始移动。')) return;
+      const yaw = +(wp.yaw || 0);
+      goalPosePub.publish(new ROSLIB.Message({
+        header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
+        pose: {
+          position: { x: +wp.x, y: +wp.y, z: 0 },
+          orientation: { x: 0, y: 0, z: Math.sin(yaw / 2), w: Math.cos(yaw / 2) },
+        },
+      }));
+      setCardMsg('wp-msg', '已发布 /goal_pose → ' + name);
+    }
+  });
+
+  // 备用手动流程：生成可追加进 config/waypoints.yaml 的片段（优先用地图选点）。
   const wpGen = $('wp-gen');
   if (wpGen) wpGen.addEventListener('click', () => {
     const out = $('wp-yaml');
     if (!out) return;
-    if (!wpPose) { alert('当前没有有效定位（map→base_footprint TF 不可用）'); return; }
+    const pose = wpSel || wpPose;
+    if (!pose) { alert('请先在地图上选点，或等定位收敛'); return; }
     const name = (($('wp-name') || {}).value || '').trim();
     if (!name) { alert('请先填航点名（如：厨房）'); return; }
-    const aliases = (($('wp-alias') || {}).value || '')
-      .split(/[,，]/).map((s) => s.trim()).filter(Boolean);
-    const lines = [
-      `  - name: "${name}"`,
-    ];
+    const aliases = wpAliases();
+    const lines = [`  - name: "${name}"`];
     if (aliases.length) lines.push(`    aliases: [${aliases.map((a) => `"${a}"`).join(', ')}]`);
-    lines.push(`    x: ${wpPose.x.toFixed(3)}`);
-    lines.push(`    y: ${wpPose.y.toFixed(3)}`);
-    lines.push(`    yaw: ${wpPose.yaw.toFixed(3)}`);
+    lines.push(`    x: ${pose.x.toFixed(3)}`);
+    lines.push(`    y: ${pose.y.toFixed(3)}`);
+    lines.push(`    yaw: ${pose.yaw.toFixed(3)}`);
     out.value = lines.join('\n');
   });
   const wpCopy = $('wp-copy');

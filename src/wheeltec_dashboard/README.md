@@ -103,10 +103,19 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
   （0=速度控制 / 1、2=自动回充 / 3=红外对接速度 / 4=灯带 RGB）、目标速度
   与 BCC 校验——STM32 卡"最近下发指令"实时刷新，命令类型变化写入
   下位机事件栏。
-- **VLA 航点标定助手**（VLA 子页）：浏览器端 TF 合成 map→base_footprint
-  实时显示当前定位位姿；填航点名/别名一键生成 `waypoints.yaml` 片段并复制，
-  追加到 `vla_navigation/config/waypoints.yaml` 后重编译重启即可用
-  "去 X"指令导航。
+- **地图航点管理**（VLA 子页）：自动加载已建好的地图（`/map_server/map`
+  GetMap 服务 + `/map` 话题兜底，SLAM 建图中实时刷新），画布上叠加小车
+  实时位姿（绿箭头）、已存航点（蓝点）；**按下选点、拖动定朝向**（同 RViz
+  2D Goal Pose）或"用当前位姿"，填名字【保存到机器人】→ 后端
+  `vla_navigator` 经 `/vla/waypoint_cmd` **立即生效**并整表持久化到
+  `~/.ros/vla_waypoints.yaml`（重启优先加载，一次标定永久有效）；航点列表
+  （`/vla/waypoints` 广播）支持【导航】（直发 `/goal_pose`）与【删除】；
+  备用"生成 YAML 片段"手动流保留。
+- **导航仲裁**（`nav_arbiter`，vla_navigation 包）：面板遥控/WASD 的速度
+  同步发 `/cmd_vel_manual`，仲裁节点收到即取消 `navigate_to_pose` 全部
+  目标——**手动随时打断 Nav2 与 VLA**，手动期间自主目标插不进来，松手
+  约 2s 后自动恢复；状态显示在 VLA 卡（`/nav_arbiter/status`），接管/释放
+  写入 VLA 时间线。实体键盘节点 remap `cmd_vel:=cmd_vel_manual` 即可参与。
 
 - 实时遥测：`/PowerVoltage`、`/robot_charging_flag`、`/robot_charging_current`、
   `/robot_red_flag`（**回充红外信号**——固件回充帧 rx[3] 是收到充电桩红外的

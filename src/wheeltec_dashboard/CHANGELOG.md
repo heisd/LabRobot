@@ -6,6 +6,76 @@
 
 ---
 
+## 第 9 轮 — 地图选点航点管理（后端持久化）+ 导航仲裁（手动打断 Nav2/VLA）
+
+### 背景
+
+第 8 轮的"航点标定助手"只能生成 YAML 片段让人手工粘贴+重编译。本轮把
+VLA 后端补成**运行时可增删 + 文件持久化**，前端升级为**在已建地图上选点**，
+并新增**导航仲裁节点**让手动遥控随时打断 Nav2/VLA 自主导航。
+
+### 后端 vla_navigation（需重编译）
+
+- **运行时航点管理**：新订阅 `vla/waypoint_cmd`（String JSON，
+  add 同名覆盖 / remove），变更**立即生效**（下一条指令的模型提示词就含
+  新航点，原子换引用对推理线程安全）；新发布 `vla/waypoints`（列表 JSON，
+  变更即发 + 3s 周期重发，晚连的面板也能拿到）。
+- **文件持久化**：每次变更整表写入 `user_waypoints_file`
+  （默认 `~/.ros/vla_waypoints.yaml`，不被 colcon build 覆盖）；启动时该文件
+  存在则**优先于包内 config/waypoints.yaml 加载**——标定一次永久生效。
+  `waypoints.py` 增加 `to_dict/upsert/remove/to_dict_list/save`（含离线
+  roundtrip 自测通过）。
+- **新增 `nav_arbiter` 导航仲裁节点**（目标监督式，不改 Nav2 launch）：
+  订阅 `cmd_vel_manual`/`cmd_vel_keyboard`，收到手动速度立即向
+  `navigate_to_pose/_action/cancel_goal` 发零 UUID（=取消全部目标，
+  同时覆盖 RViz/dashboard 的 /goal_pose 目标与 VLA 目标）；手动滑动窗口
+  `manual_timeout`（2s）内若 `cmd_vel_nav` 又有输出则限频重复取消；
+  窗口结束发零速兜底并恢复 AUTO；状态发 `nav_arbiter/status`。
+  随 `vla_bringup.launch.py` 自动启动（`start_arbiter:=false` 可关）。
+
+### 前端 dashboard
+
+- **"航点标定助手"升级为"地图航点管理"**：
+  - 地图显示：`/map_server/map`（GetMap 服务，子页首次可见自动加载）+
+    `/map` 话题兜底（SLAM 建图中实时刷新；map_server 的 transient_local
+    帧 rosbridge 可能收不到，故以服务为主）；OccupancyGrid 渲染为位图
+    （空闲/占用/未知三色，y 轴预翻转），`data` 兼容数组与 base64 两种
+    rosbridge 编码。
+  - 叠加层：小车实时位姿（绿箭头，wpTf）、已存航点（蓝点+名字）、当前
+    选点（黄箭头）。
+  - 交互：**按下选位置、按住拖动定朝向**（同 RViz 2D Goal Pose，
+    setPointerCapture 触屏可用，拖 3 格以上才改 yaw 防手抖）。
+  - 【保存到机器人】发 `/vla/waypoint_cmd`，列表（`/vla/waypoints`）显示
+    全部航点与持久化文件路径，行内【导航】直发 `/goal_pose`（二次确认，
+    不经大模型）、【删除】同步持久化；备用"生成 YAML 片段"手动流保留
+    （优先用地图选点，其次当前位姿）。
+- **手动打断接入**：遥控 publishCmd 同步双发 `/cmd_vel_manual`（未跑仲裁
+  节点时无人订阅、零副作用）；VLA 卡新增"导航仲裁"指标
+  （`/nav_arbiter/status`，MANUAL 橙色），接管/释放边沿写入 VLA 时间线。
+
+### 文件改动汇总（第 9 轮）
+
+| 文件 | 变化 |
+| --- | --- |
+| `../vla_navigation/vla_navigation/waypoints.py` | to_dict/upsert/remove/save |
+| `../vla_navigation/vla_navigation/vla_navigator.py` | 用户航点文件优先加载、/vla/waypoints 广播、/vla/waypoint_cmd 处理 |
+| `../vla_navigation/vla_navigation/nav_arbiter.py` | 新增导航仲裁节点 |
+| `../vla_navigation/setup.py` / `launch/vla_bringup.launch.py` / `config/vla_params.yaml` / `README.md` | 入口、start_arbiter、参数与文档 |
+| `web/index.html` | 地图航点管理卡（画布/工具条/列表）、VLA 卡仲裁指标 |
+| `web/app.js` | OccupancyGrid 渲染与选点、/vla/waypoints //vla/waypoint_cmd //nav_arbiter/status、/cmd_vel_manual 双发 |
+| `web/style.css` | `.wp-map-*` / `.wp-row` / `.wp-list` |
+
+### 验证清单
+
+- [ ] 重编译 `colcon build --packages-select vla_navigation wheeltec_dashboard` 后启动 `vla_bringup.launch.py`：VLA 子页地图自动出现，绿箭头跟随小车移动。
+- [ ] 地图上按下拖动选点，填"测试点"保存：列表 1s 内出现该点，`cat ~/.ros/vla_waypoints.yaml` 包含它；对小车说/输入"去测试点"能导航。
+- [ ] 重启 vla_navigator（不重新标定）：启动日志显示"从用户航点文件加载"，列表还在——下次无需重新设置。
+- [ ] 列表【导航】到某点途中，按住面板 W 键：小车立即响应手动、Nav2 停止输出（`/nav_arbiter/status` 显示 MANUAL，VLA 时间线记录接管）；松手 2s 后恢复 AUTO，再发"去 X"正常。
+- [ ] 手动期间发"去厨房"：VLA 的目标被仲裁立即取消，小车不抢方向。
+- [ ] 【删除】航点后 `~/.ros/vla_waypoints.yaml` 同步少一条。
+
+---
+
 ## 第 8 轮 — 下发命令按协议解析进事件栏 + 骨架识别子页 + VLA 航点标定助手
 
 ### 下位机事件显示"已解析的命令"（对照通信协议表）

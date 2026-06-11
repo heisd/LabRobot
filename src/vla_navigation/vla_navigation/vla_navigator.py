@@ -39,7 +39,7 @@ import tf2_geometry_msgs  # noqa: F401  注册 PoseStamped 的 TF 转换
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from vla_navigation.vlm_client import VLMClient
-from vla_navigation.waypoints import WaypointMap
+from vla_navigation.waypoints import Waypoint, WaypointMap
 
 
 # 麦克风唤醒时驱动节点会发布这句, 不应被当作导航指令
@@ -71,6 +71,11 @@ class VlaNavigator(Node):
         self.declare_parameter('max_relative_distance', 2.0)
         self.declare_parameter('debounce_sec', 3.0)
         self.declare_parameter('waypoints_file', '')
+        # 用户航点文件: dashboard 地图选点保存于此(不随 colcon build 被覆盖)。
+        # 文件存在时优先于 waypoints_file/包内 config 加载 —— 一次标定永久生效。
+        self.declare_parameter('user_waypoints_file', '~/.ros/vla_waypoints.yaml')
+        self.declare_parameter('waypoints_topic', 'vla/waypoints')
+        self.declare_parameter('waypoint_cmd_topic', 'vla/waypoint_cmd')
 
         gp = self.get_parameter
         self.map_frame = gp('map_frame').value
@@ -89,6 +94,8 @@ class VlaNavigator(Node):
             temperature=gp('vlm_temperature').value,
             logger=self.get_logger(),
         )
+        self.user_waypoints_file = os.path.expanduser(
+            str(gp('user_waypoints_file').value or '').strip())
         self.waypoint_map = self._load_waypoints(gp('waypoints_file').value)
         self.get_logger().info('已加载 %d 个命名航点: %s' % (
             len(self.waypoint_map.waypoints), ', '.join(self.waypoint_map.names()) or '无'))
@@ -101,6 +108,8 @@ class VlaNavigator(Node):
         self.tts_pub = self.create_publisher(String, gp('tts_topic').value, 10)
         # 给 dashboard / 调试用的可读状态(指令/决策/导航)
         self.status_pub = self.create_publisher(String, gp('status_topic').value, 10)
+        # 航点列表(JSON)广播: 启动/变更时发布, 并周期重发让晚连上的面板也能拿到
+        self.waypoints_pub = self.create_publisher(String, gp('waypoints_topic').value, 10)
 
         self.create_subscription(Image, gp('image_topic').value,
                                  self._image_cb, qos_profile_sensor_data)
@@ -110,6 +119,12 @@ class VlaNavigator(Node):
                                  self._instruction_cb, 10)
         self.create_subscription(Int8, gp('awake_topic').value,
                                  self._awake_cb, 10)
+        # dashboard 地图选点: 增/改/删命名航点(JSON), 持久化到 user_waypoints_file
+        self.create_subscription(String, gp('waypoint_cmd_topic').value,
+                                 self._waypoint_cmd_cb, 10)
+
+        self._publish_waypoints()
+        self.create_timer(3.0, self._publish_waypoints)
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -137,6 +152,10 @@ class VlaNavigator(Node):
 
     # ----------------------------------------------------------------- helpers
     def _load_waypoints(self, configured_path):
+        # 用户保存过的航点(dashboard 地图选点)优先 —— 标定一次, 重启/重编译后仍生效
+        if self.user_waypoints_file and os.path.isfile(self.user_waypoints_file):
+            self.get_logger().info('从用户航点文件加载: %s' % self.user_waypoints_file)
+            return WaypointMap.from_yaml(self.user_waypoints_file)
         path = configured_path
         if not path:
             try:
@@ -145,6 +164,64 @@ class VlaNavigator(Node):
             except Exception:  # noqa: BLE001  找不到 share 目录时退化为空航点
                 path = ''
         return WaypointMap.from_yaml(path)
+
+    def _publish_waypoints(self):
+        payload = {'waypoints': self.waypoint_map.to_dict_list(),
+                   'file': self.user_waypoints_file}
+        self.waypoints_pub.publish(String(data=json.dumps(payload, ensure_ascii=False)))
+
+    def _waypoint_cmd_cb(self, msg):
+        """dashboard 地图选点命令: {"action":"add|remove","name":...,"x","y","yaw","aliases"}.
+
+        add(同名即覆盖)/remove 后立即换入新航点表(原子换引用, 推理线程读到的
+        总是完整列表), 并整表写入 user_waypoints_file 持久化。
+        """
+        try:
+            cmd = json.loads(msg.data or '{}')
+        except ValueError:
+            self._status('[航点] 命令不是合法 JSON, 已忽略')
+            return
+        action = str(cmd.get('action', '')).lower()
+        name = str(cmd.get('name', '') or '').strip()
+        if not name:
+            self._status('[航点] 缺少航点名, 已忽略')
+            return
+
+        new_map = WaypointMap(list(self.waypoint_map.waypoints))
+        if action in ('add', 'update', 'upsert'):
+            try:
+                aliases = [str(a).strip() for a in (cmd.get('aliases') or [])
+                           if str(a).strip()]
+                wp = Waypoint(name=name,
+                              x=float(cmd.get('x')),
+                              y=float(cmd.get('y')),
+                              yaw=float(cmd.get('yaw', 0.0) or 0.0),
+                              aliases=aliases)
+            except (TypeError, ValueError):
+                self._status('[航点] "%s" 坐标无效, 已忽略' % name)
+                return
+            verb = '更新' if new_map.upsert(wp) else '新增'
+            detail = ' (x=%.2f, y=%.2f, yaw=%.2f)' % (wp.x, wp.y, wp.yaw)
+        elif action in ('remove', 'delete'):
+            if not new_map.remove(name):
+                self._status('[航点] 删除失败: 没有名为 "%s" 的航点' % name)
+                return
+            verb = '删除'
+            detail = ''
+        else:
+            self._status('[航点] 未知命令 "%s", 已忽略' % action)
+            return
+
+        self.waypoint_map = new_map
+        saved = ''
+        try:
+            if new_map.save(self.user_waypoints_file):
+                saved = ', 已存 %s' % self.user_waypoints_file
+        except OSError as exc:
+            saved = ', 但保存失败: %s' % exc
+        self._publish_waypoints()
+        self._status('[航点] %s "%s"%s, 共 %d 个%s' % (
+            verb, name, detail, len(new_map.waypoints), saved))
 
     def _say(self, text):
         if not text:
