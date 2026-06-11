@@ -6,6 +6,7 @@
   - wheeltec_line_follow  巡线
   - wheeltec_target_follow 目标跟随(KCF/YOLO/骨架) / YOLO 检测
   - wheeltec_vla_nav      VLA 语音导航 / 航点导航 / 路径跟随
+  - wheeltec_nav          Nav2 自主导航(分区房间 + 障碍, 路径规划/避障)
 
 例:
   ros2 launch wheeltec_gazebo gazebo.launch.py
@@ -76,7 +77,7 @@ def generate_launch_description():
             'world', default_value='wheeltec_slam_nav',
             description='世界名(worlds/<name>.world): wheeltec_slam_nav / '
                         'wheeltec_rrt_explore / wheeltec_line_follow / '
-                        'wheeltec_target_follow / wheeltec_vla_nav'),
+                        'wheeltec_target_follow / wheeltec_vla_nav / wheeltec_nav'),
         DeclareLaunchArgument('gui', default_value='true', description='是否打开 Gazebo GUI'),
         DeclareLaunchArgument('x', default_value='0.0', description='底盘出生点 X'),
         DeclareLaunchArgument('y', default_value='0.0', description='底盘出生点 Y'),

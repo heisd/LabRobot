@@ -59,6 +59,7 @@ CATALOG = {
             "wheeltec_line_follow": ["x:=-3.0", "y:=0.0"],
             "wheeltec_target_follow": [],
             "wheeltec_vla_nav": [],
+            "wheeltec_nav": ["x:=-3.0", "y:=-3.0"],
         },
     },
 }

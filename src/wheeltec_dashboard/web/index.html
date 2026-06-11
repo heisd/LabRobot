@@ -601,6 +601,7 @@
         <button class="subtab-btn" data-subtab="yolo">YOLO 检测</button>
         <button class="subtab-btn" data-subtab="body">骨架识别</button>
         <button class="subtab-btn" data-subtab="path">路径跟随</button>
+        <button class="subtab-btn" data-subtab="nav2">导航 Nav2</button>
         <button class="subtab-btn" data-subtab="vla">VLA 语音导航</button>
       </nav>
 
@@ -1030,6 +1031,7 @@
             </label>
             <button id="wp-save" type="button">保存到机器人</button>
             <button id="wp-use-cur" type="button">用当前位姿</button>
+            <button id="wp-goto-sel" type="button" class="mj-run">导航到选中点 (/goal_pose)</button>
             <button id="wp-gen" type="button">生成 YAML 片段</button>
             <button id="wp-copy" type="button">复制</button>
             <span id="wp-msg" class="muted"></span>
@@ -1041,6 +1043,66 @@
           </div>
           <div id="wp-list" class="wp-list"></div>
           <p class="hint"><strong>用法</strong>：先建好图并启动定位（<code>vla_bringup.launch.py</code> 含 Nav2 + map_server），地图会自动加载（也可点"加载地图"，服务默认 <code>/map_server/map</code>；SLAM 建图中则直接订阅 <code>/map</code> 实时刷新）。在地图上<strong>按下选位置、拖动定朝向</strong>（同 RViz 2D Goal Pose），或点"用当前位姿"取小车所在点；填名字点【保存到机器人】→ <code>vla_navigator</code> <strong>立即生效</strong>（说"去厨房"马上可用）并整表写入 <code>~/.ros/vla_waypoints.yaml</code> —— <strong>该文件重启/重编译后优先加载，下次无需重新设置</strong>。列表里【导航】直接发 <code>/goal_pose</code> 去该点（不经大模型），【删除】同步持久化。绿色箭头=小车实时位姿，蓝点=已存航点，黄色箭头=当前选点。需要重编译并重启 <code>vla_navigation</code> 后端一次以获得 <code>/vla/waypoints</code> 能力；地图原点带旋转的罕见情况暂不支持。</p>
+        </section>
+      </div>
+
+      <!-- 导航 (Nav2) -->
+      <div class="subtab-panel" id="subpanel-nav2">
+        <section class="card card-wide">
+          <h2>Nav2 自主导航 <span class="muted">(/initialpose · /goal_pose · nav_arbiter)</span></h2>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">定位 (/amcl_pose)</div>
+              <div id="nav2-amcl" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">导航仲裁 (nav_arbiter)</div>
+              <div id="nav2-arbiter" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">小车当前位姿 (map→base_footprint)</div>
+              <div id="nav2-cur" class="metric-value">—</div>
+            </div>
+          </div>
+          <p class="hint">需先启动 <strong>Nav2</strong>（含 AMCL + map_server + 规划/控制器，如 <code>vla_bringup.launch.py</code>
+            或 wheeltec 的 nav2 launch）并 rosbridge。<strong>仿真</strong>：用 <code>wheeltec_nav</code> 世界（"仿真启停"卡选它启动），
+            先 SLAM 建好图保存、再起 Nav2 定位与导航。地图/代价地图可在"系统总览"3D 视图看（<code>/map</code>，Fixed frame 仿真填 <code>odom</code>/定位后填 <code>map</code>）；
+            想在地图上点选目标，用下方的"VLA 航点管理"页（同 <code>/goal_pose</code>）。</p>
+        </section>
+
+        <section class="card card-wide">
+          <h2>① 初始位姿 <span class="muted">(2D Pose Estimate · /initialpose · AMCL)</span></h2>
+          <div class="mj-grid">
+            <label>X (m)<input id="nav2-init-x" type="number" step="0.05" value="0" /></label>
+            <label>Y (m)<input id="nav2-init-y" type="number" step="0.05" value="0" /></label>
+            <label>Yaw (°)<input id="nav2-init-yaw" type="number" step="1" value="0" /></label>
+          </div>
+          <div class="mj-actions">
+            <button id="nav2-init-cur" type="button">填入当前位姿</button>
+            <button id="nav2-init-send" class="mj-run" type="button">发布初始位姿</button>
+            <span id="nav2-init-msg" class="muted"></span>
+          </div>
+          <p class="hint">给 AMCL 一个初始位姿（等价 RViz 的 <em>2D Pose Estimate</em>），定位才能收敛、Nav2 才知道车在哪。
+            发布到 <code>/initialpose</code>（map 系，带默认协方差）。"填入当前位姿"取 <code>map→base_footprint</code> 的 TF（定位已大致就绪时用）。</p>
+        </section>
+
+        <section class="card card-wide">
+          <h2>② 导航目标 <span class="muted">(2D Nav Goal · /goal_pose)</span></h2>
+          <div class="mj-grid">
+            <label>X (m)<input id="nav2-goal-x" type="number" step="0.05" value="0" /></label>
+            <label>Y (m)<input id="nav2-goal-y" type="number" step="0.05" value="0" /></label>
+            <label>Yaw (°)<input id="nav2-goal-yaw" type="number" step="1" value="0" /></label>
+          </div>
+          <div class="mj-actions">
+            <button id="nav2-goal-cur" type="button">填入当前位姿</button>
+            <button id="nav2-goal-send" class="mj-run" type="button">发送导航目标</button>
+            <button id="nav2-cancel" class="rc-stop" type="button">取消导航</button>
+            <button class="arch-link" data-tab="function" data-subtab="vla">在地图上点选目标</button>
+            <span id="nav2-goal-msg" class="muted"></span>
+          </div>
+          <p class="hint">"发送导航目标"发布 <code>/goal_pose</code>（map 系，二次确认，<strong>小车会移动</strong>）；Nav2 的全局/局部规划器规划路径并实时避障。
+            "取消导航"发一帧零速到 <code>/cmd_vel_manual</code>，<code>nav_arbiter</code> 立即取消当前 <code>navigate_to_pose</code> 目标（同手动打断；
+            松手约 2s 后自主导航恢复可用）。常用目的地/地图点选见"VLA 航点管理"页。</p>
         </section>
       </div>
     </div>
@@ -1808,6 +1870,7 @@
               <option value="wheeltec_line_follow">wheeltec_line_follow（巡线 QR）</option>
               <option value="wheeltec_target_follow">wheeltec_target_follow（目标跟随/检测）</option>
               <option value="wheeltec_vla_nav">wheeltec_vla_nav（VLA 语音导航）</option>
+              <option value="wheeltec_nav">wheeltec_nav（Nav2 自主导航）</option>
             </select>
           </label>
           <button class="sim-start" data-key="chassis" data-world-sel="chassissim-world">启动仿真</button>

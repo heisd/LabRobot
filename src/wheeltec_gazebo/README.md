@@ -17,6 +17,7 @@ Wheeltec 移动底盘的 **Gazebo Classic 11** 仿真：一台自洽的差速底
 | `worlds/wheeltec_line_follow.world` | **巡线(QR 固定转角)**：带多个路口的红色线路 + 每个路口一张 QR 码 + 起点锥桶 |
 | `worlds/wheeltec_target_follow.world` | **目标跟随 / 检测**：行人(站/走) + 物体，供 KCF/YOLO/骨架跟随与 YOLO 检测 |
 | `worlds/wheeltec_vla_nav.world` | **VLA 语音导航 / 路径跟随**：分区房间 + 书架/餐桌/柜子/回充/访客等可命名地标 |
+| `worlds/wheeltec_nav.world` | **Nav2 自主导航**：grey_wall 分区房间 + 家具/障碍 + 过道，体现路径规划与代价地图避障 |
 | `models/qr_*` | **QR 码标识牌模型**：把 `simple_follower_ros2/qr_codes` 的 PNG 贴成 Gazebo 模型(立方体各面贴码) |
 | `launch/gazebo.launch.py` | 启动 Gazebo + 选定世界 + 生成底盘 |
 | `hooks/wheeltec_gazebo.dsv.in` | 把本包 `models/` 加进 `GAZEBO_MODEL_PATH`，让 `model://qr_*` 能解析 |
@@ -50,6 +51,7 @@ ros2 launch wheeltec_gazebo gazebo.launch.py world:=wheeltec_line_follow x:=-3.0
 ros2 launch wheeltec_gazebo gazebo.launch.py world:=wheeltec_rrt_explore x:=-3.0 y:=-3.0
 ros2 launch wheeltec_gazebo gazebo.launch.py world:=wheeltec_target_follow
 ros2 launch wheeltec_gazebo gazebo.launch.py world:=wheeltec_vla_nav
+ros2 launch wheeltec_gazebo gazebo.launch.py world:=wheeltec_nav x:=-3.0 y:=-3.0
 ```
 
 起来后验证：
@@ -84,6 +86,9 @@ ros2 topic pub --once /cmd_vel geometry_msgs/Twist "{linear: {x: 0.2}}"  # 前�
 - **跟随 / 检测**：`world:=wheeltec_target_follow`，起 KCF/YOLO/bodyreader 跟随场内行人。
 - **VLA 语音导航 / 路径跟随**：`world:=wheeltec_vla_nav`，起 `vla_navigation` 的 vla_navigator，
   对房间里的书架/餐桌/柜子/回充区等地标做自然语言导航；路径录制/回放(wheeltec_path_follow)同此世界。
+- **Nav2 自主导航**：`world:=wheeltec_nav`，先 SLAM 建图并保存，再起 Nav2(AMCL + 规划/控制器)。
+  在 Dashboard“功能模块→导航 (Nav2)”页设初始位姿、发 `/goal_pose`(可在地图上点选)；规划器绕家具、
+  穿过道到目标。
 
 建议各功能节点都加 `use_sim_time:=true`。
 

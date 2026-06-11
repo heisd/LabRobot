@@ -19,6 +19,9 @@
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>rosidl_runtime_py</exec_depend>
   <exec_depend>std_msgs</exec_depend>
+  <!-- sim_bringup.launch.py 按需包含的仿真包(运行期解析其 share 目录) -->
+  <exec_depend>wheeltec_gazebo</exec_depend>
+  <exec_depend>lebai_gazebo</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

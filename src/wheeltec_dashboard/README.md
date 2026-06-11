@@ -39,6 +39,24 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
 ```
 
+**仿真一键 bringup**（Gazebo 仿真 + 面板一起拉起，机器无需真车）：
+
+```bash
+# 只起面板(含 sim_launcher)，再在网页"仿真 (Gazebo)"分组里选世界点"启动仿真"
+ros2 launch wheeltec_dashboard sim_bringup.launch.py
+
+# 或顺带自动起一个仿真世界
+ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=chassis chassis_world:=wheeltec_line_follow
+ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=arm arm_world:=grab_yolo
+```
+
+> 逐页验证清单：① 打开 `http://<IP>:8080/` 顶栏显示"已连接"；② "仿真 (Gazebo)→机械臂仿真/
+> 机器人底盘仿真"页选世界【启动仿真】，状态徽标变"运行中"，几秒后场景画面出现；③ 机械臂：
+> "监控与抓取"页能看 `/joint_states`、动关节，"系统总览"3D 视图(Fixed frame=`world`)能看关节运动；
+> ④ 底盘：用"底盘控制"页遥控 `/cmd_vel`，3D 视图(Fixed frame=`odom`)能看小车行走与 `/scan`；
+> ⑤ 巡线：起 `line_follow_qr_fixed`，车沿红线走、路口读 QR 转向；⑥ 导航：`wheeltec_nav` 世界
+> 起 Nav2，"功能模块→导航 (Nav2)"页设初始位姿、地图点选目标发 `/goal_pose`，车自主到点。
+
 然后在浏览器打开 `http://<机器人IP>:8080/`，页面默认会连接到
 `ws://<同一host>:9090` (rosbridge)。
 
@@ -88,6 +106,7 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
   - **底盘控制**：速度控制（遥控 + 安全等级）、自动回充、RGB 灯带、参数调节
   - **功能模块**（含子页面）：巡线、KCF 跟踪、YOLO 检测、骨架识别、
     路径跟随（wheeltec_path_follow 录制/回放可视化）、
+    路径跟随、导航 (Nav2)（初始位姿 /initialpose + 目标 /goal_pose，可地图点选 + 取消）、
     VLA 语音导航（含航点标定助手）
   - **建图**（含子页面，wheeltec_robot_slam 四种 SLAM 方式 + RRT 自主探索）：
     GMapping、Cartographer、Slam Toolbox、ORB-SLAM2（RGB-D 视觉）、
@@ -113,7 +132,7 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
     3D 视图 Fixed frame 仿真填 `odom`）。wheeltec_gazebo **按功能分多个世界**（文件名即功能）：
     `wheeltec_slam_nav`(建图/导航/避障)、`wheeltec_rrt_explore`(RRT 探索)、
     `wheeltec_line_follow`(不带随机分叉的 QR 巡线)、`wheeltec_target_follow`(跟随/检测)、
-    `wheeltec_vla_nav`(VLA 语音导航/路径跟随)。
+    `wheeltec_vla_nav`(VLA 语音导航/路径跟随)、`wheeltec_nav`(Nav2 自主导航)。
   - 也可纯命令行启动：`ros2 launch lebai_gazebo gazebo_grab.launch.py world:=grab_yolo` /
     `ros2 launch wheeltec_gazebo gazebo.launch.py world:=wheeltec_line_follow x:=-3.0 y:=0.0`。
   - `sim_launcher` 默认随 dashboard launch 启动（`enable_sim_launcher:=true`）；设为

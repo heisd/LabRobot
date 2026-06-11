@@ -22,6 +22,7 @@
   let armVlmConfirmPub = null; // /vlm/confirm publisher (确认/取消抓取)
   let kcfBboxPub = null;       // /kcf_node/select_bbox publisher (KCF 手动框选)
   let simLaunchPub = null;     // /sim_launch/cmd publisher (网页一键启停 Gazebo 仿真)
+  let initialPosePub = null;   // /initialpose publisher (Nav2 2D Pose Estimate · AMCL)
   let rechargeFlagPub = null;  // /robot_recharge_flag publisher (自动回充 1开/0关)
   let securityPub = null;      // /chassis_security publisher (固件安全等级 0/1)
   let bodyModePub = null;      // /mode publisher (骨架识别 1=姿态交互 2=跟随)
@@ -162,6 +163,10 @@
     if (simLaunchPub) {
       try { simLaunchPub.unadvertise(); } catch (_) { /* ignore */ }
       simLaunchPub = null;
+    }
+    if (initialPosePub) {
+      try { initialPosePub.unadvertise(); } catch (_) { /* ignore */ }
+      initialPosePub = null;
     }
     if (rechargeFlagPub) {
       try { rechargeFlagPub.unadvertise(); } catch (_) { /* ignore */ }
@@ -379,6 +384,17 @@
       ros, name: '/goal_pose', messageType: 'geometry_msgs/msg/PoseStamped',
     });
     goalPosePub.advertise();
+    // Nav2 初始位姿 (AMCL 2D Pose Estimate) + 定位状态。
+    initialPosePub = new ROSLIB.Topic({
+      ros, name: '/initialpose', messageType: 'geometry_msgs/msg/PoseWithCovarianceStamped',
+    });
+    initialPosePub.advertise();
+    sub('/amcl_pose', 'geometry_msgs/msg/PoseWithCovarianceStamped', (msg) => {
+      const p = (msg.pose && msg.pose.pose) || {};
+      const pos = p.position || {}; const ori = p.orientation || { x: 0, y: 0, z: 0, w: 1 };
+      const el = $('nav2-amcl');
+      if (el) el.textContent = `已定位 · x=${(+pos.x).toFixed(2)} y=${(+pos.y).toFixed(2)} yaw=${(yawFromQuat(ori) * 180 / Math.PI).toFixed(1)}°`;
+    }, { throttle_rate: 500 });
     // 后端 vla_navigator 广播的航点列表（变更即发 + 3s 周期，晚连也能拿到）
     sub('/vla/waypoints', 'std_msgs/msg/String', (msg) => {
       let obj = null;
@@ -1849,6 +1865,63 @@
     });
   }
 
+  // ---------- Nav2 导航 (/initialpose · /goal_pose · 取消) ----------
+  function nav2CurPose() {
+    const tf = wpTf ? wpTf.lookup('base_footprint') : null;
+    if (!tf) return null;
+    return { x: tf.translation.x, y: tf.translation.y, yaw: yawFromQuat(tf.rotation) };
+  }
+  function nav2ReadXYYaw(prefix) {
+    return {
+      x: parseFloat($(prefix + '-x').value) || 0,
+      y: parseFloat($(prefix + '-y').value) || 0,
+      yaw: (parseFloat($(prefix + '-yaw').value) || 0) * Math.PI / 180,
+    };
+  }
+  function nav2FillCur(prefix, msgId) {
+    const p = nav2CurPose();
+    if (!p) { setCardMsg(msgId, '拿不到 map→base_footprint TF（定位未就绪？）'); return; }
+    $(prefix + '-x').value = p.x.toFixed(2);
+    $(prefix + '-y').value = p.y.toFixed(2);
+    $(prefix + '-yaw').value = (p.yaw * 180 / Math.PI).toFixed(0);
+    const cur = $('nav2-cur');
+    if (cur) cur.textContent = `x=${p.x.toFixed(2)} y=${p.y.toFixed(2)} yaw=${(p.yaw * 180 / Math.PI).toFixed(1)}°`;
+    setCardMsg(msgId, '已填入当前位姿');
+  }
+  function quatFromYaw(yaw) { return { x: 0, y: 0, z: Math.sin(yaw / 2), w: Math.cos(yaw / 2) }; }
+  (function wireNav2() {
+    const initCur = $('nav2-init-cur'); if (initCur) initCur.addEventListener('click', () => nav2FillCur('nav2-init', 'nav2-init-msg'));
+    const goalCur = $('nav2-goal-cur'); if (goalCur) goalCur.addEventListener('click', () => nav2FillCur('nav2-goal', 'nav2-goal-msg'));
+    const initSend = $('nav2-init-send');
+    if (initSend) initSend.addEventListener('click', () => {
+      if (!initialPosePub) { setCardMsg('nav2-init-msg', '未连接 rosbridge'); return; }
+      const p = nav2ReadXYYaw('nav2-init');
+      const cov = new Array(36).fill(0); cov[0] = 0.25; cov[7] = 0.25; cov[35] = 0.0685;
+      initialPosePub.publish(new ROSLIB.Message({
+        header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
+        pose: { pose: { position: { x: p.x, y: p.y, z: 0 }, orientation: quatFromYaw(p.yaw) }, covariance: cov },
+      }));
+      setCardMsg('nav2-init-msg', `已发布 /initialpose (x=${p.x.toFixed(2)}, y=${p.y.toFixed(2)})`);
+    });
+    const goalSend = $('nav2-goal-send');
+    if (goalSend) goalSend.addEventListener('click', () => {
+      if (!goalPosePub) { setCardMsg('nav2-goal-msg', '未连接 rosbridge'); return; }
+      const p = nav2ReadXYYaw('nav2-goal');
+      if (!window.confirm(`导航到 x=${p.x.toFixed(2)}, y=${p.y.toFixed(2)}？小车将开始移动。`)) return;
+      goalPosePub.publish(new ROSLIB.Message({
+        header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
+        pose: { position: { x: p.x, y: p.y, z: 0 }, orientation: quatFromYaw(p.yaw) },
+      }));
+      setCardMsg('nav2-goal-msg', `已发布 /goal_pose (x=${p.x.toFixed(2)}, y=${p.y.toFixed(2)})`);
+    });
+    const cancel = $('nav2-cancel');
+    if (cancel) cancel.addEventListener('click', () => {
+      if (!cmdVelManualPub) { setCardMsg('nav2-goal-msg', '未连接 rosbridge'); return; }
+      cmdVelManualPub.publish(new ROSLIB.Message({ linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } }));
+      setCardMsg('nav2-goal-msg', '已发零速到 /cmd_vel_manual（nav_arbiter 取消当前导航目标）');
+    });
+  })();
+
   // ---------- Lidar status (double_lidar_fusion) ----------
   const LIDAR_SRC = [
     { key: 'fused', input: 'lidar-fused', def: '/scan' },
@@ -1991,12 +2064,13 @@
     const stripped = text.replace(/^(MANUAL|FUNC|AUTO):\s*/i, '');
     const state = /^MANUAL/i.test(text) ? 'MANUAL'
       : (/^FUNC/i.test(text) ? 'FUNC' : 'AUTO');
-    const el = $('vla-arbiter');
-    if (el) {
+    ['vla-arbiter', 'nav2-arbiter'].forEach((id) => {
+      const el = $(id);
+      if (!el) return;
       el.textContent = stripped || '—';
       el.classList.remove('ok', 'warn');
       el.classList.add(state === 'AUTO' ? 'ok' : 'warn');
-    }
+    });
     if (state !== navArbState) {
       const first = navArbState === '';   // 首条状态只记录不渲染成"切换"
       navArbState = state;
@@ -2793,6 +2867,24 @@
     wpSel = { x: wpPose.x, y: wpPose.y, yaw: wpPose.yaw };
     updateWpSelText();
     wpRedraw();
+  });
+
+  // 直接把地图上"选中点"作为 Nav2 目标发出（无需先存航点）——
+  // 等价 RViz 的 2D Nav Goal：地图上按下选点、拖动定朝向，再点此按钮发 /goal_pose。
+  const wpGotoSel = $('wp-goto-sel');
+  if (wpGotoSel) wpGotoSel.addEventListener('click', () => {
+    if (!goalPosePub) { setCardMsg('wp-msg', '未连接 rosbridge'); return; }
+    const pose = wpSel || wpPose;
+    if (!pose) { alert('请先在地图上选点（按下选位置、拖动定朝向），或用当前位姿'); return; }
+    if (!window.confirm(`导航到选中点 x=${pose.x.toFixed(2)}, y=${pose.y.toFixed(2)}？小车将开始移动。`)) return;
+    goalPosePub.publish(new ROSLIB.Message({
+      header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
+      pose: {
+        position: { x: +pose.x, y: +pose.y, z: 0 },
+        orientation: { x: 0, y: 0, z: Math.sin(pose.yaw / 2), w: Math.cos(pose.yaw / 2) },
+      },
+    }));
+    setCardMsg('wp-msg', `已发布 /goal_pose（选中点 x=${pose.x.toFixed(2)}, y=${pose.y.toFixed(2)}）`);
   });
 
   // 航点列表：来自后端广播，带"导航 / 删除"操作（事件委托，重渲染不丢绑定）。
