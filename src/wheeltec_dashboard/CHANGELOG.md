@@ -6,6 +6,33 @@
 
 ---
 
+## 第 20 轮 — 建图页签新增"RRT 自主探索"子页（wheeltec_robot_rrt / wheeltec_rrt_msg）
+
+### RRT 自主探索子页
+
+- "建图"页签新增第五个子页 **RRT 自主探索**（系统总览架构卡加"RRT 探索"
+  入口芯片），把 `wheeltec_robot_rrt`（接口包 `wheeltec_rrt_msg`）的全自主
+  建图接入面板。
+- **边界选点搬进面板**：探索由 `/clicked_point` 的 5 个点引导（前 4 个为
+  边界多边形顶点·逆时针，第 5 个为 RRT 起始点）——原本要在 RViz 用
+  Publish Point 点，现在**直接在面板地图画布上点**，每点一个即发布；
+  第 5 个点（探索立即开始、小车自主移动）有二次确认。已点的点画黄线
+  多边形 + 绿色起始点。
+- **一键方形边界**：填半边长（默认 5m）以小车当前位姿为中心自动发布
+  4 顶点 + 起始点（逆时针，与 boundary_publisher.py 同序），免手点。
+- **前沿点可视化**：订阅 `/detected_frontiers`（RRT 检出前沿流，节流
+  200ms、保留最近 300 个画淡蓝点）与 `/filtered_goal_points`
+  （`wheeltec_rrt_msg/msg/PointArray`，filter 聚类后的候选目标画红点）；
+  指标卡显示候选目标数与新鲜度。
+- **节点判活**：`/global_rrt`、`/local_rrt`、`/filter`、`/assigner` 加入
+  建图页统一的 `[data-mpnode]` getNodes 轮询与事件时间线（RRT 不算 SLAM
+  模式，不参与"当前建图模式"推断——它需配合 SLAM 一起跑）。
+- 注意事项写进子页提示：RRT 节点端收下的点无法撤回（重选需重启
+  rrt_exploration launch）、边界须把小车圈在内、手动遥控经 nav_arbiter
+  可打断当前探索目标、包名 wheeltec_robot_rrt（目录带 2）。
+
+---
+
 ## 第 19 轮 — 导航栏新增"建图"页签（wheeltec_robot_slam 四种 SLAM 方式）
 
 ### 建图页签

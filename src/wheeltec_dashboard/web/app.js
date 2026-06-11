@@ -29,6 +29,7 @@
   let wpCmdPub = null;         // /vla/waypoint_cmd publisher (航点增删, 后端持久化)
   let goalPosePub = null;      // /goal_pose publisher (航点列表"导航"按钮直达)
   let chatMsgPub = null;       // /chat_message publisher (AI 对话·话题流式模式)
+  let rrtClickPub = null;      // /clicked_point publisher (RRT 探索边界选点, 等价 RViz Publish Point)
   let lidarSubs = [];      // per-source LaserScan subs (managed separately so
                            // the lidar card can re-subscribe on topic change)
   const lidarLast = {};    // key -> { time, points, min }
@@ -187,6 +188,10 @@
     if (chatMsgPub) {
       try { chatMsgPub.unadvertise(); } catch (_) { /* ignore */ }
       chatMsgPub = null;
+    }
+    if (rrtClickPub) {
+      try { rrtClickPub.unadvertise(); } catch (_) { /* ignore */ }
+      rrtClickPub = null;
     }
     // 航点列表属于上一个连接的后端, 清掉避免误导; 地图位图保留(重连通常同一张图)
     vlaWaypoints = [];
@@ -513,6 +518,28 @@
     kcfBboxPub.advertise();
     // YOLO 抓取子页: 把识别到的物体渲染成按钮, 点击设为抓取目标(target_label)。
     sub('/yolo/detections', 'yolo_msgs/msg/DetectionArray', renderArmYoloButtons, { throttle_rate: 300 });
+
+    // RRT 自主探索 (wheeltec_robot_rrt / wheeltec_rrt_msg)：边界选点发布 +
+    // 前沿点流订阅。上一次连接的前沿数据属于旧会话，连接时清掉。
+    rrtClickPub = new ROSLIB.Topic({
+      ros, name: '/clicked_point', messageType: 'geometry_msgs/msg/PointStamped',
+    });
+    rrtClickPub.advertise();
+    rrtDetected = [];
+    rrtFrontiers = [];
+    rrtFrontTime = 0;
+    // RRT 树检出的前沿点（流式单点，高频 → 节流并只留最近 300 个画淡蓝点）
+    sub('/detected_frontiers', 'geometry_msgs/msg/PointStamped', (msg) => {
+      const p = (msg && msg.point) || null;
+      if (!p) return;
+      rrtDetected.push({ x: +p.x || 0, y: +p.y || 0 });
+      if (rrtDetected.length > 300) rrtDetected.splice(0, rrtDetected.length - 300);
+    }, { throttle_rate: 200 });
+    // filter 聚类过滤后的候选探索目标（assigner 的输入）
+    sub('/filtered_goal_points', 'wheeltec_rrt_msg/msg/PointArray', (msg) => {
+      rrtFrontiers = ((msg && msg.points) || []).map((p) => ({ x: +p.x || 0, y: +p.y || 0 }));
+      rrtFrontTime = Date.now();
+    }, { throttle_rate: 500 });
 
     // 建图 (wheeltec_robot_slam): Cartographer 跟踪位姿 + ORB-SLAM2 相机位姿。
     sub('/tracked_pose', 'geometry_msgs/msg/PoseStamped', (msg) => {
@@ -3107,6 +3134,10 @@
     '/slam_toolbox': 'Slam Toolbox (slam_toolbox)',
     '/orb_slam2_rgbd': 'ORB-SLAM2 (orb_slam2_rgbd)',
     '/octomap_server': 'ORB-SLAM2 八叉树 (octomap_server)',
+    '/global_rrt': 'RRT 探索·全局检测 (global_rrt)',
+    '/local_rrt': 'RRT 探索·局部检测 (local_rrt)',
+    '/filter': 'RRT 探索·前沿过滤 (filter)',
+    '/assigner': 'RRT 探索·任务分配 (assigner)',
   };
   // 模式归属判定只看各自的主节点（栅格/octomap 是从属节点，单独亮灯）。
   const MP_MODES = [
@@ -3295,6 +3326,215 @@
     const v = $('mp-log');
     if (v) v.innerHTML = '';
   });
+
+  // ---- RRT 自主探索 (wheeltec_robot_rrt + wheeltec_rrt_msg 接口包) ----
+  // 探索由 /clicked_point 的 5 个点引导：前 4 个为边界多边形顶点（逆时针、
+  // 须把小车圈在内），第 5 个为 RRT 起始点（发布后探索立即开始）。这里把
+  // RViz "Publish Point" 的交互搬进面板：点地图画布即发点，并叠加显示
+  // RRT 检出前沿(/detected_frontiers)与候选目标(/filtered_goal_points)。
+  let rrtPicked = [];      // 本面板已发布的选点 [{x,y}]（节点端无法撤回，仅显示用）
+  let rrtDetected = [];    // /detected_frontiers 最近 300 个检出前沿
+  let rrtFrontiers = [];   // /filtered_goal_points 当前候选目标
+  let rrtFrontTime = 0;    // 最近一次候选目标更新时间
+
+  function setRrtStatus(text) {
+    const el = $('mp-rrt-status');
+    if (el) el.textContent = text || '';
+  }
+
+  function rrtPublishPoint(x, y) {
+    if (!rrtClickPub) { setRrtStatus('未连接 rosbridge'); return false; }
+    rrtClickPub.publish(new ROSLIB.Message({
+      header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
+      point: { x, y, z: 0 },
+    }));
+    return true;
+  }
+
+  function updateRrtPickText() {
+    const el = $('mp-rrt-pick');
+    if (!el) return;
+    const n = rrtPicked.length;
+    el.classList.remove('ok', 'warn');
+    if (!n) {
+      el.textContent = '0/5 — 在地图上点第 1 个边界顶点（逆时针圈定区域）';
+    } else if (n < 4) {
+      el.textContent = n + '/5 — 继续点边界顶点（逆时针）';
+      el.classList.add('warn');
+    } else if (n === 4) {
+      el.textContent = '4/5 — 最后在小车附近点起始点（发布后探索开始）';
+      el.classList.add('warn');
+    } else {
+      el.textContent = '5/5 — 边界与起始点已发布，探索进行中';
+      el.classList.add('ok');
+    }
+  }
+
+  function mpRrtRedraw() {
+    const canvas = $('mp-rrt-map');
+    if (!canvas || !canvas.offsetParent) return;
+    const ctx = canvas.getContext('2d');
+    const wrap = canvas.parentElement;
+    const maxW = Math.max(240, Math.min((wrap && wrap.clientWidth) || 640, 900));
+    if (!wpMap) {
+      canvas._view = null;
+      if (canvas.width !== maxW || canvas.height !== 160) { canvas.width = maxW; canvas.height = 160; }
+      ctx.fillStyle = '#161b22';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '13px sans-serif';
+      ctx.fillText('等待 /map …（先启动 SLAM/探索 launch，出图后在这里点 5 个点圈定探索区域）', 12, 84);
+      return;
+    }
+    const s = maxW / wpMap.w;
+    const h = Math.max(140, Math.round(wpMap.h * s));
+    if (canvas.width !== maxW || canvas.height !== h) {
+      canvas.width = maxW;
+      canvas.height = h;
+    }
+    canvas._view = { s, h };   // pointer 事件换算用
+    const toC = (wx, wy) => ({
+      x: (wx - wpMap.ox) / wpMap.res * s,
+      y: h - (wy - wpMap.oy) / wpMap.res * s,
+    });
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, maxW, h);
+    ctx.drawImage(wpMap.bmp, 0, 0, maxW, h);
+    // RRT 检出前沿（淡蓝小点，最近 300 个）
+    ctx.fillStyle = 'rgba(88, 166, 255, 0.45)';
+    rrtDetected.forEach((p) => {
+      const c = toC(p.x, p.y);
+      ctx.fillRect(c.x - 1.5, c.y - 1.5, 3, 3);
+    });
+    // 过滤后的候选探索目标（红点）
+    ctx.fillStyle = '#f85149';
+    rrtFrontiers.forEach((p) => {
+      const c = toC(p.x, p.y);
+      ctx.beginPath(); ctx.arc(c.x, c.y, 4, 0, Math.PI * 2); ctx.fill();
+    });
+    // 边界多边形（黄线 + 顶点）与起始点（绿点）
+    const bnd = rrtPicked.slice(0, 4);
+    if (bnd.length) {
+      ctx.strokeStyle = '#d29922';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      bnd.forEach((p, i) => {
+        const c = toC(p.x, p.y);
+        if (!i) ctx.moveTo(c.x, c.y);
+        else ctx.lineTo(c.x, c.y);
+      });
+      if (bnd.length === 4) ctx.closePath();
+      ctx.stroke();
+      ctx.fillStyle = '#d29922';
+      bnd.forEach((p) => {
+        const c = toC(p.x, p.y);
+        ctx.beginPath(); ctx.arc(c.x, c.y, 3.5, 0, Math.PI * 2); ctx.fill();
+      });
+    }
+    if (rrtPicked.length >= 5) {
+      const c = toC(rrtPicked[4].x, rrtPicked[4].y);
+      ctx.fillStyle = '#3fb950';
+      ctx.beginPath(); ctx.arc(c.x, c.y, 5, 0, Math.PI * 2); ctx.fill();
+    }
+    // 小车实时位姿（绿色箭头）
+    const tf = wpTf ? wpTf.lookup('base_footprint') : null;
+    if (tf) {
+      drawWpArrow(ctx, toC(tf.translation.x, tf.translation.y),
+        yawFromQuat(tf.rotation), '#3fb950', 9);
+    }
+  }
+
+  // 画布单击选点（不用拖朝向——/clicked_point 只要位置）
+  (function initRrtMapPick() {
+    const canvas = $('mp-rrt-map');
+    if (!canvas) return;
+    canvas.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const view = canvas._view;
+      if (!view || !wpMap) {
+        setRrtStatus('还没有地图——先启动 SLAM/探索 launch，等 /map 出现再选点');
+        return;
+      }
+      if (rrtPicked.length >= 5) {
+        setRrtStatus('已发布 5 个点；重选需重启 rrt_exploration 后点【重新选点】再点图');
+        return;
+      }
+      const r = canvas.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      const cx = (e.clientX - r.left) * (canvas.width / r.width);
+      const cy = (e.clientY - r.top) * (canvas.height / r.height);
+      const wx = cx / view.s * wpMap.res + wpMap.ox;
+      const wy = (view.h - cy) / view.s * wpMap.res + wpMap.oy;
+      if (rrtPicked.length === 4 &&
+          !window.confirm('发布起始点 (x=' + wx.toFixed(2) + ', y=' + wy.toFixed(2) +
+            ')？RRT 收到第 5 个点后探索立即开始、小车将自主移动。')) return;
+      if (!rrtPublishPoint(wx, wy)) return;
+      rrtPicked.push({ x: wx, y: wy });
+      addMpLog('> RRT 选点 ' + rrtPicked.length + '/5 → /clicked_point (x=' + wx.toFixed(2) +
+        ', y=' + wy.toFixed(2) + ')' + (rrtPicked.length === 5 ? '（探索开始）' : ''));
+      setRrtStatus('');
+      updateRrtPickText();
+      mpRrtRedraw();
+      e.preventDefault();
+    });
+  })();
+
+  // 一键方形边界：以小车当前位姿为中心发 4 顶点（逆时针，与
+  // boundary_publisher.py 同序）+ 小车位置为第 5 个起始点。
+  const mpRrtSquare = $('mp-rrt-square');
+  if (mpRrtSquare) mpRrtSquare.addEventListener('click', () => {
+    if (!rrtClickPub) { setRrtStatus('未连接 rosbridge'); return; }
+    const tf = wpTf ? wpTf.lookup('base_footprint') : null;
+    if (!tf) { setRrtStatus('没有小车位姿（map→base_footprint TF）——SLAM 跑起来了吗？'); return; }
+    const half = Math.max(1, +((($('mp-rrt-size') || {}).value) || 5));
+    const cx = tf.translation.x;
+    const cy = tf.translation.y;
+    if (!window.confirm('以小车 (x=' + cx.toFixed(2) + ', y=' + cy.toFixed(2) + ') 为中心发布 ±' +
+        half + 'm 方形边界 + 起始点？发布完成后探索立即开始、小车将自主移动。')) return;
+    const pts = [
+      { x: cx + half, y: cy + half }, { x: cx - half, y: cy + half },
+      { x: cx - half, y: cy - half }, { x: cx + half, y: cy - half },
+      { x: cx, y: cy },
+    ];
+    for (const p of pts) {
+      if (!rrtPublishPoint(p.x, p.y)) return;
+    }
+    rrtPicked = pts;
+    addMpLog('> RRT 方形边界已发布（中心 x=' + cx.toFixed(2) + ' y=' + cy.toFixed(2) +
+      '，±' + half + 'm，探索开始）');
+    setRrtStatus('方形边界 + 起始点已发布');
+    updateRrtPickText();
+    mpRrtRedraw();
+  });
+
+  const mpRrtReset = $('mp-rrt-reset');
+  if (mpRrtReset) mpRrtReset.addEventListener('click', () => {
+    rrtPicked = [];
+    setRrtStatus('已清面板选点显示（RRT 节点端已收的点不会撤回，需重启 rrt_exploration 再重点）');
+    updateRrtPickText();
+    mpRrtRedraw();
+  });
+
+  // RRT 子页周期刷新（仅画布可见时）：候选目标数/新鲜度 + 选点进度 + 重绘。
+  setInterval(() => {
+    const canvas = $('mp-rrt-map');
+    if (!canvas || !canvas.offsetParent) return;
+    const fEl = $('mp-rrt-frontiers');
+    if (fEl) {
+      if (!rrtFrontTime) {
+        fEl.textContent = ros ? '—（filter 未发布）' : '未连接';
+        fEl.classList.remove('ok');
+      } else {
+        const age = (Date.now() - rrtFrontTime) / 1000;
+        fEl.classList.toggle('ok', age < 5 && rrtFrontiers.length > 0);
+        fEl.textContent = rrtFrontiers.length + ' 个' +
+          (age < 5 ? '（实时）' : '（' + Math.round(age) + ' 秒前）');
+      }
+    }
+    updateRrtPickText();
+    if (!wpMap && ros && !wpMapTried) { wpMapTried = true; fetchWpMap(); }
+    mpRrtRedraw();
+  }, 1000);
 
   // ---------- 机械臂 (Lebai LM3: lebai_driver + grab_demo) ----------
   // 状态显示走 /robot_status、/gripper_status、/joint_states 等话题；控制走

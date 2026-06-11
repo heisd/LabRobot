@@ -1411,6 +1411,12 @@ main {
   display: block;
   width: 100%;   /* 路径跟随/建图页：只看不取点，无需 crosshair */
 }
+#mp-rrt-map {
+  display: block;
+  width: 100%;
+  cursor: crosshair;    /* RRT 探索：点 5 个点圈定边界 */
+  touch-action: none;
+}
 .wp-list {
   display: flex;
   flex-direction: column;

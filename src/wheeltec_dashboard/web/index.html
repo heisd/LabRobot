@@ -61,6 +61,7 @@
               <button class="arch-link" data-tab="components">语音 / 相机</button>
               <button class="arch-link" data-tab="control">速度控制</button>
               <button class="arch-link" data-tab="mapping">SLAM 建图</button>
+              <button class="arch-link" data-tab="mapping" data-mapsubtab="rrt">RRT 探索</button>
               <button class="arch-link" data-tab="function" data-subtab="line">巡线</button>
               <button class="arch-link" data-tab="function" data-subtab="kcf">KCF 跟随</button>
               <button class="arch-link" data-tab="function" data-subtab="yolo">YOLO 检测</button>
@@ -1056,6 +1057,7 @@
         <button class="map-subtab-btn" data-mapsubtab="carto">Cartographer</button>
         <button class="map-subtab-btn" data-mapsubtab="toolbox">Slam Toolbox</button>
         <button class="map-subtab-btn" data-mapsubtab="orb">ORB-SLAM2 (视觉)</button>
+        <button class="map-subtab-btn" data-mapsubtab="rrt">RRT 自主探索</button>
       </nav>
 
       <!-- ---- GMapping ---- -->
@@ -1179,6 +1181,62 @@
             （节点工作目录，下次以 <code>load_map:=true</code> + <code>map_file</code> 参数加载）；
             【保存点云】调 <code>/RGBD/save_cloud</code> 把稠密点云存为 PCD（目录由参数 <code>savePCDDirectory</code> 指定，默认 <code>/data/</code>）。
             视觉建图不产出 Nav2 直接可用的栅格图——2D 导航地图请用前三种激光建图方式。</p>
+        </section>
+      </div>
+
+      <!-- ---- RRT 自主探索 ---- -->
+      <div class="map-subtab-panel" id="map-subpanel-rrt">
+        <section class="card card-wide">
+          <h2>RRT 自主探索 <span class="muted">(wheeltec_robot_rrt · wheeltec_rrt_msg · 全自主建图)</span></h2>
+          <div class="wp-map-toolbar">
+            <label>方形边界半边长 (m)
+              <input id="mp-rrt-size" type="number" min="1" max="50" step="0.5" value="5" />
+            </label>
+            <button id="mp-rrt-square" type="button">以小车为中心发布方形边界</button>
+            <button id="mp-rrt-reset" type="button">重新选点（仅清显示）</button>
+            <span id="mp-rrt-status" class="muted"></span>
+          </div>
+          <div class="wp-map-wrap">
+            <canvas id="mp-rrt-map"></canvas>
+          </div>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">边界选点（→ /clicked_point）</div>
+              <div id="mp-rrt-pick" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">候选探索目标 (/filtered_goal_points)</div>
+              <div id="mp-rrt-frontiers" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">全局 RRT (/global_rrt)</div>
+              <div class="metric-value" data-mpnode="/global_rrt">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">局部 RRT (/local_rrt)</div>
+              <div class="metric-value" data-mpnode="/local_rrt">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">前沿过滤 (/filter)</div>
+              <div class="metric-value" data-mpnode="/filter">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">任务分配 (/assigner)</div>
+              <div class="metric-value" data-mpnode="/assigner">—</div>
+            </div>
+          </div>
+          <p class="hint"><strong>全自主建图</strong>：RRT 在探索边界内随机生长发现"前沿"（已知/未知区域交界，
+            <code>/detected_frontiers</code>），<code>filter</code> 聚类过滤出候选目标（<code>/filtered_goal_points</code>，
+            <code>wheeltec_rrt_msg/PointArray</code>），<code>assigner</code> 自动挑收益最高的点经 Nav2 派发——小车自己跑遍未知区域，建完用"建图"页通用命令保存地图。
+            <strong>启动</strong>：一键 <code>ros2 launch wheeltec_robot_rrt wheeltec_rrt_slam.launch.py</code>（底盘 + SLAM + 探索），
+            或分步 <code>nav2_slam_launch.py</code> + <code>rrt_exploration.launch.py</code>（含 global/local RRT + filter + assigner；
+            注意<strong>包名是 wheeltec_robot_rrt</strong>，目录名带 2）。
+            <strong>圈定探索区域</strong>：等上图出现地图后（SLAM 已跑起来），<strong>直接在图上依次点 5 个点</strong>——前 4 个为边界多边形顶点
+            （<strong>逆时针</strong>，必须把小车圈在内），第 5 个点在小车附近作为 RRT 起始点，每点一个即发布到 <code>/clicked_point</code>
+            （等价 RViz Publish Point，<strong>第 5 个点发布后探索立即开始</strong>）；或填半边长点【方形边界】一键以小车为中心发布全部 5 点。
+            点错了：RRT 节点端收下的点无法撤回，【重新选点】只清面板显示，需重启 <code>rrt_exploration</code> launch 后重点。
+            图例：黄线=边界多边形、绿点=起始点、淡蓝点=RRT 检出前沿（最近 300 个）、红点=过滤后候选目标、绿箭头=小车。
+            探索期间手动遥控（经 nav_arbiter）会取消当前 Nav2 目标，<code>assigner</code> 随后会再派新点；探索对算力敏感，建议 NUC/Jetson 级别上位机。</p>
         </section>
       </div>
     </div>
@@ -1660,7 +1718,7 @@
           <div class="contact-avatar">W</div>
           <div class="contact-body">
             <div class="contact-name">LabRobot Dashboard</div>
-            <p class="contact-desc">面向"Wheeltec S300 移动底盘 + Lebai LM3 机械臂"移动抓取平台的轻量级 Web 仪表盘。底盘部分：实时遥测、速度控制、参数调节、3D 视图、相机预览、日志，以及巡线 / KCF / YOLO / 骨架识别 / 路径跟随 / VLA 功能模块和 GMapping / Cartographer / Slam Toolbox / ORB-SLAM2 四种 SLAM 建图页；机械臂部分：驱动状态、系统/夹爪/关节控制，以及 HSV / YOLO / KCF / ArUco / VLM 五种视觉抓取方案。全部通过 rosbridge 与 ROS 2 通信。</p>
+            <p class="contact-desc">面向"Wheeltec S300 移动底盘 + Lebai LM3 机械臂"移动抓取平台的轻量级 Web 仪表盘。底盘部分：实时遥测、速度控制、参数调节、3D 视图、相机预览、日志，以及巡线 / KCF / YOLO / 骨架识别 / 路径跟随 / VLA 功能模块和 GMapping / Cartographer / Slam Toolbox / ORB-SLAM2 / RRT 自主探索建图页；机械臂部分：驱动状态、系统/夹爪/关节控制，以及 HSV / YOLO / KCF / ArUco / VLM 五种视觉抓取方案。全部通过 rosbridge 与 ROS 2 通信。</p>
             <ul class="contact-list">
               <li><span class="ck">项目仓库</span><a href="https://github.com/heisd/LabRobot" target="_blank" rel="noopener">github.com/heisd/LabRobot</a></li>
               <li><span class="ck">维护者</span><span>heisd</span></li>

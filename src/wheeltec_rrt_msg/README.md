@@ -125,6 +125,15 @@ goal.box_colour = 'red'
 client.send_goal_async(goal)
 ```
 
+## 仪表盘可视化
+
+`wheeltec_dashboard` 的 **建图 → RRT 自主探索** 子页已接入本接口：在面板
+地图上点 5 个点（或一键方形边界）发布 `/clicked_point` 圈定探索区域，
+并实时叠加显示 `/detected_frontiers` 与 `/filtered_goal_points`
+（`wheeltec_rrt_msg/msg/PointArray`）的前沿/候选目标，`global_rrt` /
+`local_rrt` / `filter` / `assigner` 四个探索节点在线状态同页判活。
+详见 `src/wheeltec_dashboard/README.md`。
+
 ## 注意事项
 
 1. 修改接口字段后必须重编译该包及所有依赖它的包。

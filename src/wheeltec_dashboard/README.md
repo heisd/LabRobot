@@ -85,9 +85,11 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
   - **功能模块**（含子页面）：巡线、KCF 跟踪、YOLO 检测、骨架识别、
     路径跟随（wheeltec_path_follow 录制/回放可视化）、
     VLA 语音导航（含航点标定助手）
-  - **建图**（含子页面，wheeltec_robot_slam 四种 SLAM 方式）：GMapping、
-    Cartographer、Slam Toolbox、ORB-SLAM2（RGB-D 视觉）——共用 /map
-    实时建图视图 + 节点判活，Toolbox/ORB 支持面板内保存
+  - **建图**（含子页面，wheeltec_robot_slam 四种 SLAM 方式 + RRT 自主探索）：
+    GMapping、Cartographer、Slam Toolbox、ORB-SLAM2（RGB-D 视觉）、
+    RRT 自主探索（wheeltec_robot_rrt/wheeltec_rrt_msg，地图上点 5 点圈定
+    边界即开始全自主建图）——共用 /map 实时建图视图 + 节点判活，
+    Toolbox/ORB 支持面板内保存
 - **Lebai 机械臂**
   - **监控与抓取**（含子页面）：监控与控制、HSV / YOLO / KCF / ArUco / VLM
     五种 grab_demo 抓取方案
@@ -164,6 +166,17 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
     `/orb_slam2_rgbd` + `/octomap_server` 判活；**面板内保存**——调
     `/RGBD/save_map`（特征地图，可重定位加载）与 `/RGBD/save_cloud`（PCD
     点云）。
+  - **RRT 自主探索**（`wheeltec_robot_rrt` + `wheeltec_rrt_msg` 接口包）：
+    把 RViz "Publish Point" 圈边界的交互搬进面板——**在地图画布上依次点
+    5 个点**（前 4 个为边界多边形顶点·逆时针、第 5 个为 RRT 起始点，每点
+    一个即发 `/clicked_point`，第 5 点有二次确认，发布后探索立即开始），
+    或填半边长**一键以小车为中心发布方形边界**（与 boundary_publisher.py
+    同序）；画布叠加显示 RRT 检出前沿 `/detected_frontiers`（淡蓝点，最近
+    300 个）、filter 聚类后的候选目标 `/filtered_goal_points`
+    （`wheeltec_rrt_msg/PointArray`，红点）、边界多边形（黄线）、起始点与
+    小车实时位姿；`/global_rrt`、`/local_rrt`、`/filter`、`/assigner` 四
+    节点判活（共用建图页 getNodes 轮询与事件时间线）；候选目标数/新鲜度
+    指标。注意节点端收下的点无法撤回，点错需重启 rrt_exploration launch。
   - 通用保存：`ros2 launch wheeltec_nav2 save_map.launch.py`（map_saver_cli
     双备份到 wheeltec_nav2/map/WHEELTEC，与导航及本面板默认地图路径一致）。
 - **下发命令解析**：驱动把发给下位机的 11 字节控制帧回发到
