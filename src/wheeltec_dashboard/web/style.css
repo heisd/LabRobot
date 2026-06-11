@@ -109,10 +109,13 @@ nav.tabs {
 }
 
 /* --------- Sub-tabs (功能模块 + 机械臂，两组独立的 JS tab 组共用样式) --------- */
-/* The function/arm panels host their own sub-navigation, so they lay out as
-   blocks; each sub-panel is the grid instead. */
+/* The function/arm/mapping panels host their own sub-navigation, so they lay
+   out as blocks; each sub-panel is the grid instead. */
 #panel-function.active,
+#panel-mapping.active,
 #panel-arm.active { display: block; }
+/* 建图页签：子页导航上方还有共用"实时状态"卡，留出间距 */
+#panel-mapping.active > .card { margin-bottom: 16px; }
 .subtabs {
   display: flex;
   gap: 2px;
@@ -120,6 +123,7 @@ nav.tabs {
   border-bottom: 1px solid var(--border);
 }
 .subtab-btn,
+.map-subtab-btn,
 .arm-subtab-btn {
   background: none;
   border: none;
@@ -133,16 +137,20 @@ nav.tabs {
   transition: color 0.12s ease, border-color 0.12s ease;
 }
 .subtab-btn:hover,
+.map-subtab-btn:hover,
 .arm-subtab-btn:hover { color: var(--text); }
 .subtab-btn.active,
+.map-subtab-btn.active,
 .arm-subtab-btn.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
   font-weight: 600;
 }
 .subtab-panel,
+.map-subtab-panel,
 .arm-subtab-panel { display: none; }
 .subtab-panel.active,
+.map-subtab-panel.active,
 .arm-subtab-panel.active {
   display: flex;
   flex-wrap: wrap;
@@ -151,6 +159,7 @@ nav.tabs {
   margin-top: 16px;
 }
 .subtab-panel.active > .card,
+.map-subtab-panel.active > .card,
 .arm-subtab-panel.active > .card {
   flex: 1 1 360px;
   min-width: 0;
@@ -1397,9 +1406,10 @@ main {
   cursor: crosshair;
   touch-action: none;   /* 触屏拖动定朝向时不滚动页面 */
 }
-#pf-map {
+#pf-map,
+#mp-map {
   display: block;
-  width: 100%;   /* 路径跟随子页：只看不取点，无需 crosshair */
+  width: 100%;   /* 路径跟随/建图页：只看不取点，无需 crosshair */
 }
 .wp-list {
   display: flex;

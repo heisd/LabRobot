@@ -6,6 +6,41 @@
 
 ---
 
+## 第 19 轮 — 导航栏新增"建图"页签（wheeltec_robot_slam 四种 SLAM 方式）
+
+### 建图页签
+
+- 导航栏 Wheeltec 底盘组新增 **建图** 页签（`#mapping` 深链，系统总览
+  架构卡加"SLAM 建图"入口芯片），把 `wheeltec_robot_slam` 下的四种建图
+  方式接入面板，四个子页：**GMapping / Cartographer / Slam Toolbox /
+  ORB-SLAM2（RGB-D 视觉）**。
+- **共用"建图实时状态"卡**（子页导航上方）：
+  - `/map` 实时建图视图——地图位图与 VLA 航点卡同源（SLAM 建图中 `/map`
+    话题每 2s 刷新 + GetMap 兜底），绿箭头为小车实时位姿；建图页直接
+    WASD 即可遥控（全局键盘遥控本就跨页签生效）。
+  - 当前建图模式按节点判活自动推断；**同时检测到多种 SLAM 在跑标红提醒**
+    （会互抢 map→odom TF）。
+  - 地图尺寸/分辨率、更新新鲜度（ingestWpMap 记录 wpMapTime）、
+    `map→base_footprint` 定位状态、当前 `/cmd_vel`、建图事件时间线。
+- **各子页**：
+  - GMapping：`/slam_gmapping` 判活 + 启动/调参/保存说明。
+  - Cartographer：`/cartographer_node`、`/occupancy_grid_node` 判活 +
+    `/tracked_pose` 实时位姿。
+  - Slam Toolbox：`/slam_toolbox` 判活 + **面板内保存按钮**
+    （`/slam_toolbox/save_map`、`/slam_toolbox/serialize_map`，注意
+    SaveMap 请求字段是 std_msgs/String 需包 `{ data: … }`；返回
+    int32 result==0 判成功）。
+  - ORB-SLAM2：`/RGBD/debug_image` 特征点画面 MJPEG 预览（fn-img 惰性
+    启动复用）、`/RGBD/pose` 相机位姿、`/orb_slam2_rgbd` +
+    `/octomap_server` 判活、**面板内保存按钮**（`/RGBD/save_map`、
+    `/RGBD/save_cloud`，bool success 判成功）。
+- 实现细节：第三组子页 tab（`.map-subtab-btn`/`data-mapsubtab`，与功能
+  模块、机械臂两组互不干扰，arch-link 支持 `data-mapsubtab` 直达）；
+  节点判活 `[data-mpnode]` 数据驱动（getNodes 每 3s，仅页签可见时），
+  地图视图/指标 1s 刷新（仅画布可见时）。
+
+---
+
 ## 第 18 轮 — 功能模块新增"路径跟随"子页（wheeltec_path_follow）
 
 ### 路径跟随子页

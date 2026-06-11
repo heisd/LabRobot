@@ -77,7 +77,7 @@ source install/setup.bash
 | `wheeltec_robot_keyboard` | 键盘遥控节点（`wheeltec_keyboard`） |
 | `wheeltec_joy` | USB 手柄遥控 |
 | `wheeltec_rviz2` | RViz2 可视化配置 |
-| `rm_description` / `wheeltec_dashboard` | 机器人模型描述 / Web 仪表盘（遥测、cmd_vel、参数调优、巡线/KCF/YOLO 视觉流转发与跟踪距离滑块、路径录制/跟随可视化，基于 rosbridge + web_video_server） |
+| `rm_description` / `wheeltec_dashboard` | 机器人模型描述 / Web 仪表盘（遥测、cmd_vel、参数调优、巡线/KCF/YOLO 视觉流转发与跟踪距离滑块、路径录制/跟随可视化、四种 SLAM 建图页，基于 rosbridge + web_video_server） |
 
 ### 传感器驱动
 
