@@ -15,10 +15,11 @@ def generate_launch_description():
     
     # 用 xacro 实时展开机器人描述
     robot_description = {
-    'robot_description': ParameterValue(
-        Command(['xacro ', xacro_file]),
-        value_type=str
-    )
+        'robot_description': ParameterValue(
+            Command(['xacro ', xacro_file]),
+            value_type=str
+        )
+    }
     # 启动 Gazebo Classic(含 GUI) + 我们的世界
     gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
