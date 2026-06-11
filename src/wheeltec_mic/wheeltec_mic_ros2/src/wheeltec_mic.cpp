@@ -164,26 +164,37 @@ bool Wheeltec_Mic::Get_Serial_Data()
 Function: Handle serial port errors
 功能: 处理串口异常
 ***************************************/
-void Wheeltec_Mic::handle_serial_error() 
+void Wheeltec_Mic::handle_serial_error()
 {
     serial_initialized = false;
     MicArr_Serial.close();
-    
-    RCLCPP_INFO(this->get_logger(), "Attempting to reconnect...");
+
+    //立即广播"麦克风离线"(voice_flag=0): dashboard 语音组件卡变红, 其他节点也能感知
+    std_msgs::msg::Int8 flag_msg;
+    flag_msg.data = 0;
+    voice_flag_pub->publish(flag_msg);
+    RCLCPP_WARN(this->get_logger(),
+        "麦克风串口 %s 读写异常断开, 尝试重连…", usart_port_name.c_str());
+
     for (int i = 0; i < 3; ++i) {
         try {
             MicArr_Serial.open();
             if (MicArr_Serial.isOpen()) {
                 MicArr_Serial.flush();
                 serial_initialized = true;
-                RCLCPP_INFO(this->get_logger(), "Reconnected successfully");
+                flag_msg.data = 1;
+                voice_flag_pub->publish(flag_msg);
+                RCLCPP_INFO(this->get_logger(), "麦克风串口重连成功");
                 return;
             }
         } catch (...) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
     }
-    RCLCPP_ERROR(this->get_logger(), "Failed to reconnect to serial port");
+    //这里不再是终点: run() 主循环会周期重试并限频报错, 插回 USB 线即可自动恢复
+    RCLCPP_ERROR(this->get_logger(),
+        "麦克风串口 %s 重连失败, 将持续后台重试 (检查 USB 线/供电/设备号)",
+        usart_port_name.c_str());
 }
 
 /**************************************
@@ -192,12 +203,24 @@ Function: Loop access to the lower computer data and issue topics
 ***************************************/
 void Wheeltec_Mic::run()
 {
-  if (!serial_initialized) {
-      RCLCPP_ERROR(this->get_logger(), "Serial port initialization failed");
-      return;
-  }
+  //串口未就绪不再直接退出: 周期重试 + 限频报错(进 /rosout, dashboard 日志面板可见),
+  //开机时没插麦克风、或运行中拔掉再插回, 都能自动恢复, 无需重启节点。
+  rclcpp::Time last_retry = this->now();
 
 	while(rclcpp::ok()){
+    if (!serial_initialized) {
+        if ((this->now() - last_retry).seconds() >= 10.0) {
+            last_retry = this->now();
+            RCLCPP_ERROR(this->get_logger(),
+                "麦克风未连接 (串口 %s 打不开), 正在后台重试…"
+                " 请检查: USB 线/集线器供电/udev 规则(/dev/wheeltec_mic 是否存在)",
+                usart_port_name.c_str());
+            initialize_serial();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        rclcpp::spin_some(this->get_node_base_interface());
+        continue;
+    }
 		Get_Serial_Data();
 	  rclcpp::spin_some(this->get_node_base_interface());
 	}
@@ -232,12 +255,19 @@ void Wheeltec_Mic::initialize_serial() {
                 return;
             }
         } catch (const std::exception& e) {
-            //RCLCPP_ERROR(get_logger(), "Serial init attempt %d failed: %s", retry+1, e.what());
+            RCLCPP_WARN(get_logger(), "麦克风串口 %s 第 %d/%d 次打开失败: %s",
+                usart_port_name.c_str(), retry + 1, max_retries, e.what());
         }
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
-    RCLCPP_FATAL(get_logger(), "Failed to initialize serial port after %d attempts", max_retries);
-    RCLCPP_ERROR(this->get_logger(),"wheeltec_mic can not open serial port,Please check the serial port cable! ");
+    //打开失败: 广播 voice_flag=0 让 dashboard 语音组件卡变红;
+    //run() 主循环每 10s 会再调用本函数重试, 报错也随之周期出现在 /rosout。
+    std_msgs::msg::Int8 flag_msg;
+    flag_msg.data = 0;
+    voice_flag_pub->publish(flag_msg);
+    RCLCPP_ERROR(this->get_logger(),
+        "麦克风串口 %s 连续 %d 次打开失败, 请检查串口线/USB 供电/设备号!",
+        usart_port_name.c_str(), max_retries);
 }
 
 /**************************************

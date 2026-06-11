@@ -1370,3 +1370,25 @@ main {
   }
   .log-row .ln { display: none; }
 }
+
+/* 语音组件卡: 麦克风连接提示行 */
+.voice-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.voice-tip-row button {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.voice-tip-row button:hover { border-color: var(--accent); color: var(--accent); }
+.err-text { color: var(--err); }

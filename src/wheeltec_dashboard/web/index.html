@@ -233,7 +233,7 @@
           <button id="stm32-log-clear">清空</button>
         </div>
         <div id="stm32-log" class="vla-timeline stm32-log"></div>
-        <p class="hint">下位机 STM32F407（固件源码见 <code>firmware/KeilSingleChipProject</code>，FreeRTOS）经串口连接 <code>turn_on_wheeltec_robot</code>，以 20Hz 上行三个数据包：24 字节基础帧（<code>0x7B…0x7D</code>，速度/IMU/电压/使能位）+ 19 字节超声波帧（<code>0xFA…0xFC</code>）+ 8 字节回充帧（<code>0x7C…0x7F</code>）。话题只有帧校验通过才发布，因此<strong>话题有数据 = 下位机在线</strong>（2 秒无帧判离线）。<strong>固件使能 (en_flag)</strong> 为固件真实的"允许移动"信号：低压（&lt;20V 且未在回充）/ 急停开关按下 / 软件急停 / 任一驱动器离线或报错，任一条件都会失能（需重编译 turn_on_wheeltec_robot 才有 <code>/robot_enable_flag</code> 话题）。注意：<strong>回充模式中固件忽略低压禁动</strong>；新固件的自检字段恒为 0（<code>/self_check_data</code> 显示 0x0 属正常）。<strong>下发命令解析</strong>：驱动把发给下位机的 11 字节控制帧原样发布到 <code>/robot_serial_tx</code>（需重编译），面板按通信协议表解析"模式选择位"（0=速度控制 / 1、2=自动回充 / 3=红外对接速度 / 4=灯带 RGB）与目标速度并校验 BCC——"最近下发指令"实时刷新，命令<strong>类型变化</strong>时写入事件栏（速度数值变化不刷屏）。</p>
+        <p class="hint">下位机 STM32F407（固件源码见 <code>firmware/KeilSingleChipProject</code>，FreeRTOS；主控板 C63A 原理图见 <code>firmware/C63A原理图_V2.0_2025-06-16.pdf</code>）经串口连接 <code>turn_on_wheeltec_robot</code>，以 20Hz 上行三个数据包：24 字节基础帧（<code>0x7B…0x7D</code>，速度/IMU/电压/使能位）+ 19 字节超声波帧（<code>0xFA…0xFC</code>）+ 8 字节回充帧（<code>0x7C…0x7F</code>）。话题只有帧校验通过才发布，因此<strong>话题有数据 = 下位机在线</strong>（2 秒无帧判离线）。<strong>固件使能 (en_flag)</strong> 为固件真实的"允许移动"信号：低压（&lt;20V 且未在回充）/ 急停开关按下 / 软件急停 / 任一驱动器离线或报错，任一条件都会失能（需重编译 turn_on_wheeltec_robot 才有 <code>/robot_enable_flag</code> 话题）。注意：<strong>回充模式中固件忽略低压禁动</strong>；新固件的自检字段恒为 0（<code>/self_check_data</code> 显示 0x0 属正常）。<strong>下发命令解析</strong>：驱动把发给下位机的 11 字节控制帧原样发布到 <code>/robot_serial_tx</code>（需重编译），面板按通信协议表解析"模式选择位"（0=速度控制 / 1、2=自动回充 / 3=红外对接速度 / 4=灯带 RGB）与目标速度并校验 BCC——"最近下发指令"实时刷新，命令<strong>类型变化</strong>时写入事件栏（速度数值变化不刷屏）。</p>
       </section>
 
       <section class="card">
@@ -268,11 +268,15 @@
             <div id="voice-words" class="metric-value">—</div>
           </div>
         </div>
+        <div class="voice-tip-row">
+          <span id="voice-mic-tip" class="muted"></span>
+          <button id="voice-log-btn" type="button">查看麦克风日志</button>
+        </div>
         <div class="vla-row">
           <input id="voice-tts-input" type="text" placeholder="让小车说话…（发布到 /tts_text）" />
           <button id="voice-tts-send">播报</button>
         </div>
-        <p class="hint">来自 wheeltec_mic：唤醒 <code>/awake_flag</code>、声源角 <code>/awake_angle</code>、识别 <code>/voice_words</code>；播报经 tts_make 订阅 <code>/tts_text</code>。需先启动麦克风语音 launch（如 <code>mic_init.launch.py</code> / <code>base.launch.py</code>）。</p>
+        <p class="hint">来自 wheeltec_mic：唤醒 <code>/awake_flag</code>、声源角 <code>/awake_angle</code>、识别 <code>/voice_words</code>；播报经 tts_make 订阅 <code>/tts_text</code>。需先启动麦克风语音 launch（如 <code>mic_init.launch.py</code> / <code>base.launch.py</code>）。<strong>连接检测</strong>：麦克风物理接在上位机 USB（<code>/dev/wheeltec_mic</code>），驱动改造后<strong>打开失败/拔线断开会发布 <code>/voice_flag=0</code></strong>（上方"麦克风"变红）并每 10s 自动重试、向 <code>/rosout</code> 打 ERROR——点"查看麦克风日志"直达日志面板（按 mic 过滤）；插回即自动恢复，无需重启节点（需重编译 wheeltec_mic_ros2）。下位机 C63A 不经手麦克风，无法在固件侧感知。</p>
       </section>
 
       <section class="card card-wide">

@@ -388,12 +388,23 @@
     sub('/cmd_arbiter/status', 'std_msgs/msg/String', (msg) => updateCtrlSource(msg.data));
 
     // Voice subsystem status (wheeltec_mic + tts_make).
+    // 驱动改造后: 串口打开失败/拔线断开都会发 voice_flag=0(失败态每 10s 随
+    // 重试重发), 重连成功发 1 —— 这里据此渲染并把边沿写进卡内提示。
     sub('/voice_flag', 'std_msgs/msg/Int8', (msg) => {
       const el = $('voice-mic'); if (!el) return;
       const ok = msg.data === 1 || msg.data === true;
-      el.textContent = ok ? '已初始化' : '未就绪';
+      el.textContent = ok ? '已初始化' : '离线（串口未连接）';
       el.classList.remove('ok', 'err');
       el.classList.add(ok ? 'ok' : 'err');
+      if (voiceMicState !== ok) {
+        voiceMicState = ok;
+        const tip = $('voice-mic-tip');
+        if (tip) {
+          tip.textContent = (ok ? '✓ 麦克风已连接' : '⚠ 麦克风串口连接失败，驱动每 10s 自动重试中——查看下方日志面板（按 mic 过滤）')
+            + ' · ' + new Date().toLocaleTimeString();
+          tip.classList.toggle('err-text', !ok);
+        }
+      }
     });
     sub('/awake_flag', 'std_msgs/msg/Int8', (msg) => {
       const el = $('voice-awake'); if (!el) return;
@@ -1576,6 +1587,19 @@
   if (ttsSendBtn) ttsSendBtn.addEventListener('click', () => sendTts(ttsInput.value));
   if (ttsInput) ttsInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { sendTts(ttsInput.value); ttsInput.value = ''; }
+  });
+
+  // 语音组件卡: 麦克风连接状态边沿提示 + 一键跳到日志面板按 mic 过滤。
+  let voiceMicState = null;
+  const voiceLogBtn = $('voice-log-btn');
+  if (voiceLogBtn) voiceLogBtn.addEventListener('click', () => {
+    const f = $('log-filter');
+    if (f) {
+      f.value = 'mic';
+      f.dispatchEvent(new Event('input'));   // 触发既有 rerenderAll
+    }
+    const logCard = $('log-view');
+    if (logCard) logCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
   });
 
   // Voice-component TTS box (各组件状态) shares the same /tts_text publisher.
