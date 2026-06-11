@@ -28,6 +28,7 @@
   let wpTf = null;             // map→base_footprint TF (VLA 地图航点管理)
   let wpCmdPub = null;         // /vla/waypoint_cmd publisher (航点增删, 后端持久化)
   let goalPosePub = null;      // /goal_pose publisher (航点列表"导航"按钮直达)
+  let chatMsgPub = null;       // /chat_message publisher (AI 对话·话题流式模式)
   let lidarSubs = [];      // per-source LaserScan subs (managed separately so
                            // the lidar card can re-subscribe on topic change)
   const lidarLast = {};    // key -> { time, points, min }
@@ -178,6 +179,10 @@
     if (goalPosePub) {
       try { goalPosePub.unadvertise(); } catch (_) { /* ignore */ }
       goalPosePub = null;
+    }
+    if (chatMsgPub) {
+      try { chatMsgPub.unadvertise(); } catch (_) { /* ignore */ }
+      chatMsgPub = null;
     }
     // 航点列表属于上一个连接的后端, 清掉避免误导; 地图位图保留(重连通常同一张图)
     vlaWaypoints = [];
@@ -379,6 +384,13 @@
       ros, name: '/tts_text', messageType: 'std_msgs/msg/String',
     });
     ttsPub.advertise();
+
+    // AI 对话 (ollama_ros_chat 话题流式模式): 发 /chat_message, 收 /chat_response
+    chatMsgPub = new ROSLIB.Topic({
+      ros, name: '/chat_message', messageType: 'std_msgs/msg/String',
+    });
+    chatMsgPub.advertise();
+    sub('/chat_response', 'std_msgs/msg/String', onChatChunk);
 
     sub('/voice_words', 'std_msgs/msg/String', (msg) => {
       const txt = msg.data || '—';
@@ -2662,6 +2674,21 @@
     set('arch-dot-grab', armDistTime && now - armDistTime < 2500);
   }
 
+  // 顶栏"机械臂"徽标：全页面常驻的在线指示（/robot_status 3s 内有数据=在线，
+  // 未连 rosbridge 时显示 "—"）。
+  function updateArmBadge() {
+    const el = $('arm-online');
+    if (!el) return;
+    let text;
+    let cls;
+    if (!ros) { text = '机械臂: —'; cls = 'ctrl-src-idle'; }
+    else if (armStatusTime && Date.now() - armStatusTime < 3000) {
+      text = '机械臂: 在线'; cls = 'ctrl-src-active';
+    } else { text = '机械臂: 离线'; cls = 'ctrl-src-err'; }
+    el.textContent = text;
+    el.className = 'ctrl-src ' + cls;
+  }
+
   // 驱动离线时把状态清回 "—"，避免一直显示陈旧值误导操作。
   setInterval(() => {
     if (armStatusTime && Date.now() - armStatusTime > 3000) {
@@ -2674,6 +2701,7 @@
       setArmDist('— m');
     }
     updateArchDots();
+    updateArmBadge();
   }, 1000);
 
   function ingestArmJointState(msg) {
@@ -3334,6 +3362,278 @@
     logView.innerHTML = '';
     if (ovLogView) ovLogView.innerHTML = '';   // 共用缓冲，总览镜像一并清
   });
+
+  // ---------- AI 对话 (ollama_ros_chat / DeepSeek API) ----------
+  // 三种后端共用一套气泡 UI：
+  //   service  — rosbridge 调 /chat_service (ollama_ros_msgs/srv/Chat)，同步等完整回答
+  //   topic    — 发 /chat_message、订阅 /chat_response 按 chunk 流式渲染 (topic_server)
+  //   deepseek — 浏览器直连 DeepSeek API (OpenAI 兼容 /chat/completions, SSE 流式)，
+  //              Key/模型/Base URL 存 localStorage，上下文在前端维护（车端无依赖）
+  const chatBox = $('chat-box');
+  const chatInput = $('chat-input');
+  const chatSendBtn = $('chat-send');
+  const chatBackendSel = $('chat-backend');
+  const chatModelEl = $('chat-model');
+  const chatDsCfg = $('chat-ds-cfg');
+  const chatDsKey = $('chat-ds-key');
+  const chatDsModel = $('chat-ds-model');
+  const chatDsBase = $('chat-ds-base');
+
+  let chatPendingEl = null;   // 正在生成的 assistant 气泡（流式追加目标）
+  let chatBusy = false;
+  let chatBusyTimer = null;
+  const CHAT_DS_SYSTEM = { role: 'system', content: 'You are a helpful assistant' };
+  let chatDsHistory = [CHAT_DS_SYSTEM];   // DeepSeek 模式的前端上下文（≤20 条）
+
+  function chatScroll() {
+    if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
+  }
+
+  function chatAppend(role, text, opts) {
+    if (!chatBox) return null;
+    const empty = chatBox.querySelector('.chat-empty');
+    if (empty) empty.remove();
+    const div = document.createElement('div');
+    div.className = 'chat-msg ' + (role === 'user' ? 'user' : 'assistant')
+      + (role === 'error' ? ' error' : '')
+      + ((opts && opts.pending) ? ' pending' : '');
+    const roleEl = document.createElement('div');
+    roleEl.className = 'chat-role';
+    roleEl.textContent = role === 'user' ? '我'
+      : (role === 'error' ? '错误' : 'AI · ' + new Date().toLocaleTimeString());
+    const textEl = document.createElement('div');
+    textEl.className = 'chat-text';
+    textEl.textContent = text || '';
+    div.appendChild(roleEl);
+    div.appendChild(textEl);
+    chatBox.appendChild(div);
+    chatScroll();
+    return div;
+  }
+
+  function chatSetModel(name) {
+    if (chatModelEl && name) chatModelEl.textContent = '模型: ' + name;
+  }
+
+  function chatSetBusy(busy) {
+    chatBusy = busy;
+    if (chatSendBtn) {
+      chatSendBtn.disabled = busy;
+      chatSendBtn.textContent = busy ? '生成中…' : '发送';
+    }
+    clearTimeout(chatBusyTimer);
+    if (busy) {
+      // 兜底：后端没回 is_done / 服务超时等异常情况下 3 分钟自动解锁输入
+      chatBusyTimer = setTimeout(() => chatFinishPending(null,
+        '\n[等待超时，已解锁输入——检查后端节点 / ollama / 网络]'), 180000);
+    }
+  }
+
+  // 结束当前挂起气泡：fullText 非空则整体覆盖，extra 追加在末尾
+  function chatFinishPending(fullText, extra) {
+    if (chatPendingEl) {
+      chatPendingEl.classList.remove('pending');
+      const t = chatPendingEl.querySelector('.chat-text');
+      if (fullText != null) t.textContent = fullText;
+      if (extra) t.textContent += extra;
+      if (!t.textContent) t.textContent = '(空响应)';
+      chatPendingEl = null;
+    }
+    chatSetBusy(false);
+    chatScroll();
+  }
+
+  function chatFail(message) {
+    if (chatPendingEl) {
+      chatPendingEl.classList.remove('pending');
+      chatPendingEl.classList.add('error');
+      chatPendingEl.querySelector('.chat-role').textContent = '错误';
+      chatPendingEl.querySelector('.chat-text').textContent = message;
+      chatPendingEl = null;
+    } else {
+      chatAppend('error', message);
+    }
+    chatSetBusy(false);
+    chatScroll();
+  }
+
+  // /chat_response 流式 chunk（topic_server）。仅话题模式消费；没有挂起气泡时
+  // （如终端 topic_client 触发的对话）也镜像出来。
+  function onChatChunk(msg) {
+    if (((chatBackendSel || {}).value || 'service') !== 'topic') return;
+    let obj = null;
+    try { obj = JSON.parse(msg.data || ''); } catch (_) { return; }
+    if (!obj) return;
+    if (obj.model) chatSetModel(obj.model);
+    if (!chatPendingEl) {
+      chatPendingEl = chatAppend('assistant', '', { pending: true });
+      chatSetBusy(true);
+    }
+    if (obj.content) {
+      chatPendingEl.querySelector('.chat-text').textContent += obj.content;
+      chatScroll();
+    }
+    if (obj.is_done === true) chatFinishPending(null);
+  }
+
+  function chatSendRosService(text) {
+    chatSetBusy(true);
+    chatPendingEl = chatAppend('assistant', '', { pending: true });
+    const srv = new ROSLIB.Service({
+      ros, name: '/chat_service', serviceType: 'ollama_ros_msgs/srv/Chat',
+    });
+    srv.callService(new ROSLIB.ServiceRequest({ content: text }), (res) => {
+      if (res && res.model) chatSetModel(res.model);
+      chatFinishPending((res && res.content) || '');
+    }, (err) => {
+      chatFail('调用 /chat_service 失败: ' + err +
+        '（chat_service 节点与 ollama 是否在跑？）');
+    });
+  }
+
+  function chatSendRosTopic(text) {
+    if (!chatMsgPub) {
+      chatAppend('error', 'rosbridge 未就绪，无法发布 /chat_message');
+      return;
+    }
+    chatSetBusy(true);
+    chatPendingEl = chatAppend('assistant', '', { pending: true });
+    chatMsgPub.publish(new ROSLIB.Message({
+      data: JSON.stringify({ content: text }),
+    }));
+  }
+
+  async function chatSendDeepseek(text) {
+    const key = ((chatDsKey && chatDsKey.value) || '').trim();
+    const model = ((chatDsModel && chatDsModel.value) || 'deepseek-chat').trim();
+    const base = (((chatDsBase && chatDsBase.value) || 'https://api.deepseek.com').trim())
+      .replace(/\/+$/, '');
+    if (!key) {
+      chatAppend('error', '请先填 DeepSeek API Key（platform.deepseek.com 申请；只保存在本浏览器）');
+      return;
+    }
+    chatDsHistory.push({ role: 'user', content: text });
+    // 上下文限长：保住 system，丢最早的对话轮
+    while (chatDsHistory.length > 20) chatDsHistory.splice(1, 1);
+    chatSetBusy(true);
+    chatPendingEl = chatAppend('assistant', '', { pending: true });
+    try {
+      const resp = await fetch(base + '/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + key,
+        },
+        body: JSON.stringify({ model, messages: chatDsHistory, stream: true }),
+      });
+      if (!resp.ok) {
+        let detail = '';
+        try { detail = (await resp.text()).slice(0, 200); } catch (_) { /* ignore */ }
+        throw new Error('HTTP ' + resp.status + (detail ? ' — ' + detail : ''));
+      }
+      chatSetModel(model);
+      // SSE 流：data: {...}\n\n，逐 delta 渲染（deepseek-reasoner 的思维链
+      // reasoning_content 不进气泡也不进上下文）
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let full = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const raw of lines) {
+          const line = raw.trim();
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (!payload || payload === '[DONE]') continue;
+          let j = null;
+          try { j = JSON.parse(payload); } catch (_) { continue; }
+          const delta = j && j.choices && j.choices[0] && j.choices[0].delta;
+          const piece = (delta && delta.content) || '';
+          if (piece && chatPendingEl) {
+            full += piece;
+            chatPendingEl.querySelector('.chat-text').textContent += piece;
+            chatScroll();
+          }
+        }
+      }
+      chatDsHistory.push({ role: 'assistant', content: full });
+      chatFinishPending(null);
+    } catch (err) {
+      chatDsHistory.pop();   // 失败的这轮 user 不留在上下文里
+      chatFail('DeepSeek 请求失败: ' + (err && err.message || err) +
+        '（检查 Key / 网络 / Base URL；浏览器跨域被拒时可在 Base URL 填自建反代）');
+    }
+  }
+
+  function chatSend() {
+    if (!chatInput || chatBusy) return;
+    const text = (chatInput.value || '').trim();
+    if (!text) return;
+    const backend = ((chatBackendSel || {}).value || 'service');
+    chatAppend('user', text);
+    chatInput.value = '';
+    if (backend === 'deepseek') { chatSendDeepseek(text); return; }
+    if (!ros) {
+      chatAppend('error', '未连接 rosbridge——先点右上角"连接"，或把后端切成 DeepSeek API');
+      return;
+    }
+    if (backend === 'topic') chatSendRosTopic(text);
+    else chatSendRosService(text);
+  }
+
+  if (chatSendBtn) chatSendBtn.addEventListener('click', chatSend);
+  if (chatInput) {
+    chatInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && !ev.shiftKey) {
+        ev.preventDefault();
+        chatSend();
+      }
+    });
+  }
+  const chatClearBtn = $('chat-clear');
+  if (chatClearBtn) {
+    chatClearBtn.addEventListener('click', () => {
+      if (chatBox) {
+        chatBox.innerHTML = '<div class="chat-empty muted">对话已清空。' +
+          '（Ollama 模式的历史在车端节点里，本操作只清前端与 DeepSeek 上下文）</div>';
+      }
+      chatPendingEl = null;
+      chatSetBusy(false);
+      chatDsHistory = [CHAT_DS_SYSTEM];
+    });
+  }
+  // 后端选择 + DeepSeek 配置持久化（Key 仅 localStorage，不发往任何后端）
+  (function chatRestore() {
+    try {
+      const saved = {
+        backend: localStorage.getItem('chat_backend'),
+        key: localStorage.getItem('chat_ds_key'),
+        model: localStorage.getItem('chat_ds_model'),
+        base: localStorage.getItem('chat_ds_base'),
+      };
+      if (saved.backend && chatBackendSel) chatBackendSel.value = saved.backend;
+      if (saved.key && chatDsKey) chatDsKey.value = saved.key;
+      if (saved.model && chatDsModel) chatDsModel.value = saved.model;
+      if (saved.base && chatDsBase) chatDsBase.value = saved.base;
+    } catch (_) { /* localStorage 不可用就算了 */ }
+    if (chatDsCfg && chatBackendSel) chatDsCfg.hidden = chatBackendSel.value !== 'deepseek';
+  })();
+  if (chatBackendSel) {
+    chatBackendSel.addEventListener('change', () => {
+      if (chatDsCfg) chatDsCfg.hidden = chatBackendSel.value !== 'deepseek';
+      try { localStorage.setItem('chat_backend', chatBackendSel.value); } catch (_) { /* ignore */ }
+    });
+  }
+  [[chatDsKey, 'chat_ds_key'], [chatDsModel, 'chat_ds_model'], [chatDsBase, 'chat_ds_base']]
+    .forEach(([el, storeKey]) => {
+      if (el) el.addEventListener('change', () => {
+        try { localStorage.setItem(storeKey, el.value); } catch (_) { /* ignore */ }
+      });
+    });
 
   // ---------- Navigation (top tabs + function sub-tabs) ----------
   // Switching just toggles a CSS class; every card stays in the DOM so all

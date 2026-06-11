@@ -6,6 +6,38 @@
 
 ---
 
+## 第 16 轮 — 导航栏"AI 对话"页签（Ollama + DeepSeek API）、顶栏机械臂在线徽标
+
+### AI 对话页签
+
+- 导航栏新增 **AI 对话** 页签（`#chat` 深链），气泡式聊天 UI（Enter 发送 /
+  Shift+Enter 换行、流式光标、清空对话、模型名显示），三种后端可切：
+  - **Ollama · ROS 服务**：经 rosbridge 调 `/chat_service`
+    （`ollama_ros_msgs/srv/Chat`，ollama_ros_chat 的 chat_service 节点），
+    同步等完整回答；
+  - **Ollama · ROS 话题流式**：发 `/chat_message`、按 chunk 订阅
+    `/chat_response` 逐字渲染（topic_server 节点）；他端（终端
+    topic_client）触发的对话也会镜像到面板；
+  - **DeepSeek API（联网）**：浏览器直连 `https://api.deepseek.com`
+    （OpenAI 兼容 `/chat/completions`，SSE 流式），模型可填
+    `deepseek-chat` / `deepseek-reasoner`；API Key/模型/Base URL 存
+    localStorage，**不经任何后端**；上下文前端维护（≤20 条，保 system）。
+- 防呆：生成中锁定发送（3 分钟超时自动解锁）、服务/网络失败把错误写进
+  气泡（含排查提示）、rosbridge 未连时提示切 DeepSeek 后端。
+- `labrobot_bringup.launch.py` 新增 `start_llm`（默认 true）：同时拉起
+  chat_service（服务模式）与 topic_server（流式模式），ollama 没跑只
+  报错不影响其它组件；DeepSeek 模式无需任何车端节点。
+
+### 顶栏机械臂在线徽标
+
+- 此前机械臂在线状态只有"系统总览"架构卡里的小绿点，不够醒目——顶栏
+  （导航栏右侧、控制源旁）新增常驻徽标：`/robot_status` 3 秒内有数据
+  显示**机械臂: 在线**（绿）、断流显示**离线**（红）、未连 rosbridge
+  显示 "—"（灰），任何页签都可见。判活复用既有 `armStatusTime`，与
+  架构卡绿点、sensor_watchdog 的判据一致。
+
+---
+
 ## 第 15 轮 — 首页"系统日志"卡 + 底部行自适应布局（不留空白）
 
 ### 首页新增"系统日志"卡（/rosout 镜像）

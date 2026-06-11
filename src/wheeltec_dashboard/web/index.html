@@ -24,6 +24,7 @@
         <button id="ws-connect">连接</button>
         <span id="ws-status" class="status status-off">未连接</span>
         <span id="ctrl-source" class="ctrl-src ctrl-src-idle" title="cmd_arbiter 当前控制源（键盘 > 巡线/KCF/YOLO）">控制源: —</span>
+        <span id="arm-online" class="ctrl-src ctrl-src-idle" title="Lebai 机械臂驱动在线状态（/robot_status 3 秒内有数据 = 在线）">机械臂: —</span>
       </div>
     </header>
 
@@ -36,6 +37,7 @@
       <span class="nav-group-label">Lebai 机械臂</span>
       <button class="tab-btn" data-tab="arm">监控与抓取</button>
       <span class="nav-group-label nav-group-end"></span>
+      <button class="tab-btn" data-tab="chat">AI 对话</button>
       <button class="tab-btn" data-tab="contact">联系作者</button>
     </nav>
   </div>
@@ -1338,6 +1340,54 @@
           <p class="hint">启动：<code>ros2 launch grab_demo vlm_grab.launch.py</code>。视觉语言模型按一句话（可间接表达）选物抓取：指令发 <code>/vlm/instruction</code>，理解结果见 <code>/vlm/result</code>，需确认时点"确认抓取"（发 <code>/vlm/confirm</code>）。配 <code>voice_instruction_node</code>（本地 Whisper）可直接语音下指令。详见 <code>grab_demo/VLM_GUIDE.md</code>、<code>VOICE_GUIDE.md</code>。</p>
         </section>
       </div>
+    </div>
+
+    <!-- ============ AI 对话 ============ -->
+    <div class="tab-panel" id="panel-chat">
+      <section class="card card-wide">
+        <h2>AI 对话 <span class="muted">(ollama_ros_chat · DeepSeek API)</span></h2>
+        <div class="log-toolbar">
+          <label>后端
+            <select id="chat-backend">
+              <option value="service" selected>Ollama · ROS 服务 (/chat_service)</option>
+              <option value="topic">Ollama · ROS 话题流式 (/chat_message)</option>
+              <option value="deepseek">DeepSeek API（联网）</option>
+            </select>
+          </label>
+          <span id="chat-model" class="muted">模型: —</span>
+          <button id="chat-clear">清空对话</button>
+        </div>
+        <div class="log-toolbar" id="chat-ds-cfg" hidden>
+          <label>API Key
+            <input id="chat-ds-key" type="password" placeholder="sk-…（仅存本浏览器 localStorage）" />
+          </label>
+          <label>模型
+            <input id="chat-ds-model" type="text" value="deepseek-chat" />
+          </label>
+          <label>Base URL
+            <input id="chat-ds-base" type="text" value="https://api.deepseek.com" />
+          </label>
+        </div>
+        <div id="chat-box" class="chat-box">
+          <div class="chat-empty muted">还没有消息——输入内容开始对话。Ollama 模式需先在车上启动
+            chat_service（或 topic_server，随 labrobot_bringup 一起拉起）并保证本机
+            ollama 在跑；DeepSeek 模式填好 API Key 后浏览器直连官方接口。</div>
+        </div>
+        <div class="chat-input-row">
+          <textarea id="chat-input" rows="2" placeholder="输入消息，Enter 发送 / Shift+Enter 换行"></textarea>
+          <button id="chat-send">发送</button>
+        </div>
+        <p class="hint">三种后端：<strong>ROS 服务</strong>经 rosbridge 调
+          <code>/chat_service</code>（ollama_ros_chat 的 chat_service 节点，同步等完整回答）；
+          <strong>ROS 话题流式</strong>发 <code>/chat_message</code>、按 chunk 订阅
+          <code>/chat_response</code> 逐字渲染（需 topic_server 节点）；
+          <strong>DeepSeek API</strong> 浏览器直连 <code>https://api.deepseek.com</code>
+          （OpenAI 兼容，SSE 流式，模型可填 <code>deepseek-chat</code> /
+          <code>deepseek-reasoner</code>，Key 只保存在本浏览器 localStorage，不经任何后端）。
+          Ollama 两种模式的对话历史在车端节点里（最多 10 条）；"清空对话"清前端与
+          DeepSeek 上下文，不影响车端历史。Ollama 模型由节点启动时自动选
+          <code>ollama list</code> 的第一个。</p>
+      </section>
     </div>
 
     <!-- ============ 联系作者 ============ -->

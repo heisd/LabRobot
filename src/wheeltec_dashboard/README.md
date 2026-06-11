@@ -65,7 +65,9 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
 
 页面顶部为导航栏，按机器人本体的两个部分 —— **Wheeltec 底盘** 与
 **Lebai 机械臂** —— 分组（也支持 `#overview`、`#components`、`#control`、
-`#function`、`#arm`、`#contact` 锚点深链）：
+`#function`、`#arm`、`#chat`、`#contact` 锚点深链）。顶栏右侧常驻
+**机械臂在线徽标**（`/robot_status` 3 秒内有数据=在线绿、断流=离线红、
+未连 rosbridge=灰）：
 
 - **系统总览**：系统架构卡（底盘 / 机械臂两部分的模块总览 + 在线状态点 +
   点击跳转）、3D 视图（雷达 `/scan`）、实时遥测、电压 / cmd_vel 折线图、
@@ -85,6 +87,10 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
 - **Lebai 机械臂**
   - **监控与抓取**（含子页面）：监控与控制、HSV / YOLO / KCF / ArUco / VLM
     五种 grab_demo 抓取方案
+- **AI 对话**：与大模型文字聊天，三种后端可切——Ollama·ROS 服务
+  （`/chat_service`，ollama_ros_chat）、Ollama·ROS 话题流式
+  （`/chat_message`→`/chat_response` 逐字渲染）、**DeepSeek API 联网直连**
+  （OpenAI 兼容 SSE 流式，API Key 仅存本浏览器 localStorage）
 - **联系作者**：项目仓库与反馈渠道
 
 各板块明细：

@@ -194,6 +194,7 @@ nav.tabs {
 .ctrl-src-idle { background: rgba(139, 148, 158, 0.18); color: var(--muted); }
 .ctrl-src-active { background: rgba(63, 185, 80, 0.2); color: var(--ok); }
 .ctrl-src-kbd { background: rgba(210, 153, 34, 0.25); color: var(--warn); font-weight: 600; }
+.ctrl-src-err { background: rgba(248, 81, 73, 0.18); color: var(--err); font-weight: 600; }
 
 main {
   padding: 16px;
@@ -367,6 +368,57 @@ main {
 .ov-bottom .cam-grid {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
+
+/* --------- AI 对话 (ollama_ros_chat / DeepSeek API) --------- */
+.chat-box {
+  background: #0b0f14;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  height: 440px;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat-empty { margin: auto; text-align: center; max-width: 560px; line-height: 1.7; }
+.chat-msg {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.chat-msg .chat-role { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.chat-msg .chat-text { white-space: pre-wrap; word-break: break-word; color: var(--text); line-height: 1.6; }
+.chat-msg.user {
+  align-self: flex-end;
+  background: rgba(31, 111, 235, 0.18);
+  border: 1px solid rgba(88, 166, 255, 0.35);
+}
+.chat-msg.assistant {
+  align-self: flex-start;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+.chat-msg.error .chat-text { color: var(--err); }
+/* 流式生成中的光标 */
+.chat-msg.pending .chat-text::after { content: '▍'; animation: chat-blink 1s steps(1) infinite; }
+@keyframes chat-blink { 50% { opacity: 0; } }
+.chat-input-row { display: flex; gap: 8px; margin-top: 10px; align-items: stretch; }
+.chat-input-row textarea {
+  flex: 1;
+  resize: vertical;
+  min-height: 44px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+}
+.chat-input-row button { min-width: 76px; }
+.chat-input-row button:disabled { opacity: 0.5; cursor: default; }
 
 /* --------- Contact author --------- */
 .contact { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
