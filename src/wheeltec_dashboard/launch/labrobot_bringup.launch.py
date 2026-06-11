@@ -24,7 +24,7 @@
   t=0s 底盘 turn_on_wheeltec_robot（串口驱动 + EKF→odom_combined TF + URDF）
   t=2s 雷达（双雷达 + 融合）、车上相机 /camera/*、机械臂相机 /camera_arm/*
   t=4s Web 仪表盘（rosbridge :9090 + http :8000 + web_video_server :8081 + watchdog）
-  t=6s 语音（麦克风阵列 + 离线识别 + TTS）、可选 lebai 机械臂
+  t=6s 语音（麦克风阵列 + 离线识别 + TTS）、AI 对话(ollama_ros_chat)、可选 lebai 机械臂
 
 导航/VLA 仍用 vla_navigation/vla_bringup.launch.py（其 start_base 等开关可与
 本文件错开，避免重复启动底盘）。
@@ -41,6 +41,19 @@ from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
 from launch.conditions import IfCondition
 from launch.launch_description_sources import AnyLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+
+
+def _opt_node(label, **node_kwargs):
+    """构建一个"可失败"的 Node：所属包缺失时打印警告并跳过（share 目录存在
+    与否作为包已安装的探针，缺包时 Node 在运行期才报错会拖死整个 launch）。"""
+    try:
+        get_package_share_directory(node_kwargs['package'])
+        return [Node(**node_kwargs)]
+    except Exception as exc:  # noqa: BLE001  组件级故障隔离，刻意宽抓
+        msg = f'[labrobot_bringup] 组件 "{label}" 不可用，已跳过: {exc}'
+        print(msg, file=sys.stderr)
+        return [LogInfo(msg=msg)]
 
 
 def _opt_include(label, package, relpath, launch_arguments=None, condition=None):
@@ -98,6 +111,10 @@ def generate_launch_description():
         DeclareLaunchArgument('start_arm', default_value='false',
                               description='lebai LM3 机械臂驱动(MoveIt)。grab_demo 抓取 launch '
                                           '自带驱动，二者别同时开'),
+        DeclareLaunchArgument('start_llm', default_value='true',
+                              description='AI 对话后端 ollama_ros_chat(/chat_service 服务 + '
+                                          'topic_server 流式)。需本机 ollama 在跑，'
+                                          '没跑只报错不影响其它组件'),
         DeclareLaunchArgument('robot_ip', default_value='192.168.0.50',
                               description='lebai 机械臂 IP(start_arm:=true 时用)'),
         DeclareLaunchArgument('http_port', default_value='8000',
@@ -146,6 +163,18 @@ def generate_launch_description():
         launch_arguments={'robot_ip': LaunchConfiguration('robot_ip')},
         condition=IfCondition(start_arm))
 
+    # AI 对话后端：服务模式(/chat_service) + 话题流式模式(topic_server)，
+    # 面板"AI 对话"页签两种 Ollama 后端都能用；DeepSeek API 模式走浏览器直连，
+    # 不需要车端节点。
+    start_llm = LaunchConfiguration('start_llm')
+    llm = (_opt_include(
+        'AI对话(服务)', 'ollama_ros_chat', 'launch/ollama_ros_chat.launch.py',
+        condition=IfCondition(start_llm))
+        + _opt_node(
+        'AI对话(流式)', package='ollama_ros_chat', executable='topic_server',
+        name='ollama_topic_server', output='screen',
+        condition=IfCondition(start_llm)))
+
     ld = LaunchDescription()
     for action in declare_args:
         ld.add_action(action)
@@ -153,5 +182,5 @@ def generate_launch_description():
         ld.add_action(action)
     ld.add_action(TimerAction(period=2.0, actions=lidar + car_camera + arm_camera))
     ld.add_action(TimerAction(period=4.0, actions=dashboard))
-    ld.add_action(TimerAction(period=6.0, actions=voice + arm))
+    ld.add_action(TimerAction(period=6.0, actions=voice + arm + llm))
     return ld

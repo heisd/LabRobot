@@ -6,6 +6,92 @@
 
 ---
 
+## 第 17 轮 — SLAM 地图包内文件直读（无 map_server 也能显示）
+
+### 背景（WSL 测试中地图不显示的根因）
+
+地图层有两道门槛：① 地图数据——`/map` 话题只有 SLAM 建图中才周期发布，
+map_server 的发布是 transient_local，经 rosbridge 的 volatile 订阅收不到，
+只能靠 GetMap 服务兜底；② `map→fixed frame` 的 TF——SLAM/AMCL 没跑就没有。
+WSL 测试时导航栈整套没启动，两道都不满足，与 WSL 本身无关。
+
+### 包内地图文件直读
+
+- "地图航点管理"卡新增**包内地图文件**输入 + "从包加载"按钮（默认
+  `/pkg/wheeltec_nav2/map/WHEELTEC.yaml`）：经面板 HTTP 的 `/pkg/` 路由
+  取地图文件，浏览器自己解析 map_server 格式（YAML 元数据 + P5/P2 PGM
+  位图，含 negate/阈值/origin、PGM↔OccupancyGrid 行序翻转），转成与
+  GetMap 相同的 wpMap 数据——**不依赖 map_server/GetMap，WSL 无硬件、
+  未启动导航时也能看图/标航点**。已用真实 WHEELTEC.pgm（640×640）离线
+  验证解析正确。
+- **GetMap 失败自动兜底**：原"加载地图"按钮与连接时的自动加载在 GetMap
+  失败后自动改读包内文件，无需手动切换。
+- 3D 视图地图层不再静默隐藏：有地图数据但无 map TF（SLAM/AMCL 未跑）时
+  状态栏说明原因，并提示"Fixed frame 填 map 可直接查看"；TF 出现自动清除。
+
+---
+
+## 第 16 轮 — 导航栏"AI 对话"页签（Ollama + DeepSeek API）、顶栏机械臂在线徽标
+
+### AI 对话页签
+
+- 导航栏新增 **AI 对话** 页签（`#chat` 深链），气泡式聊天 UI（Enter 发送 /
+  Shift+Enter 换行、流式光标、清空对话、模型名显示），三种后端可切：
+  - **Ollama · ROS 服务**：经 rosbridge 调 `/chat_service`
+    （`ollama_ros_msgs/srv/Chat`，ollama_ros_chat 的 chat_service 节点），
+    同步等完整回答；
+  - **Ollama · ROS 话题流式**：发 `/chat_message`、按 chunk 订阅
+    `/chat_response` 逐字渲染（topic_server 节点）；他端（终端
+    topic_client）触发的对话也会镜像到面板；
+  - **DeepSeek API（联网）**：浏览器直连 `https://api.deepseek.com`
+    （OpenAI 兼容 `/chat/completions`，SSE 流式），模型可填
+    `deepseek-chat` / `deepseek-reasoner`；API Key/模型/Base URL 存
+    localStorage，**不经任何后端**；上下文前端维护（≤20 条，保 system）。
+- 防呆：生成中锁定发送（3 分钟超时自动解锁）、服务/网络失败把错误写进
+  气泡（含排查提示）、rosbridge 未连时提示切 DeepSeek 后端。
+- `labrobot_bringup.launch.py` 新增 `start_llm`（默认 true）：同时拉起
+  chat_service（服务模式）与 topic_server（流式模式），ollama 没跑只
+  报错不影响其它组件；DeepSeek 模式无需任何车端节点。
+
+### 顶栏机械臂在线徽标
+
+- 此前机械臂在线状态只有"系统总览"架构卡里的小绿点，不够醒目——顶栏
+  （导航栏右侧、控制源旁）新增常驻徽标：`/robot_status` 3 秒内有数据
+  显示**机械臂: 在线**（绿）、断流显示**离线**（红）、未连 rosbridge
+  显示 "—"（灰），任何页签都可见。判活复用既有 `armStatusTime`，与
+  架构卡绿点、sensor_watchdog 的判据一致。
+
+---
+
+## 第 15 轮 — 首页"系统日志"卡 + 底部行自适应布局（不留空白）
+
+### 首页新增"系统日志"卡（/rosout 镜像）
+
+- 系统总览页相机卡右侧的空白区改为"系统日志"卡：与"组件状态"页日志
+  面板**共用同一份 /rosout 缓冲**（同一订阅、同一暂停/清空/缓冲行数），
+  但等级（默认 INFO）/节点过滤/自动滚动是独立的——首页看全局，组件页
+  精查互不干扰。组件掉线（sensor_watchdog ERROR）、串口失败重试等都会
+  第一时间出现在首页。
+
+### 全站页签自适应（任何屏宽不留空白）
+
+- 不止首页：**所有**顶层页签（组件状态/底盘控制/联系作者）与功能模块、
+  机械臂的全部子页都从 `auto-fit` 网格切换为同样的 flex 自适应——卡片
+  按权重铺满整行，放不下自动换行、换行后撑满所在行，宽窄屏均无尾部
+  空白。`card-wide` 改为 `flex: 1 1 100%` 继续占满整行；卡内局部 grid
+  （指标格/teleop 九宫格/相机栅格等）不受影响。
+
+### 底部行自适应（任何屏宽不留空白）
+
+- 遥测 / 图表 / 相机原始流 / 系统日志四张卡包进 `.ov-bottom` flex 容器：
+  按 flex 权重铺满整行（日志卡权重最大，吃掉剩余宽度），放不下时自动
+  换行、换行后同样撑满所在行——宽屏/窄屏/手机都不会再出现尾部空白。
+  之前的 `auto-fit` 网格做不到"末行剩余空间归并给某张卡"。
+- 日志区高度跟随卡片拉伸，与同行的相机卡等高；卡片变窄时相机栅格
+  最小列宽放宽到 240px，避免 360px 把卡撑破。
+
+---
+
 ## 第 14 轮 — 首页双相机原始流卡、URDF TF 兜底显示、一键 bringup
 
 ### 系统总览页新增"相机原始流"卡
