@@ -29,6 +29,8 @@
   let wpCmdPub = null;         // /vla/waypoint_cmd publisher (航点增删, 后端持久化)
   let goalPosePub = null;      // /goal_pose publisher (航点列表"导航"按钮直达)
   let chatMsgPub = null;       // /chat_message publisher (AI 对话·话题流式模式)
+  let rrtClickPub = null;      // /clicked_point publisher (RRT 探索边界选点, 等价 RViz Publish Point)
+  let usTf = null;             // base_footprint 系 TF (超声波 ultrasonic_A..F 安装位姿)
   let lidarSubs = [];      // per-source LaserScan subs (managed separately so
                            // the lidar card can re-subscribe on topic change)
   const lidarLast = {};    // key -> { time, points, min }
@@ -124,6 +126,10 @@
       try { yoloDetSub.unsubscribe(); } catch (_) { /* ignore */ }
       yoloDetSub = null;
     }
+    if (pfSub) {
+      try { pfSub.unsubscribe(); } catch (_) { /* ignore */ }
+      pfSub = null;
+    }
     if (cmdVelPub) {
       try { cmdVelPub.unadvertise(); } catch (_) { /* ignore */ }
       cmdVelPub = null;
@@ -183,6 +189,14 @@
     if (chatMsgPub) {
       try { chatMsgPub.unadvertise(); } catch (_) { /* ignore */ }
       chatMsgPub = null;
+    }
+    if (rrtClickPub) {
+      try { rrtClickPub.unadvertise(); } catch (_) { /* ignore */ }
+      rrtClickPub = null;
+    }
+    if (usTf) {
+      try { usTf.dispose(); } catch (_) { /* ignore */ }
+      usTf = null;
     }
     // 航点列表属于上一个连接的后端, 清掉避免误导; 地图位图保留(重连通常同一张图)
     vlaWaypoints = [];
@@ -444,6 +458,8 @@
       const txt = `vx=${(+vx).toFixed(2)}, wz=${(+wz).toFixed(2)}`;
       const a = $('line-cmd'); if (a) a.textContent = txt;
       const b = $('kcf-cmd'); if (b) b.textContent = txt;
+      const c = $('pf-cmd'); if (c) c.textContent = txt;
+      const d = $('mp-cmd'); if (d) d.textContent = txt;
     }, { throttle_rate: 100 });
 
     // QR line-following (line_follow_qr_fixed: qr_detector + cmd_arbiter).
@@ -508,9 +524,67 @@
     // YOLO 抓取子页: 把识别到的物体渲染成按钮, 点击设为抓取目标(target_label)。
     sub('/yolo/detections', 'yolo_msgs/msg/DetectionArray', renderArmYoloButtons, { throttle_rate: 300 });
 
+    // RRT 自主探索 (wheeltec_robot_rrt / wheeltec_rrt_msg)：边界选点发布 +
+    // 前沿点流订阅。上一次连接的前沿数据属于旧会话，连接时清掉。
+    rrtClickPub = new ROSLIB.Topic({
+      ros, name: '/clicked_point', messageType: 'geometry_msgs/msg/PointStamped',
+    });
+    rrtClickPub.advertise();
+    rrtDetected = [];
+    rrtFrontiers = [];
+    rrtFrontTime = 0;
+    // RRT 树检出的前沿点（流式单点，高频 → 节流并只留最近 300 个画淡蓝点）
+    sub('/detected_frontiers', 'geometry_msgs/msg/PointStamped', (msg) => {
+      const p = (msg && msg.point) || null;
+      if (!p) return;
+      rrtDetected.push({ x: +p.x || 0, y: +p.y || 0 });
+      if (rrtDetected.length > 300) rrtDetected.splice(0, rrtDetected.length - 300);
+    }, { throttle_rate: 200 });
+    // filter 聚类过滤后的候选探索目标（assigner 的输入）
+    sub('/filtered_goal_points', 'wheeltec_rrt_msg/msg/PointArray', (msg) => {
+      rrtFrontiers = ((msg && msg.points) || []).map((p) => ({ x: +p.x || 0, y: +p.y || 0 }));
+      rrtFrontTime = Date.now();
+    }, { throttle_rate: 500 });
+
+    // 超声波转换 (wheeltec_ultrasonic): /Distance → 标准 Range + 点云。
+    // 安装位姿经 base_footprint 系 TF 取 ultrasonic_A..F（静态 TF，随底盘
+    // description launch 发布）；话题 3 秒内有数据 = 转换节点在线。
+    usTf = makeTfClient(ros, 'base_footprint');
+    usOnline = null;
+    Object.keys(usRanges).forEach((k) => { delete usRanges[k]; });
+    usPointsInfo = { n: 0, time: 0 };
+    US_LABELS.forEach((lb) => {
+      sub('/ultrasonic/' + lb, 'sensor_msgs/msg/Range', (msg) => {
+        // 无效/超量程时 converter 发 Infinity，rosbridge 序列化成 null
+        const r = (msg && typeof msg.range === 'number' && isFinite(msg.range)) ? msg.range : null;
+        usRanges[lb] = { range: r, time: Date.now() };
+      }, { throttle_rate: 200 });
+    });
+    sub('/ultrasonic/points', 'sensor_msgs/msg/PointCloud2', (msg) => {
+      const n = (msg && msg.width ? msg.width : 0) * (msg && msg.height ? msg.height : 1);
+      usPointsInfo = { n, time: Date.now() };
+    }, { throttle_rate: 500 });
+
+    // 建图 (wheeltec_robot_slam): Cartographer 跟踪位姿 + ORB-SLAM2 相机位姿。
+    sub('/tracked_pose', 'geometry_msgs/msg/PoseStamped', (msg) => {
+      const el = $('mp-carto-pose');
+      if (!el || !msg.pose) return;
+      const p = msg.pose.position || {};
+      const yaw = yawFromQuat(msg.pose.orientation || { x: 0, y: 0, z: 0, w: 1 });
+      el.textContent = `x=${(+p.x).toFixed(2)}  y=${(+p.y).toFixed(2)}  yaw=${(yaw * 180 / Math.PI).toFixed(1)}°`;
+    }, { throttle_rate: 500 });
+    sub('/RGBD/pose', 'geometry_msgs/msg/PoseStamped', (msg) => {
+      const el = $('mp-orb-pose');
+      if (!el || !msg.pose) return;
+      const p = msg.pose.position || {};
+      el.textContent = `x=${(+p.x).toFixed(2)}  y=${(+p.y).toFixed(2)}  z=${(+p.z).toFixed(2)}`;
+    }, { throttle_rate: 500 });
+
     // Lidar health (fused + per-sensor) and optional YOLO detections.
     subscribeLidar();
     subscribeYolo();
+    // 路径跟随 (wheeltec_path_follow): /followpath 实时路径
+    subscribePathFollow();
 
     // Build viewer + log subscription as part of the connection lifecycle.
     rebuildViewer();
@@ -2318,6 +2392,7 @@
   let wpPose = null;        // { x, y, yaw } 小车当前位姿（map 下）
   let wpSel = null;         // { x, y, yaw } 地图上选中的目标位姿
   let wpMap = null;         // { w, h, res, ox, oy, bmp } 已渲染地图位图
+  let wpMapTime = 0;        // 最近一次地图数据更新时间（建图页新鲜度显示用）
   let wpMapTried = false;   // 本次连接是否已自动尝试 GetMap
   let vlaWaypoints = [];    // 后端广播的航点列表
   let wpFile = '';          // 后端持久化文件路径（显示用）
@@ -2370,6 +2445,7 @@
       oy: grid.info.origin ? grid.info.origin.position.y : 0,
       bmp,
     };
+    wpMapTime = Date.now();
     setWpMapStatus(`${w}×${h} @ ${(+grid.info.resolution).toFixed(3)} m/格`);
     wpRedraw();
   }
@@ -2746,6 +2822,915 @@
       document.execCommand('copy');
     }
   });
+
+  // ---------- 路径跟随 (wheeltec_path_follow) ----------
+  // save_path（录制）与 follow_path.py（回放）都把当前路径发布到 /followpath
+  // (nav_msgs/Path, map 系)：订阅后画在地图上。地图位图(wpMap)与 map 系 TF
+  // 客户端(wpTf)同"地图航点管理"卡共用；节点在线状态靠 ros.getNodes 周期
+  // 查 /save_path、/follow_path 是否存在（路径话题两个节点同名，分不开）。
+  let pfSub = null;        // /followpath 订阅（话题可改，独立管理便于重订）
+  let pfPath = [];         // 话题里的实时路径 [{x, y, yaw}]
+  let pfPathTime = 0;      // 最近一次路径消息到达时间
+  let pfFilePath = [];     // "从包加载预览"解析出的路径
+  const pfNodeState = { save: null, follow: null };   // null=未知（首查不写离线日志）
+
+  function addPfLog(text) { appendTimeline('pf-log', 200, text); }
+
+  function setPfStatus(text) {
+    const el = $('pf-status');
+    if (el) el.textContent = text || '';
+  }
+
+  function subscribePathFollow() {
+    if (pfSub) {
+      try { pfSub.unsubscribe(); } catch (_) { /* ignore */ }
+      pfSub = null;
+    }
+    if (!ros) return;
+    const topic = ((($('pf-topic') || {}).value) || '/followpath').trim();
+    pfSub = new ROSLIB.Topic({
+      ros, name: topic, messageType: 'nav_msgs/msg/Path',
+      throttle_rate: 500, queue_length: 1,
+    });
+    pfSub.subscribe((msg) => {
+      const poses = (msg && msg.poses) || [];
+      pfPath = poses.map((p) => {
+        const pos = (p.pose && p.pose.position) || {};
+        const q = (p.pose && p.pose.orientation) || { x: 0, y: 0, z: 0, w: 1 };
+        return { x: +pos.x || 0, y: +pos.y || 0, yaw: yawFromQuat(q) };
+      });
+      pfPathTime = Date.now();
+      updatePfMetrics();
+      pfRedraw();
+    });
+  }
+
+  // 当前显示的路径：话题有数据用话题（录制/回放进行中），否则用文件预览。
+  function pfActivePath() { return pfPath.length ? pfPath : pfFilePath; }
+
+  function pfLength(pts) {
+    let d = 0;
+    for (let i = 1; i < pts.length; i++) {
+      d += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    }
+    return d;
+  }
+
+  function updatePfMetrics() {
+    const pts = pfActivePath();
+    const src = pfPath.length ? '话题' : (pfFilePath.length ? '文件预览' : '');
+    const pEl = $('pf-points');
+    if (pEl) pEl.textContent = pts.length ? (pts.length + ' 点（' + src + '）') : '—';
+    const lEl = $('pf-length');
+    if (lEl) lEl.textContent = pts.length > 1 ? pfLength(pts).toFixed(2) + ' m' : '— m';
+  }
+
+  // 视图变换：有地图按地图（与航点卡同一公式），没有按路径外包框自适应。
+  function pfView(canvas) {
+    const wrap = canvas.parentElement;
+    const maxW = Math.max(240, Math.min((wrap && wrap.clientWidth) || 640, 900));
+    if (wpMap) {
+      const s = maxW / wpMap.w;
+      const h = Math.max(140, Math.round(wpMap.h * s));
+      return {
+        w: maxW, h, map: true,
+        toCanvas: (wx, wy) => ({
+          x: (wx - wpMap.ox) / wpMap.res * s,
+          y: h - (wy - wpMap.oy) / wpMap.res * s,
+        }),
+      };
+    }
+    const pts = pfPath.concat(pfFilePath);
+    const tf = wpTf ? wpTf.lookup('base_footprint') : null;
+    if (tf) pts.push({ x: tf.translation.x, y: tf.translation.y });
+    if (!pts.length) return null;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    pts.forEach((p) => {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    });
+    minX -= 0.5; maxX += 0.5; minY -= 0.5; maxY += 0.5;   // 0.5m 边距
+    const s = Math.min(maxW / (maxX - minX), 480 / (maxY - minY));
+    const w = Math.max(240, Math.round((maxX - minX) * s));
+    const h = Math.max(140, Math.round((maxY - minY) * s));
+    return {
+      w, h, map: false,
+      toCanvas: (wx, wy) => ({ x: (wx - minX) * s, y: h - (wy - minY) * s }),
+    };
+  }
+
+  function drawPfPolyline(ctx, view, pts, color, dashed) {
+    if (!pts.length) return;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.setLineDash(dashed ? [6, 4] : []);
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const c = view.toCanvas(p.x, p.y);
+      if (i === 0) ctx.moveTo(c.x, c.y);
+      else ctx.lineTo(c.x, c.y);
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // 起点绿点 / 终点红点
+    const s0 = view.toCanvas(pts[0].x, pts[0].y);
+    ctx.fillStyle = '#3fb950';
+    ctx.beginPath(); ctx.arc(s0.x, s0.y, 4, 0, Math.PI * 2); ctx.fill();
+    if (pts.length > 1) {
+      const s1 = view.toCanvas(pts[pts.length - 1].x, pts[pts.length - 1].y);
+      ctx.fillStyle = '#f85149';
+      ctx.beginPath(); ctx.arc(s1.x, s1.y, 4, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function pfRedraw() {
+    const canvas = $('pf-map');
+    if (!canvas || !canvas.offsetParent) return;   // 子页不可见时不画
+    const ctx = canvas.getContext('2d');
+    const view = pfView(canvas);
+    if (!view) {
+      // 既无地图也无路径：占位提示
+      const wrap = canvas.parentElement;
+      const w = Math.max(240, Math.min((wrap && wrap.clientWidth) || 640, 900));
+      if (canvas.width !== w || canvas.height !== 160) { canvas.width = w; canvas.height = 160; }
+      ctx.fillStyle = '#161b22';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '13px sans-serif';
+      ctx.fillText('等待路径数据…（订阅 ' + ((($('pf-topic') || {}).value) || '/followpath') +
+        '，或点"从包加载预览"）', 12, 84);
+      return;
+    }
+    if (canvas.width !== view.w || canvas.height !== view.h) {
+      canvas.width = view.w;
+      canvas.height = view.h;
+    }
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, view.w, view.h);
+    if (view.map) {
+      ctx.drawImage(wpMap.bmp, 0, 0, view.w, view.h);
+    } else {
+      ctx.fillStyle = '#161b22';
+      ctx.fillRect(0, 0, view.w, view.h);
+    }
+    drawPfPolyline(ctx, view, pfFilePath, '#d29922', true);   // 文件预览：黄虚线
+    drawPfPolyline(ctx, view, pfPath, '#58a6ff', false);      // 实时话题：蓝实线
+    // 小车实时位姿（绿色箭头，map 系 TF 与航点卡共用）
+    const tf = wpTf ? wpTf.lookup('base_footprint') : null;
+    if (tf) {
+      drawWpArrow(ctx, view.toCanvas(tf.translation.x, tf.translation.y),
+        yawFromQuat(tf.rotation), '#3fb950', 9);
+    }
+  }
+
+  // 节点上线即读其参数显示在面板上（录制/回放各自的 pathfilename 等）。
+  function pfReadNodeParams(kind) {
+    const node = kind === 'save' ? '/save_path' : '/follow_path';
+    const names = kind === 'save' ? ['pathfilename'] : ['pathfilename', 'run_in_loop'];
+    paramService(node, 'get_parameters').callService(
+      new ROSLIB.ServiceRequest({ names }), (res) => {
+        const vals = (res && res.values) || [];
+        const file = (vals[0] && vals[0].type === PT_STRING) ? vals[0].string_value : '';
+        if (!file) return;
+        if (kind === 'save') {
+          const el = $('pf-rec-file');
+          if (el) el.textContent = file;
+        } else {
+          const loop = (vals[1] && vals[1].type === PT_BOOL) ? vals[1].bool_value : null;
+          const el = $('pf-follow-cfg');
+          if (el) el.textContent = file + (loop === null ? '' : (loop ? ' · 循环' : ' · 单次'));
+        }
+      }, () => { /* 节点刚退出等竞态，忽略 */ });
+  }
+
+  function setPfNodeMetric(id, on) {
+    const el = $(id);
+    if (!el) return;
+    el.textContent = on === null ? '—' : (on ? '在线' : '离线');
+    el.classList.remove('ok', 'warn', 'err');
+    if (on) el.classList.add('ok');
+  }
+
+  // 节点在线轮询（仅子页可见时）：边沿写事件日志 + 上线时读参数。
+  setInterval(() => {
+    const panel = $('subpanel-path');
+    if (!panel || !panel.offsetParent) return;
+    if (!ros) {
+      pfNodeState.save = null;
+      pfNodeState.follow = null;
+      setPfNodeMetric('pf-save-node', null);
+      setPfNodeMetric('pf-follow-node', null);
+      return;
+    }
+    ros.getNodes((nodes) => {
+      const list = nodes || [];
+      const now = {
+        save: list.indexOf('/save_path') !== -1,
+        follow: list.indexOf('/follow_path') !== -1,
+      };
+      ['save', 'follow'].forEach((k) => {
+        if (pfNodeState[k] !== now[k]) {
+          // 首查 null→离线 不写日志，避免每次连接都刷一条"离线"
+          if (pfNodeState[k] !== null || now[k]) {
+            const label = k === 'save' ? '录制节点 save_path' : '回放节点 follow_path';
+            addPfLog(label + (now[k] ? ' 已上线'
+              : (' 已退出' + (k === 'save' ? '（save_path 退出时才写盘保存路径文件）' : ''))));
+          }
+          if (now[k]) pfReadNodeParams(k);
+          pfNodeState[k] = now[k];
+        }
+        setPfNodeMetric(k === 'save' ? 'pf-save-node' : 'pf-follow-node', now[k]);
+      });
+    }, () => { /* getNodes 偶发失败忽略，下个周期重试 */ });
+  }, 3000);
+
+  // 周期刷新（仅子页可见时）：路径数据新鲜度 + 重绘（小车箭头在动）。
+  setInterval(() => {
+    const canvas = $('pf-map');
+    if (!canvas || !canvas.offsetParent) return;
+    const fEl = $('pf-fresh');
+    if (fEl) {
+      if (!pfPathTime) {
+        fEl.textContent = ros ? '—（无数据，录制/回放节点未发布）' : '未连接';
+        fEl.classList.remove('ok');
+      } else {
+        const age = (Date.now() - pfPathTime) / 1000;
+        fEl.classList.toggle('ok', age < 3);
+        fEl.textContent = age < 3 ? '实时更新中' : Math.round(age) + ' 秒前';
+      }
+    }
+    pfRedraw();
+  }, 1000);
+
+  // 包内路径文件预览：经 /pkg/ 路由直读 share 里的路径文本（每行 "x y yaw"，
+  // EOP 结尾），浏览器解析后画黄虚线 —— 不启动任何节点也能看已录路径。
+  function pfLoadFile() {
+    const path = ((($('pf-file') || {}).value) || '').trim();
+    if (!path) { setPfStatus('未填路径文件'); return; }
+    setPfStatus('加载路径文件…');
+    fetch(path).then((resp) => {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status + '：' + path);
+      return resp.text();
+    }).then((text) => {
+      const pts = [];
+      for (const line of text.split(/\r?\n/)) {
+        if (line.trim() === 'EOP') break;
+        const tok = line.trim().split(/\s+/);
+        if (tok.length !== 3) continue;
+        const x = parseFloat(tok[0]);
+        const y = parseFloat(tok[1]);
+        if (Number.isNaN(x) || Number.isNaN(y)) continue;
+        pts.push({ x, y, yaw: parseFloat(tok[2]) || 0 });
+      }
+      if (!pts.length) throw new Error('文件里没有有效路径点（每行应为 "x y yaw"）');
+      pfFilePath = pts;
+      setPfStatus('文件预览 ' + pts.length + ' 点 · ' + pfLength(pts).toFixed(2) + ' m');
+      addPfLog('已加载包内路径文件预览（' + pts.length + ' 点）');
+      updatePfMetrics();
+      pfRedraw();
+    }).catch((err) => {
+      setPfStatus('加载失败：' + ((err && err.message) || err) +
+        '（wheeltec_dashboard 重编译启用 /pkg/ 路由了吗？文件在包 share 的 path/ 里吗？）');
+    });
+  }
+
+  const pfApply = $('pf-apply');
+  if (pfApply) pfApply.addEventListener('click', () => {
+    if (!ros) { setPfStatus('未连接 rosbridge'); return; }
+    pfPath = [];
+    pfPathTime = 0;
+    subscribePathFollow();
+    updatePfMetrics();
+    pfRedraw();
+    setPfStatus('已重新订阅 ' + ((($('pf-topic') || {}).value) || '/followpath'));
+  });
+  const pfFileLoad = $('pf-file-load');
+  if (pfFileLoad) pfFileLoad.addEventListener('click', pfLoadFile);
+  const pfClear = $('pf-clear');
+  if (pfClear) pfClear.addEventListener('click', () => {
+    pfPath = [];
+    pfFilePath = [];
+    pfPathTime = 0;
+    updatePfMetrics();
+    pfRedraw();
+    setPfStatus('');
+  });
+
+  // 回放前的辅助：把车先 Nav2 到路径起点（follow_path.py 自己也会先去起点，
+  // 这里只是手动预摆位/单独导航用），直发 /goal_pose，有二次确认。
+  const pfGotoStart = $('pf-goto-start');
+  if (pfGotoStart) pfGotoStart.addEventListener('click', () => {
+    const pts = pfActivePath();
+    if (!pts.length) { setCardMsg('pf-msg', '当前没有路径（先收到 /followpath 或加载文件预览）'); return; }
+    if (!goalPosePub) { setCardMsg('pf-msg', '未连接 rosbridge'); return; }
+    const p0 = pts[0];
+    if (!window.confirm('导航到路径起点 (x=' + p0.x.toFixed(2) + ', y=' + p0.y.toFixed(2) +
+        ')？小车将开始移动（需 Nav2 已启动并定位）。')) return;
+    const yaw = +(p0.yaw || 0);
+    goalPosePub.publish(new ROSLIB.Message({
+      header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
+      pose: {
+        position: { x: p0.x, y: p0.y, z: 0 },
+        orientation: { x: 0, y: 0, z: Math.sin(yaw / 2), w: Math.cos(yaw / 2) },
+      },
+    }));
+    setCardMsg('pf-msg', '已发布 /goal_pose → 路径起点');
+    addPfLog('> 导航到路径起点 x=' + p0.x.toFixed(2) + ' y=' + p0.y.toFixed(2));
+  });
+  const pfLogClear = $('pf-log-clear');
+  if (pfLogClear) pfLogClear.addEventListener('click', () => {
+    const v = $('pf-log');
+    if (v) v.innerHTML = '';
+  });
+
+  // ---------- 建图 (wheeltec_robot_slam: GMapping / Cartographer / Toolbox / ORB) ----------
+  // 四种建图方式都在机器人端 launch 启动；面板负责：实时显示 /map 生长
+  // （地图位图 wpMap、map 系 TF 客户端 wpTf 与航点卡共用）、用 ros.getNodes
+  // 判活各 SLAM 节点推断当前模式、调 slam_toolbox / ORB-SLAM2 的保存服务。
+  const MP_NODE_LABELS = {
+    '/slam_gmapping': 'GMapping (slam_gmapping)',
+    '/cartographer_node': 'Cartographer (cartographer_node)',
+    '/occupancy_grid_node': 'Cartographer 栅格节点 (occupancy_grid_node)',
+    '/slam_toolbox': 'Slam Toolbox (slam_toolbox)',
+    '/orb_slam2_rgbd': 'ORB-SLAM2 (orb_slam2_rgbd)',
+    '/octomap_server': 'ORB-SLAM2 八叉树 (octomap_server)',
+    '/global_rrt': 'RRT 探索·全局检测 (global_rrt)',
+    '/local_rrt': 'RRT 探索·局部检测 (local_rrt)',
+    '/filter': 'RRT 探索·前沿过滤 (filter)',
+    '/assigner': 'RRT 探索·任务分配 (assigner)',
+  };
+  // 模式归属判定只看各自的主节点（栅格/octomap 是从属节点，单独亮灯）。
+  const MP_MODES = [
+    { label: 'GMapping', node: '/slam_gmapping' },
+    { label: 'Cartographer', node: '/cartographer_node' },
+    { label: 'Slam Toolbox', node: '/slam_toolbox' },
+    { label: 'ORB-SLAM2', node: '/orb_slam2_rgbd' },
+  ];
+  const mpNodeState = {};   // 节点名 -> true/false（undefined=未知，首查不写离线日志）
+
+  function addMpLog(text) { appendTimeline('mp-log', 200, text); }
+
+  function updateMpActive() {
+    const el = $('mp-active');
+    if (!el) return;
+    const on = MP_MODES.filter((m) => mpNodeState[m.node]).map((m) => m.label);
+    el.classList.remove('ok', 'warn', 'err');
+    if (!on.length) {
+      el.textContent = ros ? '无（未检测到 SLAM 节点）' : '未连接';
+    } else if (on.length === 1) {
+      el.textContent = on[0];
+      el.classList.add('ok');
+    } else {
+      // 多种 SLAM 同时在跑会互抢 map→odom TF，标红提醒
+      el.textContent = on.join(' + ') + '（同时建图会冲突！）';
+      el.classList.add('err');
+    }
+  }
+
+  // 节点在线轮询（仅"建图"页可见时）：徽标 + 模式推断 + 边沿事件日志。
+  setInterval(() => {
+    const panel = $('panel-mapping');
+    if (!panel || !panel.offsetParent) return;
+    const badges = Array.from(document.querySelectorAll('[data-mpnode]'));
+    if (!ros) {
+      badges.forEach((el) => {
+        el.textContent = '—';
+        el.classList.remove('ok', 'warn', 'err');
+      });
+      Object.keys(mpNodeState).forEach((k) => { delete mpNodeState[k]; });
+      updateMpActive();
+      return;
+    }
+    ros.getNodes((nodes) => {
+      const list = nodes || [];
+      badges.forEach((el) => {
+        const node = el.dataset.mpnode;
+        const on = list.indexOf(node) !== -1;
+        if (mpNodeState[node] !== on) {
+          // 首查 undefined→离线 不写日志，避免每次进页刷一排"离线"
+          if (mpNodeState[node] !== undefined || on) {
+            addMpLog((MP_NODE_LABELS[node] || node) + (on ? ' 已上线' : ' 已退出'));
+          }
+          mpNodeState[node] = on;
+        }
+        el.textContent = on ? '在线' : '离线';
+        el.classList.remove('ok', 'warn', 'err');
+        if (on) el.classList.add('ok');
+      });
+      updateMpActive();
+    }, () => { /* getNodes 偶发失败忽略，下个周期重试 */ });
+  }, 3000);
+
+  // 实时地图视图 + 指标刷新（仅画布可见时）。
+  function mpRedraw() {
+    const canvas = $('mp-map');
+    if (!canvas || !canvas.offsetParent) return;
+    const ctx = canvas.getContext('2d');
+    const wrap = canvas.parentElement;
+    const maxW = Math.max(240, Math.min((wrap && wrap.clientWidth) || 640, 900));
+    if (!wpMap) {
+      if (canvas.width !== maxW || canvas.height !== 160) { canvas.width = maxW; canvas.height = 160; }
+      ctx.fillStyle = '#161b22';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '13px sans-serif';
+      ctx.fillText('等待 /map …（启动下方任一建图 launch 后地图会在这里实时生长）', 12, 84);
+      return;
+    }
+    const s = maxW / wpMap.w;
+    const h = Math.max(140, Math.round(wpMap.h * s));
+    if (canvas.width !== maxW || canvas.height !== h) {
+      canvas.width = maxW;
+      canvas.height = h;
+    }
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, maxW, h);
+    ctx.drawImage(wpMap.bmp, 0, 0, maxW, h);
+    const tf = wpTf ? wpTf.lookup('base_footprint') : null;
+    if (tf) {
+      drawWpArrow(ctx, {
+        x: (tf.translation.x - wpMap.ox) / wpMap.res * s,
+        y: h - (tf.translation.y - wpMap.oy) / wpMap.res * s,
+      }, yawFromQuat(tf.rotation), '#3fb950', 9);
+    }
+  }
+
+  setInterval(() => {
+    const canvas = $('mp-map');
+    if (!canvas || !canvas.offsetParent) return;
+    const infoEl = $('mp-map-info');
+    if (infoEl) {
+      infoEl.textContent = wpMap
+        ? `${wpMap.w}×${wpMap.h} @ ${(+wpMap.res).toFixed(3)} m/格`
+        : '—';
+    }
+    const freshEl = $('mp-map-fresh');
+    if (freshEl) {
+      if (!wpMapTime) {
+        freshEl.textContent = '—';
+        freshEl.classList.remove('ok');
+      } else {
+        const age = (Date.now() - wpMapTime) / 1000;
+        // SLAM 建图中 /map 订阅按 2s 节流，5s 内有帧即视为实时
+        freshEl.classList.toggle('ok', age < 5);
+        freshEl.textContent = age < 5 ? '实时更新中' : Math.round(age) + ' 秒前';
+      }
+    }
+    const tfEl = $('mp-tf');
+    if (tfEl) {
+      const tf = wpTf ? wpTf.lookup('base_footprint') : null;
+      tfEl.classList.remove('ok');
+      if (tf) {
+        const yaw = yawFromQuat(tf.rotation);
+        tfEl.textContent = `x=${tf.translation.x.toFixed(2)}  y=${tf.translation.y.toFixed(2)}  yaw=${(yaw * 180 / Math.PI).toFixed(1)}°`;
+        tfEl.classList.add('ok');
+      } else {
+        tfEl.textContent = ros ? '无 map TF（SLAM 未跑或尚未初始化）' : '未连接';
+      }
+    }
+    if (!wpMap && ros && !wpMapTried) { wpMapTried = true; fetchWpMap(); }
+    mpRedraw();
+  }, 1000);
+
+  // 保存服务（slam_toolbox / ORB-SLAM2 提供服务接口，可直接面板内保存；
+  // gmapping/cartographer 没有保存服务，走通用 map_saver_cli 终端命令）。
+  function mpCallService(name, type, req, msgId, okText) {
+    if (!ros) { setCardMsg(msgId, '未连接 rosbridge'); return; }
+    setCardMsg(msgId, '调用 ' + name + ' …');
+    const srv = new ROSLIB.Service({ ros, name, serviceType: type });
+    srv.callService(new ROSLIB.ServiceRequest(req), (res) => {
+      // slam_toolbox 返回 int32 result（0=成功），ORB 返回 bool success
+      let ok = true;
+      let detail = '';
+      if (res && typeof res.result === 'number') {
+        ok = res.result === 0;
+        if (!ok) detail = 'result=' + res.result;
+      } else if (res && typeof res.success === 'boolean') {
+        ok = res.success;
+      }
+      setCardMsg(msgId, ok ? okText : ('失败' + (detail ? '（' + detail + '）' : '')));
+      addMpLog('> ' + name + ' → ' + (ok ? '成功' : '失败 ' + detail));
+    }, (err) => {
+      setCardMsg(msgId, '调用失败：' + err + '（对应建图节点在跑吗？）');
+      addMpLog('> ' + name + ' 调用失败: ' + err);
+    });
+  }
+
+  const mpTbSave = $('mp-tb-save');
+  if (mpTbSave) mpTbSave.addEventListener('click', () => {
+    const n = ((($('mp-tb-name') || {}).value) || 'WHEELTEC').trim() || 'WHEELTEC';
+    // SaveMap 请求字段是 std_msgs/String，要包一层 { data: … }
+    mpCallService('/slam_toolbox/save_map', 'slam_toolbox/srv/SaveMap',
+      { name: { data: n } }, 'mp-tb-msg', '已保存 ' + n + '.pgm/.yaml（节点工作目录）');
+  });
+  const mpTbSerialize = $('mp-tb-serialize');
+  if (mpTbSerialize) mpTbSerialize.addEventListener('click', () => {
+    const f = ((($('mp-tb-file') || {}).value) || 'WHEELTEC_posegraph').trim() || 'WHEELTEC_posegraph';
+    mpCallService('/slam_toolbox/serialize_map', 'slam_toolbox/srv/SerializePoseGraph',
+      { filename: f }, 'mp-tb-msg', '已序列化 ' + f + '.posegraph/.data（节点工作目录）');
+  });
+  const mpOrbSave = $('mp-orb-save');
+  if (mpOrbSave) mpOrbSave.addEventListener('click', () => {
+    const n = ((($('mp-orb-name') || {}).value) || 'map.bin').trim() || 'map.bin';
+    mpCallService('/RGBD/save_map', 'orb_slam2_ros/srv/SaveMap',
+      { name: n }, 'mp-orb-msg', '已保存特征地图 ' + n + '（节点工作目录）');
+  });
+  const mpOrbCloud = $('mp-orb-cloud');
+  if (mpOrbCloud) mpOrbCloud.addEventListener('click', () => {
+    const n = ((($('mp-orb-name') || {}).value) || 'map.bin').trim() || 'map.bin';
+    mpCallService('/RGBD/save_cloud', 'orb_slam2_ros/srv/SaveCloud',
+      { name: n }, 'mp-orb-msg', '已保存点云（savePCDDirectory 目录）');
+  });
+  const mpLogClear = $('mp-log-clear');
+  if (mpLogClear) mpLogClear.addEventListener('click', () => {
+    const v = $('mp-log');
+    if (v) v.innerHTML = '';
+  });
+
+  // ---- RRT 自主探索 (wheeltec_robot_rrt + wheeltec_rrt_msg 接口包) ----
+  // 探索由 /clicked_point 的 5 个点引导：前 4 个为边界多边形顶点（逆时针、
+  // 须把小车圈在内），第 5 个为 RRT 起始点（发布后探索立即开始）。这里把
+  // RViz "Publish Point" 的交互搬进面板：点地图画布即发点，并叠加显示
+  // RRT 检出前沿(/detected_frontiers)与候选目标(/filtered_goal_points)。
+  let rrtPicked = [];      // 本面板已发布的选点 [{x,y}]（节点端无法撤回，仅显示用）
+  let rrtDetected = [];    // /detected_frontiers 最近 300 个检出前沿
+  let rrtFrontiers = [];   // /filtered_goal_points 当前候选目标
+  let rrtFrontTime = 0;    // 最近一次候选目标更新时间
+
+  function setRrtStatus(text) {
+    const el = $('mp-rrt-status');
+    if (el) el.textContent = text || '';
+  }
+
+  function rrtPublishPoint(x, y) {
+    if (!rrtClickPub) { setRrtStatus('未连接 rosbridge'); return false; }
+    rrtClickPub.publish(new ROSLIB.Message({
+      header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
+      point: { x, y, z: 0 },
+    }));
+    return true;
+  }
+
+  function updateRrtPickText() {
+    const el = $('mp-rrt-pick');
+    if (!el) return;
+    const n = rrtPicked.length;
+    el.classList.remove('ok', 'warn');
+    if (!n) {
+      el.textContent = '0/5 — 在地图上点第 1 个边界顶点（逆时针圈定区域）';
+    } else if (n < 4) {
+      el.textContent = n + '/5 — 继续点边界顶点（逆时针）';
+      el.classList.add('warn');
+    } else if (n === 4) {
+      el.textContent = '4/5 — 最后在小车附近点起始点（发布后探索开始）';
+      el.classList.add('warn');
+    } else {
+      el.textContent = '5/5 — 边界与起始点已发布，探索进行中';
+      el.classList.add('ok');
+    }
+  }
+
+  function mpRrtRedraw() {
+    const canvas = $('mp-rrt-map');
+    if (!canvas || !canvas.offsetParent) return;
+    const ctx = canvas.getContext('2d');
+    const wrap = canvas.parentElement;
+    const maxW = Math.max(240, Math.min((wrap && wrap.clientWidth) || 640, 900));
+    if (!wpMap) {
+      canvas._view = null;
+      if (canvas.width !== maxW || canvas.height !== 160) { canvas.width = maxW; canvas.height = 160; }
+      ctx.fillStyle = '#161b22';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '13px sans-serif';
+      ctx.fillText('等待 /map …（先启动 SLAM/探索 launch，出图后在这里点 5 个点圈定探索区域）', 12, 84);
+      return;
+    }
+    const s = maxW / wpMap.w;
+    const h = Math.max(140, Math.round(wpMap.h * s));
+    if (canvas.width !== maxW || canvas.height !== h) {
+      canvas.width = maxW;
+      canvas.height = h;
+    }
+    canvas._view = { s, h };   // pointer 事件换算用
+    const toC = (wx, wy) => ({
+      x: (wx - wpMap.ox) / wpMap.res * s,
+      y: h - (wy - wpMap.oy) / wpMap.res * s,
+    });
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, maxW, h);
+    ctx.drawImage(wpMap.bmp, 0, 0, maxW, h);
+    // RRT 检出前沿（淡蓝小点，最近 300 个）
+    ctx.fillStyle = 'rgba(88, 166, 255, 0.45)';
+    rrtDetected.forEach((p) => {
+      const c = toC(p.x, p.y);
+      ctx.fillRect(c.x - 1.5, c.y - 1.5, 3, 3);
+    });
+    // 过滤后的候选探索目标（红点）
+    ctx.fillStyle = '#f85149';
+    rrtFrontiers.forEach((p) => {
+      const c = toC(p.x, p.y);
+      ctx.beginPath(); ctx.arc(c.x, c.y, 4, 0, Math.PI * 2); ctx.fill();
+    });
+    // 边界多边形（黄线 + 顶点）与起始点（绿点）
+    const bnd = rrtPicked.slice(0, 4);
+    if (bnd.length) {
+      ctx.strokeStyle = '#d29922';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      bnd.forEach((p, i) => {
+        const c = toC(p.x, p.y);
+        if (!i) ctx.moveTo(c.x, c.y);
+        else ctx.lineTo(c.x, c.y);
+      });
+      if (bnd.length === 4) ctx.closePath();
+      ctx.stroke();
+      ctx.fillStyle = '#d29922';
+      bnd.forEach((p) => {
+        const c = toC(p.x, p.y);
+        ctx.beginPath(); ctx.arc(c.x, c.y, 3.5, 0, Math.PI * 2); ctx.fill();
+      });
+    }
+    if (rrtPicked.length >= 5) {
+      const c = toC(rrtPicked[4].x, rrtPicked[4].y);
+      ctx.fillStyle = '#3fb950';
+      ctx.beginPath(); ctx.arc(c.x, c.y, 5, 0, Math.PI * 2); ctx.fill();
+    }
+    // 小车实时位姿（绿色箭头）
+    const tf = wpTf ? wpTf.lookup('base_footprint') : null;
+    if (tf) {
+      drawWpArrow(ctx, toC(tf.translation.x, tf.translation.y),
+        yawFromQuat(tf.rotation), '#3fb950', 9);
+    }
+  }
+
+  // 画布单击选点（不用拖朝向——/clicked_point 只要位置）
+  (function initRrtMapPick() {
+    const canvas = $('mp-rrt-map');
+    if (!canvas) return;
+    canvas.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const view = canvas._view;
+      if (!view || !wpMap) {
+        setRrtStatus('还没有地图——先启动 SLAM/探索 launch，等 /map 出现再选点');
+        return;
+      }
+      if (rrtPicked.length >= 5) {
+        setRrtStatus('已发布 5 个点；重选需重启 rrt_exploration 后点【重新选点】再点图');
+        return;
+      }
+      const r = canvas.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      const cx = (e.clientX - r.left) * (canvas.width / r.width);
+      const cy = (e.clientY - r.top) * (canvas.height / r.height);
+      const wx = cx / view.s * wpMap.res + wpMap.ox;
+      const wy = (view.h - cy) / view.s * wpMap.res + wpMap.oy;
+      if (rrtPicked.length === 4 &&
+          !window.confirm('发布起始点 (x=' + wx.toFixed(2) + ', y=' + wy.toFixed(2) +
+            ')？RRT 收到第 5 个点后探索立即开始、小车将自主移动。')) return;
+      if (!rrtPublishPoint(wx, wy)) return;
+      rrtPicked.push({ x: wx, y: wy });
+      addMpLog('> RRT 选点 ' + rrtPicked.length + '/5 → /clicked_point (x=' + wx.toFixed(2) +
+        ', y=' + wy.toFixed(2) + ')' + (rrtPicked.length === 5 ? '（探索开始）' : ''));
+      setRrtStatus('');
+      updateRrtPickText();
+      mpRrtRedraw();
+      e.preventDefault();
+    });
+  })();
+
+  // 一键方形边界：以小车当前位姿为中心发 4 顶点（逆时针，与
+  // boundary_publisher.py 同序）+ 小车位置为第 5 个起始点。
+  const mpRrtSquare = $('mp-rrt-square');
+  if (mpRrtSquare) mpRrtSquare.addEventListener('click', () => {
+    if (!rrtClickPub) { setRrtStatus('未连接 rosbridge'); return; }
+    const tf = wpTf ? wpTf.lookup('base_footprint') : null;
+    if (!tf) { setRrtStatus('没有小车位姿（map→base_footprint TF）——SLAM 跑起来了吗？'); return; }
+    const half = Math.max(1, +((($('mp-rrt-size') || {}).value) || 5));
+    const cx = tf.translation.x;
+    const cy = tf.translation.y;
+    if (!window.confirm('以小车 (x=' + cx.toFixed(2) + ', y=' + cy.toFixed(2) + ') 为中心发布 ±' +
+        half + 'm 方形边界 + 起始点？发布完成后探索立即开始、小车将自主移动。')) return;
+    const pts = [
+      { x: cx + half, y: cy + half }, { x: cx - half, y: cy + half },
+      { x: cx - half, y: cy - half }, { x: cx + half, y: cy - half },
+      { x: cx, y: cy },
+    ];
+    for (const p of pts) {
+      if (!rrtPublishPoint(p.x, p.y)) return;
+    }
+    rrtPicked = pts;
+    addMpLog('> RRT 方形边界已发布（中心 x=' + cx.toFixed(2) + ' y=' + cy.toFixed(2) +
+      '，±' + half + 'm，探索开始）');
+    setRrtStatus('方形边界 + 起始点已发布');
+    updateRrtPickText();
+    mpRrtRedraw();
+  });
+
+  const mpRrtReset = $('mp-rrt-reset');
+  if (mpRrtReset) mpRrtReset.addEventListener('click', () => {
+    rrtPicked = [];
+    setRrtStatus('已清面板选点显示（RRT 节点端已收的点不会撤回，需重启 rrt_exploration 再重点）');
+    updateRrtPickText();
+    mpRrtRedraw();
+  });
+
+  // RRT 子页周期刷新（仅画布可见时）：候选目标数/新鲜度 + 选点进度 + 重绘。
+  setInterval(() => {
+    const canvas = $('mp-rrt-map');
+    if (!canvas || !canvas.offsetParent) return;
+    const fEl = $('mp-rrt-frontiers');
+    if (fEl) {
+      if (!rrtFrontTime) {
+        fEl.textContent = ros ? '—（filter 未发布）' : '未连接';
+        fEl.classList.remove('ok');
+      } else {
+        const age = (Date.now() - rrtFrontTime) / 1000;
+        fEl.classList.toggle('ok', age < 5 && rrtFrontiers.length > 0);
+        fEl.textContent = rrtFrontiers.length + ' 个' +
+          (age < 5 ? '（实时）' : '（' + Math.round(age) + ' 秒前）');
+      }
+    }
+    updateRrtPickText();
+    if (!wpMap && ros && !wpMapTried) { wpMapTried = true; fetchWpMap(); }
+    mpRrtRedraw();
+  }, 1000);
+
+  // ---------- 超声波转换 (wheeltec_ultrasonic) ----------
+  // supersonic_converter 把下位机 /Distance(Supersonic 多路打包, 源头是
+  // 固件 19 字节超声波帧 0xFA…0xFC)拆成标准 /ultrasonic/A..F(Range)与
+  // /ultrasonic/points(点云, base_footprint 系)供 Nav2 避障。面板按
+  // ultrasonic_A..F 的 TF 真实安装位姿画俯视波束图；话题有数据=节点在线，
+  // 上线边沿自动读参数（节点只在启动时读参，运行中改不生效，故不做调参）。
+  const US_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
+  const usRanges = {};            // 'A'.. -> { range|null(∞/无效), time }
+  let usPointsInfo = { n: 0, time: 0 };
+  let usOnline = null;            // 话题判活状态（null=未知）
+  const usCfg = { type: '', minR: 0.02, maxR: 0.8, fov: 0.5, cloud: null };
+
+  function usReadParams() {
+    paramService('/supersonic_converter', 'get_parameters').callService(
+      new ROSLIB.ServiceRequest({
+        names: ['robot_type', 'min_range', 'max_range', 'field_of_view', 'publish_pointcloud'],
+      }), (res) => {
+        const v = (res && res.values) || [];
+        if (v[0] && v[0].type === PT_STRING) usCfg.type = v[0].string_value;
+        if (v[1] && v[1].type === PT_DOUBLE) usCfg.minR = v[1].double_value;
+        if (v[2] && v[2].type === PT_DOUBLE) usCfg.maxR = v[2].double_value;
+        if (v[3] && v[3].type === PT_DOUBLE) usCfg.fov = v[3].double_value;
+        if (v[4] && v[4].type === PT_BOOL) usCfg.cloud = v[4].bool_value;
+        const el = $('us-cfg');
+        if (el) {
+          el.textContent = (usCfg.type || '?') + ' · ' + usCfg.minR.toFixed(2) + '–' +
+            usCfg.maxR.toFixed(2) + ' m · FOV ' + usCfg.fov.toFixed(2) + ' rad · 点云' +
+            (usCfg.cloud === false ? '关' : '开');
+        }
+      }, () => { /* 节点刚退出等竞态，忽略 */ });
+  }
+
+  function usDraw() {
+    const canvas = $('us-top');
+    if (!canvas || !canvas.offsetParent) return;
+    const wrap = canvas.parentElement;
+    const W = Math.max(240, Math.min((wrap && wrap.clientWidth) || 480, 640));
+    const H = 240;
+    if (canvas.width !== W || canvas.height !== H) {
+      canvas.width = W;
+      canvas.height = H;
+    }
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#161b22';
+    ctx.fillRect(0, 0, W, H);
+
+    // 传感器位姿：TF 优先；缺失时按均匀扇形近似摆放（A 左 → F 右）
+    const labels = usCfg.type === 's300_mini' ? US_LABELS.slice(0, 5) : US_LABELS;
+    const sensors = labels.map((lb, i) => {
+      const tf = usTf ? usTf.lookup('ultrasonic_' + lb) : null;
+      if (tf) {
+        return { lb, x: tf.translation.x, y: tf.translation.y, yaw: yawFromQuat(tf.rotation), approx: false };
+      }
+      return { lb, x: 0, y: 0, yaw: ((labels.length - 1) / 2 - i) * (Math.PI / 6), approx: true };
+    });
+    const anyTf = sensors.some((s) => !s.approx);
+
+    const maxR = usCfg.maxR || 0.8;
+    let extX = 0.3, extY = 0.3;
+    sensors.forEach((s) => {
+      extX = Math.max(extX, s.x + maxR);
+      extY = Math.max(extY, Math.abs(s.y) + maxR);
+    });
+    // 车头朝上：世界 x(前)→画布上、y(左)→画布左
+    const ox = W / 2;
+    const oy = H - 34;
+    const k = Math.min((oy - 16) / extX, (W / 2 - 16) / extY);
+    const toC = (wx, wy) => ({ x: ox - wy * k, y: oy - wx * k });
+
+    // 量程刻度弧线（每 0.25m，前半圆）
+    ctx.strokeStyle = 'rgba(139, 148, 158, 0.18)';
+    ctx.fillStyle = 'rgba(139, 148, 158, 0.55)';
+    ctx.font = '10px sans-serif';
+    ctx.lineWidth = 1;
+    for (let r = 0.25; r <= extX + 0.01; r += 0.25) {
+      ctx.beginPath();
+      ctx.arc(ox, oy, r * k, Math.PI, 2 * Math.PI);
+      ctx.stroke();
+      ctx.fillText(r.toFixed(2), ox + 3, oy - r * k - 2);
+    }
+
+    // 各路波束扇形
+    const now = Date.now();
+    const half = (usCfg.fov || 0.5) / 2;
+    sensors.forEach((s) => {
+      const st = usRanges[s.lb];
+      const fresh = st && (now - st.time) < 2500;
+      const r = (fresh && typeof st.range === 'number') ? st.range : null;
+      const valid = r !== null && r > 0;
+      const beamR = valid ? r : maxR;
+      const p0 = toC(s.x, s.y);
+      // 世界 yaw=0(正前) → 画布 -90°；yaw 增大(左转) → 画布角减小
+      const a0 = -Math.PI / 2 - s.yaw - half;
+      const a1 = -Math.PI / 2 - s.yaw + half;
+      ctx.beginPath();
+      ctx.moveTo(p0.x, p0.y);
+      ctx.arc(p0.x, p0.y, beamR * k, a0, a1);
+      ctx.closePath();
+      if (valid) {
+        const col = r < 0.3 ? '248, 81, 73' : (r < 0.6 ? '210, 153, 34' : '63, 185, 80');
+        ctx.fillStyle = 'rgba(' + col + ', 0.28)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(' + col + ', 0.9)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      } else {
+        ctx.strokeStyle = 'rgba(139, 148, 158, 0.35)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      // 传感器位置点 + 字母与读数（沿波束方向外侧）
+      ctx.fillStyle = '#58a6ff';
+      ctx.beginPath(); ctx.arc(p0.x, p0.y, 2.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = valid ? '#e6edf3' : 'rgba(139, 148, 158, 0.8)';
+      ctx.font = '11px sans-serif';
+      const tip = toC(s.x + Math.cos(s.yaw) * (beamR + 0.08), s.y + Math.sin(s.yaw) * (beamR + 0.08));
+      ctx.fillText(s.lb + (valid ? ' ' + r.toFixed(2) : ' ∞'), tip.x - 10, tip.y);
+    });
+
+    // 小车示意（base_footprint 原点 + 航向三角，车头朝上）
+    ctx.fillStyle = '#3fb950';
+    ctx.beginPath();
+    ctx.moveTo(ox, oy - 10);
+    ctx.lineTo(ox - 6, oy + 6);
+    ctx.lineTo(ox + 6, oy + 6);
+    ctx.closePath();
+    ctx.fill();
+    if (!anyTf) {
+      ctx.fillStyle = 'rgba(210, 153, 34, 0.9)';
+      ctx.font = '11px sans-serif';
+      ctx.fillText('无 ultrasonic_* TF——按近似角度摆放（启动底盘后为真实安装位姿）', 10, 14);
+    }
+  }
+
+  // 周期刷新（仅卡片可见时）：判活/上线读参 + 点云指标 + 俯视图重绘。
+  setInterval(() => {
+    const canvas = $('us-top');
+    if (!canvas || !canvas.offsetParent) return;
+    const now = Date.now();
+    let latest = 0;
+    US_LABELS.forEach((lb) => {
+      const s = usRanges[lb];
+      if (s && s.time > latest) latest = s.time;
+    });
+    const on = !!(ros && latest && (now - latest) < 3000);
+    if (on !== usOnline) {
+      if (on) usReadParams();
+      usOnline = on;
+    }
+    const convEl = $('us-conv');
+    if (convEl) {
+      convEl.textContent = !ros ? '未连接' : (on ? '在线' : '离线（converter launch 未启动？）');
+      convEl.classList.remove('ok', 'err');
+      if (on) convEl.classList.add('ok');
+    }
+    const ptsEl = $('us-points');
+    if (ptsEl) {
+      if (!usPointsInfo.time) {
+        ptsEl.textContent = usCfg.cloud === false ? '已关闭 (publish_pointcloud=false)' : '—';
+        ptsEl.classList.remove('ok');
+      } else {
+        const age = (now - usPointsInfo.time) / 1000;
+        ptsEl.classList.toggle('ok', age < 3);
+        ptsEl.textContent = usPointsInfo.n + ' 点' +
+          (age < 3 ? '（实时）' : '（' + Math.round(age) + ' 秒前）');
+      }
+    }
+    usDraw();
+  }, 500);
 
   // ---------- 机械臂 (Lebai LM3: lebai_driver + grab_demo) ----------
   // 状态显示走 /robot_status、/gripper_status、/joint_states 等话题；控制走
@@ -3801,6 +4786,11 @@
     });
 
     initTabGroup({
+      btnSel: '.map-subtab-btn', key: 'mapsubtab', panelSel: '.map-subtab-panel', prefix: 'map-subpanel-',
+      onActivate: (val) => kickVisibleFnStreams($('map-subpanel-' + val)),
+    });
+
+    initTabGroup({
       btnSel: '.arm-subtab-btn', key: 'armsubtab', panelSel: '.arm-subtab-panel', prefix: 'arm-subpanel-',
       onActivate: (val) => kickVisibleFnStreams($('arm-subpanel-' + val)),
     });
@@ -3823,6 +4813,10 @@
         if (tabBtn) tabBtn.click();
         if (el.dataset.subtab) {
           const b = document.querySelector(`.subtab-btn[data-subtab="${el.dataset.subtab}"]`);
+          if (b) b.click();
+        }
+        if (el.dataset.mapsubtab) {
+          const b = document.querySelector(`.map-subtab-btn[data-mapsubtab="${el.dataset.mapsubtab}"]`);
           if (b) b.click();
         }
         if (el.dataset.armsubtab) {

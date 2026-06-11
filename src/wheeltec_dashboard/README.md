@@ -65,7 +65,7 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
 
 页面顶部为导航栏，按机器人本体的两个部分 —— **Wheeltec 底盘** 与
 **Lebai 机械臂** —— 分组（也支持 `#overview`、`#components`、`#control`、
-`#function`、`#arm`、`#chat`、`#contact` 锚点深链）。顶栏右侧常驻
+`#function`、`#mapping`、`#arm`、`#chat`、`#contact` 锚点深链）。顶栏右侧常驻
 **机械臂在线徽标**（`/robot_status` 3 秒内有数据=在线绿、断流=离线红、
 未连 rosbridge=灰）：
 
@@ -80,10 +80,17 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
     车载相机/雷达1/雷达2/IMU/下位机 STM32/Lebai 机械臂/机械臂相机 绿红灯，
     udev 别名→占用串口→USB 设备 ID）、下位机 STM32F407（示意图 +
     串口在线检测 + 固件使能位 + 低压禁动 + 回充模式回读 + 事件日志）、
-    雷达（双雷达融合健康）、超声波、语音组件、相机预览、`/rosout` 日志面板
+    雷达（双雷达融合健康）、超声波（原始值 + wheeltec_ultrasonic 俯视
+    波束图/Range/点云）、语音组件、相机预览、`/rosout` 日志面板
   - **底盘控制**：速度控制（遥控 + 安全等级）、自动回充、RGB 灯带、参数调节
   - **功能模块**（含子页面）：巡线、KCF 跟踪、YOLO 检测、骨架识别、
+    路径跟随（wheeltec_path_follow 录制/回放可视化）、
     VLA 语音导航（含航点标定助手）
+  - **建图**（含子页面，wheeltec_robot_slam 四种 SLAM 方式 + RRT 自主探索）：
+    GMapping、Cartographer、Slam Toolbox、ORB-SLAM2（RGB-D 视觉）、
+    RRT 自主探索（wheeltec_robot_rrt/wheeltec_rrt_msg，地图上点 5 点圈定
+    边界即开始全自主建图）——共用 /map 实时建图视图 + 节点判活，
+    Toolbox/ORB 支持面板内保存
 - **Lebai 机械臂**
   - **监控与抓取**（含子页面）：监控与控制、HSV / YOLO / KCF / ArUco / VLM
     五种 grab_demo 抓取方案
@@ -98,6 +105,17 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
 - **雷达**：订阅融合 `/scan` 与单雷达 `/scan1`/`/scan2`（`sensor_msgs/LaserScan`），
   显示每路在线状态、有效点数与融合最近障碍距离。融合由 `double_lidar_fusion`
   完成；点云可视化见"系统总览"3D 视图。
+- **超声波**（`wheeltec_ultrasonic`）：上排显示下位机原始 `/Distance`
+  （固件 `ultrasonic_task` 分组采集 → 19 字节 `0xFA…0xFC` 帧，A–F 各
+  int16 毫米值）；**俯视波束图**按 `ultrasonic_A..F` TF 的真实安装位姿
+  （随底盘 description launch 按 ROBOT_TYPE 发布，无 TF 时按均匀扇形
+  近似）画各路扇形波束——长度=测距、近红/中黄/远绿、灰虚线=∞/无效，
+  量程刻度弧线每 0.25m；`supersonic_converter` 节点以 `/ultrasonic/*`
+  话题 3 秒内有数据判在线，上线自动读取 robot_type / min_range /
+  max_range / field_of_view / publish_pointcloud 显示（节点仅启动时读参，
+  不做在线调参）；`/ultrasonic/points` 点云显示点数与新鲜度。Nav2 联用：
+  `range_sensor_layer` 填 `/ultrasonic/A`–`F`（大写），`obstacle/voxel_layer`
+  订阅 `/ultrasonic/points`。
 - **语音组件**：来自 `wheeltec_mic` 的麦克风初始化 `/voice_flag`、唤醒
   `/awake_flag`、声源角 `/awake_angle`、识别 `/voice_words`，并可向
   `/tts_text` 发文本播报（经 `tts_make`）。
@@ -126,6 +144,53 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
   按钮发布 `/mode`（1=姿态交互 2=跟随，切跟随需确认）与 `/recoveryid`
   （找回锁定目标）；`/body_follower` 的 bodyfollow_x_p/x_d/z_p/z_d PID
   可在线调。启动 `ros2 launch bodyreader bodyfollow.launch.py`。
+- **路径跟随**（`wheeltec_path_follow`）：订阅 `/followpath`（nav_msgs/Path，
+  map 系）把**录制/回放中的路径实时画在地图上**——地图位图与 VLA 航点子页
+  共用（/map 话题 + GetMap + 包内地图文件三级兜底），没有地图时按路径外包框
+  自适应显示；绿箭头=小车实时位姿、蓝线=话题实时路径（绿点起点/红点终点）、
+  黄虚线=文件预览。录制节点 `/save_path` 与回放节点 `/follow_path` 的在线
+  状态用 `ros.getNodes` 周期判活（路径话题两个节点同名分不开），上线自动
+  读取 `pathfilename` / `run_in_loop` 参数显示在面板，上线/退出边沿写入
+  事件时间线（save_path **Ctrl+C 退出时才写盘保存**）。"从包加载预览"经
+  `/pkg/` 路由直读包 share 里的路径文本（每行 `x y yaw`、`EOP` 结尾），
+  不启动任何节点也能查看已录路径；"导航到路径起点"直发 `/goal_pose`
+  （二次确认），方便回放前预摆位。回放经 Nav2 action 执行，面板遥控/WASD
+  （经 nav_arbiter）可随时打断；录制/回放节点仍用终端 launch 启动
+  （`save_path.launch.py` / `follow_path.launch.py`，见子页提示）。
+- **建图**（`wheeltec_robot_slam`，独立导航栏页签 `#mapping`，含四个子页）：
+  - **共用"建图实时状态"卡**：`/map` 实时建图视图（地图位图与 VLA 航点卡
+    同源——SLAM 建图中 `/map` 话题每 2s 刷新 + GetMap 兜底；绿箭头=小车
+    实时位姿）、当前建图模式（按节点判活自动推断，**同时检测到多种 SLAM
+    会标红提醒冲突**）、地图尺寸/分辨率/更新新鲜度、`map→base_footprint`
+    定位状态、当前 `/cmd_vel`（建图页可直接 WASD 遥控）、建图事件时间线
+    （SLAM 节点上线/退出边沿 + 保存结果）。
+  - **GMapping**（`slam_gmapping`）：粒子滤波 2D 激光 SLAM，节点
+    `/slam_gmapping` 判活；启动/保存命令见子页提示。
+  - **Cartographer**（`wheeltec_cartographer`）：图优化 2D SLAM，
+    `/cartographer_node`、`/occupancy_grid_node` 双节点判活 +
+    `/tracked_pose` 实时跟踪位姿显示。
+  - **Slam Toolbox**（`wheeltec_slam_toolbox`）：async/sync 两种在线建图；
+    **面板内保存**——调 `/slam_toolbox/save_map`（生成 pgm+yaml）与
+    `/slam_toolbox/serialize_map`（posegraph 序列化、可续建），文件写在
+    机器人端节点工作目录。
+  - **ORB-SLAM2**（`orb_slam2_ros`，仅 RGB-D 可执行）：特征点叠加调试图
+    `/RGBD/debug_image`（MJPEG 实时预览）、相机位姿 `/RGBD/pose`、
+    `/orb_slam2_rgbd` + `/octomap_server` 判活；**面板内保存**——调
+    `/RGBD/save_map`（特征地图，可重定位加载）与 `/RGBD/save_cloud`（PCD
+    点云）。
+  - **RRT 自主探索**（`wheeltec_robot_rrt` + `wheeltec_rrt_msg` 接口包）：
+    把 RViz "Publish Point" 圈边界的交互搬进面板——**在地图画布上依次点
+    5 个点**（前 4 个为边界多边形顶点·逆时针、第 5 个为 RRT 起始点，每点
+    一个即发 `/clicked_point`，第 5 点有二次确认，发布后探索立即开始），
+    或填半边长**一键以小车为中心发布方形边界**（与 boundary_publisher.py
+    同序）；画布叠加显示 RRT 检出前沿 `/detected_frontiers`（淡蓝点，最近
+    300 个）、filter 聚类后的候选目标 `/filtered_goal_points`
+    （`wheeltec_rrt_msg/PointArray`，红点）、边界多边形（黄线）、起始点与
+    小车实时位姿；`/global_rrt`、`/local_rrt`、`/filter`、`/assigner` 四
+    节点判活（共用建图页 getNodes 轮询与事件时间线）；候选目标数/新鲜度
+    指标。注意节点端收下的点无法撤回，点错需重启 rrt_exploration launch。
+  - 通用保存：`ros2 launch wheeltec_nav2 save_map.launch.py`（map_saver_cli
+    双备份到 wheeltec_nav2/map/WHEELTEC，与导航及本面板默认地图路径一致）。
 - **下发命令解析**：驱动把发给下位机的 11 字节控制帧回发到
   `/robot_serial_tx`（需重编译），面板按通信协议表解析模式选择位
   （0=速度控制 / 1、2=自动回充 / 3=红外对接速度 / 4=灯带 RGB）、目标速度

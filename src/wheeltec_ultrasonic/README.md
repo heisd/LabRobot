@@ -96,6 +96,14 @@ ros2 topic echo /ultrasonic/points    # 查看融合点云
 #   - 固定坐标系设为 base_footprint,各路 Range 会以对应 ultrasonic_X frame 显示
 ```
 
+## 仪表盘可视化
+
+`wheeltec_dashboard` "组件状态"页的超声波卡已接入本包：按 `ultrasonic_A..F`
+TF 的真实安装位姿绘制**俯视波束图**（扇形长度=测距、近红/中黄/远绿、
+∞=灰虚线），`/ultrasonic/*` 话题判活转换节点在线状态，上线自动读取
+robot_type / 量程 / FOV / 点云开关参数，`/ultrasonic/points` 显示点数与
+新鲜度。详见 `src/wheeltec_dashboard/README.md`。
+
 ## 注意事项
 
 1. 必须先编译 `robot_interfaces` 包,否则无法识别 `Supersonic` 消息。

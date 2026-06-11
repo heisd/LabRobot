@@ -6,6 +6,119 @@
 
 ---
 
+## 第 21 轮 — 超声波卡接入 wheeltec_ultrasonic（俯视波束图 + Range/点云）
+
+### 超声波卡升级（组件状态页）
+
+- 原"超声波 (m)"卡升级：保留 `/Distance` A–F 原始值，新增
+  `wheeltec_ultrasonic`（`supersonic_converter`）整合。
+- **俯视波束图**：新增 canvas，按 `ultrasonic_A..F` TF 的**真实安装位姿**
+  （base_footprint 系独立 TF 客户端，静态 TF 随底盘 description launch
+  发布）画各路扇形波束——扇形长度=测距、FOV 取节点参数，近红(<0.3m)/
+  中黄(<0.6m)/远绿、灰虚线=无效或超量程(∞)，量程刻度弧线每 0.25m，
+  s300_mini 自动隐藏 F 路；无 TF 时按均匀扇形近似摆放并提示。
+- **转换节点判活**：`/ultrasonic/A..F`（sensor_msgs/Range）3 秒内有数据
+  即在线（converter 把无效值发成 Infinity，rosbridge 序列化为 null，已
+  处理）；上线边沿自动读 robot_type / min_range / max_range /
+  field_of_view / publish_pointcloud 显示在卡内——节点只在启动时读参，
+  运行中 set 不生效，故不提供调参（提示里注明需重启 launch 传参）。
+- **点云指标**：`/ultrasonic/points`（PointCloud2，≤6 点很轻量）显示
+  点数与新鲜度，publish_pointcloud=false 时显示"已关闭"。
+- 提示写明完整数据链路（对照仓库内固件源码 `sensor_ranger.c` /
+  `data_task.c`）：固件 ultrasonic_task 分组采集防串扰 → 19 字节
+  `0xFA…0xFC` 帧（A–F int16 毫米、BCC、字节 13–16 新固件恒 0）→
+  `/Distance` → converter 拆成 Range/点云；Nav2 接法
+  （range_sensor_layer 大写话题 / voxel_layer 订 points）。
+
+---
+
+## 第 20 轮 — 建图页签新增"RRT 自主探索"子页（wheeltec_robot_rrt / wheeltec_rrt_msg）
+
+### RRT 自主探索子页
+
+- "建图"页签新增第五个子页 **RRT 自主探索**（系统总览架构卡加"RRT 探索"
+  入口芯片），把 `wheeltec_robot_rrt`（接口包 `wheeltec_rrt_msg`）的全自主
+  建图接入面板。
+- **边界选点搬进面板**：探索由 `/clicked_point` 的 5 个点引导（前 4 个为
+  边界多边形顶点·逆时针，第 5 个为 RRT 起始点）——原本要在 RViz 用
+  Publish Point 点，现在**直接在面板地图画布上点**，每点一个即发布；
+  第 5 个点（探索立即开始、小车自主移动）有二次确认。已点的点画黄线
+  多边形 + 绿色起始点。
+- **一键方形边界**：填半边长（默认 5m）以小车当前位姿为中心自动发布
+  4 顶点 + 起始点（逆时针，与 boundary_publisher.py 同序），免手点。
+- **前沿点可视化**：订阅 `/detected_frontiers`（RRT 检出前沿流，节流
+  200ms、保留最近 300 个画淡蓝点）与 `/filtered_goal_points`
+  （`wheeltec_rrt_msg/msg/PointArray`，filter 聚类后的候选目标画红点）；
+  指标卡显示候选目标数与新鲜度。
+- **节点判活**：`/global_rrt`、`/local_rrt`、`/filter`、`/assigner` 加入
+  建图页统一的 `[data-mpnode]` getNodes 轮询与事件时间线（RRT 不算 SLAM
+  模式，不参与"当前建图模式"推断——它需配合 SLAM 一起跑）。
+- 注意事项写进子页提示：RRT 节点端收下的点无法撤回（重选需重启
+  rrt_exploration launch）、边界须把小车圈在内、手动遥控经 nav_arbiter
+  可打断当前探索目标、包名 wheeltec_robot_rrt（目录带 2）。
+
+---
+
+## 第 19 轮 — 导航栏新增"建图"页签（wheeltec_robot_slam 四种 SLAM 方式）
+
+### 建图页签
+
+- 导航栏 Wheeltec 底盘组新增 **建图** 页签（`#mapping` 深链，系统总览
+  架构卡加"SLAM 建图"入口芯片），把 `wheeltec_robot_slam` 下的四种建图
+  方式接入面板，四个子页：**GMapping / Cartographer / Slam Toolbox /
+  ORB-SLAM2（RGB-D 视觉）**。
+- **共用"建图实时状态"卡**（子页导航上方）：
+  - `/map` 实时建图视图——地图位图与 VLA 航点卡同源（SLAM 建图中 `/map`
+    话题每 2s 刷新 + GetMap 兜底），绿箭头为小车实时位姿；建图页直接
+    WASD 即可遥控（全局键盘遥控本就跨页签生效）。
+  - 当前建图模式按节点判活自动推断；**同时检测到多种 SLAM 在跑标红提醒**
+    （会互抢 map→odom TF）。
+  - 地图尺寸/分辨率、更新新鲜度（ingestWpMap 记录 wpMapTime）、
+    `map→base_footprint` 定位状态、当前 `/cmd_vel`、建图事件时间线。
+- **各子页**：
+  - GMapping：`/slam_gmapping` 判活 + 启动/调参/保存说明。
+  - Cartographer：`/cartographer_node`、`/occupancy_grid_node` 判活 +
+    `/tracked_pose` 实时位姿。
+  - Slam Toolbox：`/slam_toolbox` 判活 + **面板内保存按钮**
+    （`/slam_toolbox/save_map`、`/slam_toolbox/serialize_map`，注意
+    SaveMap 请求字段是 std_msgs/String 需包 `{ data: … }`；返回
+    int32 result==0 判成功）。
+  - ORB-SLAM2：`/RGBD/debug_image` 特征点画面 MJPEG 预览（fn-img 惰性
+    启动复用）、`/RGBD/pose` 相机位姿、`/orb_slam2_rgbd` +
+    `/octomap_server` 判活、**面板内保存按钮**（`/RGBD/save_map`、
+    `/RGBD/save_cloud`，bool success 判成功）。
+- 实现细节：第三组子页 tab（`.map-subtab-btn`/`data-mapsubtab`，与功能
+  模块、机械臂两组互不干扰，arch-link 支持 `data-mapsubtab` 直达）；
+  节点判活 `[data-mpnode]` 数据驱动（getNodes 每 3s，仅页签可见时），
+  地图视图/指标 1s 刷新（仅画布可见时）。
+
+---
+
+## 第 18 轮 — 功能模块新增"路径跟随"子页（wheeltec_path_follow）
+
+### 路径跟随子页
+
+- 功能模块新增 **路径跟随** 子页（系统总览架构卡同步加入口芯片）：
+  把 `wheeltec_path_follow` 的路径录制（`save_path`）/ 路径回放
+  （`follow_path.py`）接入面板。
+- **地图路径可视化**：订阅 `/followpath`（nav_msgs/Path，map 系，话题名
+  可改），录制/回放中的路径实时画在地图上——蓝实线 + 绿点起点/红点终点，
+  绿箭头为小车实时位姿（map 系 TF 客户端与航点卡共用）；地图位图复用
+  VLA 航点子页的 wpMap（/map 话题 + GetMap + 包内地图文件三级兜底），
+  **没有地图时按路径外包框自适应**也能看轨迹形状。
+- **节点在线状态**：`/save_path`、`/follow_path` 用 `ros.getNodes` 每 3s
+  判活（两个节点发的路径话题同名，话题层面分不开）；上线自动经
+  `get_parameters` 读 `pathfilename` / `run_in_loop` 显示在面板；上线/退出
+  边沿写入"路径跟随事件"时间线（save_path 退出=写盘时机，特别标注）。
+- **包内路径文件预览**：经 `/pkg/wheeltec_path_follow/path/…` 路由直读
+  share 里的路径文本（每行 `x y yaw`、`EOP` 结尾，浏览器解析），黄虚线
+  叠加显示——不启动任何节点也能查看编译时安装的已录路径。
+- **导航到路径起点**：直发 `/goal_pose`（二次确认）方便回放前预摆位；
+  指标卡含路径点数/路径长度/路径更新新鲜度/当前 `/cmd_vel`。
+- 仅子页可见时才轮询与重绘（offsetParent 判可见，与航点卡同款节流）。
+
+---
+
 ## 第 17 轮 — SLAM 地图包内文件直读（无 map_server 也能显示）
 
 ### 背景（WSL 测试中地图不显示的根因）

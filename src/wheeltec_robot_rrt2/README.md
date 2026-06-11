@@ -138,6 +138,13 @@ ros2 launch wheeltec_robot_rrt rrt_assigner.launch.py
 #    前 4 个点构成探索区域多边形,第 5 个点为机器人初始点
 ```
 
+## 仪表盘可视化
+
+无需 RViz 也可圈定探索区域：`wheeltec_dashboard` 的 **建图 → RRT 自主探索**
+子页可直接在浏览器地图上点 5 个点（或一键以小车为中心发布方形边界）发布
+`/clicked_point`，并实时叠加显示检出前沿、候选目标与四个探索节点的在线
+状态。详见 `src/wheeltec_dashboard/README.md`。
+
 ## 注意事项
 
 1. 包名为 `wheeltec_robot_rrt`(注意目录名带 `2`)。

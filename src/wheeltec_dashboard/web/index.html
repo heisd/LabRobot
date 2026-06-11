@@ -34,6 +34,7 @@
       <button class="tab-btn" data-tab="components">组件状态</button>
       <button class="tab-btn" data-tab="control">底盘控制</button>
       <button class="tab-btn" data-tab="function">功能模块</button>
+      <button class="tab-btn" data-tab="mapping">建图</button>
       <span class="nav-group-label">Lebai 机械臂</span>
       <button class="tab-btn" data-tab="arm">监控与抓取</button>
       <span class="nav-group-label nav-group-end"></span>
@@ -59,10 +60,13 @@
               <button class="arch-link" data-tab="components">雷达 / 超声</button>
               <button class="arch-link" data-tab="components">语音 / 相机</button>
               <button class="arch-link" data-tab="control">速度控制</button>
+              <button class="arch-link" data-tab="mapping">SLAM 建图</button>
+              <button class="arch-link" data-tab="mapping" data-mapsubtab="rrt">RRT 探索</button>
               <button class="arch-link" data-tab="function" data-subtab="line">巡线</button>
               <button class="arch-link" data-tab="function" data-subtab="kcf">KCF 跟随</button>
               <button class="arch-link" data-tab="function" data-subtab="yolo">YOLO 检测</button>
               <button class="arch-link" data-tab="function" data-subtab="body">骨架识别</button>
+              <button class="arch-link" data-tab="function" data-subtab="path">路径跟随</button>
               <button class="arch-link" data-tab="function" data-subtab="vla">VLA 语音导航</button>
             </div>
           </div>
@@ -315,7 +319,7 @@
       </section>
 
       <section class="card">
-        <h2>超声波 (m)</h2>
+        <h2>超声波 <span class="muted">(/Distance · wheeltec_ultrasonic)</span></h2>
         <div id="sonar-grid" class="sonar-grid">
           <div class="sonar"><span class="sl">A</span><span id="s-a" class="sv">—</span></div>
           <div class="sonar"><span class="sl">B</span><span id="s-b" class="sv">—</span></div>
@@ -324,6 +328,39 @@
           <div class="sonar"><span class="sl">E</span><span id="s-e" class="sv">—</span></div>
           <div class="sonar"><span class="sl">F</span><span id="s-f" class="sv">—</span></div>
         </div>
+        <div class="us-top-wrap">
+          <canvas id="us-top"></canvas>
+        </div>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">转换节点 (supersonic_converter)</div>
+            <div id="us-conv" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">避障点云 (/ultrasonic/points)</div>
+            <div id="us-points" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">转换参数（启动时读取）</div>
+            <div id="us-cfg" class="metric-value">—</div>
+          </div>
+        </div>
+        <p class="hint"><strong>数据链路</strong>：下位机固件（<code>firmware/KeilSingleChipProject</code> 的
+          <code>sensor_ranger.c</code>，FreeRTOS <code>ultrasonic_task</code> 按分组触发各探头防互相串扰）把 A–F 六路测距按
+          <strong>int16 毫米值</strong>打进 19 字节超声波帧（<code>0xFA…0xFC</code>，含 BCC 校验，字节 13–16 新固件恒 0）随 20Hz
+          上行帧发出 → <code>turn_on_wheeltec_robot</code> 校验后发布 <code>/Distance</code>（上排 A–F 原始值）。
+          <strong>俯视图</strong>按
+          <code>ultrasonic_A..F</code> TF 的真实安装位姿（底盘 description launch 按 <code>ROBOT_TYPE</code> 发布）画各路波束：
+          扇形长度=测距，<span style="color:var(--err)">红</span>&lt;0.3m /
+          <span style="color:var(--warn)">黄</span>&lt;0.6m / <span style="color:var(--ok)">绿</span>=更远，
+          灰色虚线=无效或超量程（∞）；无 TF 时按均匀扇形近似摆放。
+          <strong>wheeltec_ultrasonic</strong>（<code>supersonic_converter</code>）把 <code>/Distance</code> 拆成标准
+          <code>sensor_msgs/Range</code>（<code>/ultrasonic/A</code>…<code>/ultrasonic/F</code>，注意大写；mini 无 F）
+          与 <code>/ultrasonic/points</code> 点云（base_footprint 系），供 Nav2 避障消费——
+          <code>range_sensor_layer</code> 填 A–F 话题，<code>obstacle/voxel_layer</code> 订阅 points。
+          启动：<code>ros2 launch wheeltec_ultrasonic supersonic+converter.launch.py</code>
+          （wheeltec_nav2 启用超声避障时会自动包含）。"转换节点"以 <code>/ultrasonic/*</code> 话题 3 秒内有数据判在线；
+          参数（机型/量程/FOV/点云开关）在节点上线时自动读取，<strong>仅启动时生效</strong>，修改需重启 launch 传参。</p>
       </section>
 
       <section class="card">
@@ -560,6 +597,7 @@
         <button class="subtab-btn" data-subtab="kcf">KCF 跟踪</button>
         <button class="subtab-btn" data-subtab="yolo">YOLO 检测</button>
         <button class="subtab-btn" data-subtab="body">骨架识别</button>
+        <button class="subtab-btn" data-subtab="path">路径跟随</button>
         <button class="subtab-btn" data-subtab="vla">VLA 语音导航</button>
       </nav>
 
@@ -832,6 +870,85 @@
         </section>
       </div>
 
+      <!-- 路径跟随 (wheeltec_path_follow) -->
+      <div class="subtab-panel" id="subpanel-path">
+        <section class="card card-wide">
+          <h2>路径录制 / 路径跟随 <span class="muted">(wheeltec_path_follow)</span></h2>
+          <div class="wp-map-toolbar">
+            <label>路径话题
+              <input id="pf-topic" type="text" value="/followpath" />
+            </label>
+            <button id="pf-apply" type="button">应用</button>
+            <label>包内路径文件（/pkg/ 路由）
+              <input id="pf-file" type="text" value="/pkg/wheeltec_path_follow/path/wheeltec_path" />
+            </label>
+            <button id="pf-file-load" type="button">从包加载预览</button>
+            <button id="pf-clear" type="button">清空显示</button>
+            <span id="pf-status" class="muted"></span>
+          </div>
+          <div class="wp-map-wrap">
+            <canvas id="pf-map"></canvas>
+          </div>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">录制节点 (/save_path)</div>
+              <div id="pf-save-node" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">回放节点 (/follow_path)</div>
+              <div id="pf-follow-node" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">路径点数</div>
+              <div id="pf-points" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">路径长度</div>
+              <div id="pf-length" class="metric-value">— m</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">路径更新 (/followpath)</div>
+              <div id="pf-fresh" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">当前 /cmd_vel</div>
+              <div id="pf-cmd" class="metric-value">vx=0.00, wz=0.00</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">录制文件 (save_path 参数)</div>
+              <div id="pf-rec-file" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">回放设置 (follow_path 参数)</div>
+              <div id="pf-follow-cfg" class="metric-value">—</div>
+            </div>
+          </div>
+          <div class="rc-btns">
+            <button id="pf-goto-start" type="button">导航到路径起点</button>
+            <span id="pf-msg" class="muted"></span>
+          </div>
+          <div class="vla-timeline-head">
+            <span>路径跟随事件</span>
+            <button id="pf-log-clear">清空</button>
+          </div>
+          <div id="pf-log" class="vla-timeline"></div>
+          <p class="hint"><strong>用法</strong>：① <strong>录制</strong>——先启动底盘并有 <code>map→base_link</code> TF（SLAM 建图或 Nav2 定位中），
+            <code>ros2 launch wheeltec_path_follow save_path.launch.py pathfilename:=$HOME/my_path.txt</code>，
+            再用键盘/本面板遥控小车走一遍期望路径——录到的轨迹经 <code>/followpath</code>（nav_msgs/Path）实时画在上图（蓝线）；
+            <strong>Ctrl+C 退出节点时才写盘保存</strong>（录制节点"已退出"事件即写盘时机）。
+            ② <strong>回放</strong>——确保 Nav2 已启动且定位正确，
+            <code>ros2 launch wheeltec_path_follow follow_path.launch.py pathfilename:=$HOME/my_path.txt run_in_loop:=True</code>：
+            先 NavigateToPose 去路径起点，再按 FollowPath 沿录制轨迹行驶，<code>run_in_loop:=True</code> 循环往复；
+            回放经 Nav2 action 执行，<strong>本面板遥控/WASD（经 nav_arbiter）可随时打断</strong>。
+            上图地图位图与"VLA 语音导航"子页的地图航点管理共用（/map 话题 + GetMap + 包内地图文件三级兜底）；没有地图时按路径外包框自适应显示。
+            绿箭头=小车实时位姿（map 系），蓝线=话题实时路径（绿点起点/红点终点），黄虚线=文件预览。
+            "从包加载预览"经面板 HTTP 的 <code>/pkg/</code> 路由直读 <code>wheeltec_path_follow</code> 包 share 里的路径文本（<strong>编译时安装的副本</strong>——新录的文件要么直接看话题实时路径，要么放进包内 <code>path/</code> 重编译）。
+            "导航到路径起点"直发 <code>/goal_pose</code>，方便回放前先把车摆到起点附近。
+            注意：两个 launch 的 <code>pathfilename</code> 默认值写死在 <code>/home/wheeltec/…</code>，部署到其他用户/机器时务必用参数覆盖；
+            录制依赖里程计与定位质量，打滑多的地面轨迹会变形。</p>
+        </section>
+      </div>
+
       <!-- VLA 语音导航 -->
       <div class="subtab-panel" id="subpanel-vla">
         <section class="card card-wide">
@@ -921,6 +1038,238 @@
           </div>
           <div id="wp-list" class="wp-list"></div>
           <p class="hint"><strong>用法</strong>：先建好图并启动定位（<code>vla_bringup.launch.py</code> 含 Nav2 + map_server），地图会自动加载（也可点"加载地图"，服务默认 <code>/map_server/map</code>；SLAM 建图中则直接订阅 <code>/map</code> 实时刷新）。在地图上<strong>按下选位置、拖动定朝向</strong>（同 RViz 2D Goal Pose），或点"用当前位姿"取小车所在点；填名字点【保存到机器人】→ <code>vla_navigator</code> <strong>立即生效</strong>（说"去厨房"马上可用）并整表写入 <code>~/.ros/vla_waypoints.yaml</code> —— <strong>该文件重启/重编译后优先加载，下次无需重新设置</strong>。列表里【导航】直接发 <code>/goal_pose</code> 去该点（不经大模型），【删除】同步持久化。绿色箭头=小车实时位姿，蓝点=已存航点，黄色箭头=当前选点。需要重编译并重启 <code>vla_navigation</code> 后端一次以获得 <code>/vla/waypoints</code> 能力；地图原点带旋转的罕见情况暂不支持。</p>
+        </section>
+      </div>
+    </div>
+
+    <!-- ============ 建图 (wheeltec_robot_slam) ============ -->
+    <div class="tab-panel" id="panel-mapping">
+      <section class="card card-wide">
+        <h2>建图实时状态 <span class="muted">(/map · 各建图模式共用)</span></h2>
+        <div class="wp-map-wrap">
+          <canvas id="mp-map"></canvas>
+        </div>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">当前建图模式（节点判活）</div>
+            <div id="mp-active" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">/map 地图</div>
+            <div id="mp-map-info" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">/map 更新</div>
+            <div id="mp-map-fresh" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">定位 (map → base_footprint)</div>
+            <div id="mp-tf" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">当前 /cmd_vel</div>
+            <div id="mp-cmd" class="metric-value">vx=0.00, wz=0.00</div>
+          </div>
+        </div>
+        <div class="vla-timeline-head">
+          <span>建图事件</span>
+          <button id="mp-log-clear">清空</button>
+        </div>
+        <div id="mp-log" class="vla-timeline"></div>
+        <p class="hint"><strong>通用流程</strong>：在下方子页选一种建图方式并在机器人端 launch（已含底盘 + 雷达/相机），然后<strong>遥控小车走遍环境</strong>——可直接在本页按
+          <strong>WASD</strong>（或去"底盘控制"页用按键/滑块），上图实时显示 <code>/map</code> 生长与小车位姿（绿箭头）。
+          建好后<strong>保存地图</strong>：终端 <code>ros2 launch wheeltec_nav2 save_map.launch.py</code>（map_saver_cli 双备份到
+          <code>wheeltec_nav2/map/WHEELTEC</code> 的 install 与 src 目录，<strong>与 Nav2 导航、本面板 3D 视图/航点页的默认地图路径一致</strong>），
+          或 <code>ros2 run nav2_map_server map_saver_cli -f ~/my_map</code> 存任意路径；Slam Toolbox / ORB-SLAM2 另有面板内保存按钮（见对应子页）。
+          地图数据与"VLA 航点管理"卡同源（SLAM 建图中 <code>/map</code> 话题每 2s 刷新 + GetMap 兜底）。
+          注意：四种方式都会发布 <code>map→odom</code> TF，<strong>不要同时启动两种建图</strong>；建图时也不要再启动 Nav2/AMCL。</p>
+      </section>
+
+      <nav class="subtabs" id="mapping-subnav">
+        <button class="map-subtab-btn active" data-mapsubtab="gmapping">GMapping</button>
+        <button class="map-subtab-btn" data-mapsubtab="carto">Cartographer</button>
+        <button class="map-subtab-btn" data-mapsubtab="toolbox">Slam Toolbox</button>
+        <button class="map-subtab-btn" data-mapsubtab="orb">ORB-SLAM2 (视觉)</button>
+        <button class="map-subtab-btn" data-mapsubtab="rrt">RRT 自主探索</button>
+      </nav>
+
+      <!-- ---- GMapping ---- -->
+      <div class="map-subtab-panel active" id="map-subpanel-gmapping">
+        <section class="card card-wide">
+          <h2>GMapping <span class="muted">(slam_gmapping · 粒子滤波 2D 激光 SLAM)</span></h2>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">建图节点 (/slam_gmapping)</div>
+              <div class="metric-value" data-mpnode="/slam_gmapping">—</div>
+            </div>
+          </div>
+          <p class="hint">启动：<code>ros2 launch slam_gmapping slam_gmapping.launch.py</code>（已含底盘 + 雷达）。
+            经典 GMapping 粒子滤波 SLAM 的 ROS2 移植版（底层 openslam_gmapping），订阅 <code>/scan</code> 与 odom TF，
+            发布 <code>/map</code> 与 <code>map→odom</code> TF；资源占用低、参数成熟，适合中小场景快速建图。
+            默认粒子数 30、地图更新间隔 5s（改参数需编辑源码重编译）——遥控时走慢一些、多回头闭环，地图更整齐。
+            建完用上方通用命令保存。</p>
+        </section>
+      </div>
+
+      <!-- ---- Cartographer ---- -->
+      <div class="map-subtab-panel" id="map-subpanel-carto">
+        <section class="card card-wide">
+          <h2>Cartographer <span class="muted">(wheeltec_cartographer · 图优化 2D SLAM)</span></h2>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">建图节点 (/cartographer_node)</div>
+              <div class="metric-value" data-mpnode="/cartographer_node">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">栅格节点 (/occupancy_grid_node)</div>
+              <div class="metric-value" data-mpnode="/occupancy_grid_node">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">跟踪位姿 (/tracked_pose)</div>
+              <div id="mp-carto-pose" class="metric-value">—</div>
+            </div>
+          </div>
+          <p class="hint">启动：<code>ros2 launch wheeltec_cartographer cartographer.launch.py</code>（底盘以
+            <code>carto_slam:=true</code> 启动、EKF 改用 ekf_carto 配置，已含雷达）。Google Cartographer 子图 + 图优化，
+            闭环效果好、精度高，适合大场景/长走廊。<code>cartographer_node</code> 做 SLAM 并发布
+            <code>/tracked_pose</code> 与 TF，<code>occupancy_grid_node</code> 把子图拼成 <code>/map</code>
+            （默认 0.05m / 0.5s，可用 launch 参数 <code>resolution</code> / <code>publish_period_sec</code> 调）。
+            调参在 <code>wheeltec_cartographer/config/cartographer.lua</code>。建完用上方通用命令保存。</p>
+        </section>
+      </div>
+
+      <!-- ---- Slam Toolbox ---- -->
+      <div class="map-subtab-panel" id="map-subpanel-toolbox">
+        <section class="card card-wide">
+          <h2>Slam Toolbox <span class="muted">(wheeltec_slam_toolbox · ROS2 主流 2D SLAM)</span></h2>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">建图节点 (/slam_toolbox)</div>
+              <div class="metric-value" data-mpnode="/slam_toolbox">—</div>
+            </div>
+          </div>
+          <div class="wp-map-toolbar">
+            <label>地图名（save_map）
+              <input id="mp-tb-name" type="text" value="WHEELTEC" />
+            </label>
+            <button id="mp-tb-save" type="button">保存地图 (pgm+yaml)</button>
+            <label>序列化文件（serialize_map）
+              <input id="mp-tb-file" type="text" value="WHEELTEC_posegraph" />
+            </label>
+            <button id="mp-tb-serialize" type="button">序列化保存 (可续建)</button>
+            <span id="mp-tb-msg" class="muted"></span>
+          </div>
+          <p class="hint">启动：异步（实时性优先，推荐）<code>ros2 launch wheeltec_slam_toolbox online_async_launch.py</code>；
+            同步（精度优先）<code>ros2 launch wheeltec_slam_toolbox online_sync.launch.py</code>（均已含底盘 + 雷达，
+            odom 已 remap 到 <code>odom_combined</code>）。带闭环检测与地图序列化续建能力。
+            <strong>面板内保存</strong>：【保存地图】调 <code>/slam_toolbox/save_map</code> 服务生成 <code>&lt;名字&gt;.pgm/.yaml</code>，
+            【序列化保存】调 <code>/slam_toolbox/serialize_map</code> 生成 <code>.posegraph/.data</code>（下次可加载续建/定位）——
+            文件都写在<strong>机器人端 slam_toolbox 节点的工作目录</strong>（一般是启动 launch 的终端目录或 <code>~/.ros</code>）。
+            要让导航/面板用上新图，仍建议跑一次 <code>ros2 launch wheeltec_nav2 save_map.launch.py</code> 存到标准路径。</p>
+        </section>
+      </div>
+
+      <!-- ---- ORB-SLAM2 ---- -->
+      <div class="map-subtab-panel" id="map-subpanel-orb">
+        <section class="card card-wide">
+          <h2>ORB-SLAM2 <span class="muted">(orb_slam2_ros · RGB-D 视觉 SLAM)</span></h2>
+          <div class="fn-stream-toolbar">
+            <label>特征点画面话题
+              <input class="fn-topic" data-img="mp-orb-stream" type="text" value="/RGBD/debug_image" />
+            </label>
+            <button class="fn-reload" data-img="mp-orb-stream">刷新</button>
+          </div>
+          <div class="cam-frame fn-frame">
+            <img id="mp-orb-stream" class="cam-img fn-img" data-topic="/RGBD/debug_image" src="placeholder.svg" alt="orb slam2 debug" />
+            <div class="cam-err" hidden>无法加载流</div>
+          </div>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">SLAM 节点 (/orb_slam2_rgbd)</div>
+              <div class="metric-value" data-mpnode="/orb_slam2_rgbd">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">八叉树节点 (/octomap_server)</div>
+              <div class="metric-value" data-mpnode="/octomap_server">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">相机位姿 (/RGBD/pose)</div>
+              <div id="mp-orb-pose" class="metric-value">—</div>
+            </div>
+          </div>
+          <div class="wp-map-toolbar">
+            <label>文件名
+              <input id="mp-orb-name" type="text" value="map.bin" />
+            </label>
+            <button id="mp-orb-save" type="button">保存特征地图 (save_map)</button>
+            <button id="mp-orb-cloud" type="button">保存点云 (save_cloud)</button>
+            <span id="mp-orb-msg" class="muted"></span>
+          </div>
+          <p class="hint">启动：<code>ros2 launch orb_slam2_ros orb_slam2_Astra_rgbd_launch.py</code>（已含底盘 + Astra 相机 +
+            octomap_server；本包只编译了 <strong>RGB-D</strong> 可执行，mono/stereo launch 是模板、直接跑会找不到节点）。
+            稀疏特征点视觉 SLAM：上图 <code>/RGBD/debug_image</code> 实时叠加跟踪特征点（经 web_video_server，画面绿点多=跟踪稳定，
+            纯色/弱纹理场景易跟丢）；位姿发布到 <code>/RGBD/pose</code>，稀疏点云 <code>/RGBD/map_points</code> /
+            <code>/RGBD/cloud_points</code>（octomap_server 据此生成八叉树及 2D 投影 <code>projected_map</code>，RViz 查看）。
+            <strong>面板内保存</strong>：【保存特征地图】调 <code>/RGBD/save_map</code> 生成可重定位加载的特征地图
+            （节点工作目录，下次以 <code>load_map:=true</code> + <code>map_file</code> 参数加载）；
+            【保存点云】调 <code>/RGBD/save_cloud</code> 把稠密点云存为 PCD（目录由参数 <code>savePCDDirectory</code> 指定，默认 <code>/data/</code>）。
+            视觉建图不产出 Nav2 直接可用的栅格图——2D 导航地图请用前三种激光建图方式。</p>
+        </section>
+      </div>
+
+      <!-- ---- RRT 自主探索 ---- -->
+      <div class="map-subtab-panel" id="map-subpanel-rrt">
+        <section class="card card-wide">
+          <h2>RRT 自主探索 <span class="muted">(wheeltec_robot_rrt · wheeltec_rrt_msg · 全自主建图)</span></h2>
+          <div class="wp-map-toolbar">
+            <label>方形边界半边长 (m)
+              <input id="mp-rrt-size" type="number" min="1" max="50" step="0.5" value="5" />
+            </label>
+            <button id="mp-rrt-square" type="button">以小车为中心发布方形边界</button>
+            <button id="mp-rrt-reset" type="button">重新选点（仅清显示）</button>
+            <span id="mp-rrt-status" class="muted"></span>
+          </div>
+          <div class="wp-map-wrap">
+            <canvas id="mp-rrt-map"></canvas>
+          </div>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">边界选点（→ /clicked_point）</div>
+              <div id="mp-rrt-pick" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">候选探索目标 (/filtered_goal_points)</div>
+              <div id="mp-rrt-frontiers" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">全局 RRT (/global_rrt)</div>
+              <div class="metric-value" data-mpnode="/global_rrt">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">局部 RRT (/local_rrt)</div>
+              <div class="metric-value" data-mpnode="/local_rrt">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">前沿过滤 (/filter)</div>
+              <div class="metric-value" data-mpnode="/filter">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">任务分配 (/assigner)</div>
+              <div class="metric-value" data-mpnode="/assigner">—</div>
+            </div>
+          </div>
+          <p class="hint"><strong>全自主建图</strong>：RRT 在探索边界内随机生长发现"前沿"（已知/未知区域交界，
+            <code>/detected_frontiers</code>），<code>filter</code> 聚类过滤出候选目标（<code>/filtered_goal_points</code>，
+            <code>wheeltec_rrt_msg/PointArray</code>），<code>assigner</code> 自动挑收益最高的点经 Nav2 派发——小车自己跑遍未知区域，建完用"建图"页通用命令保存地图。
+            <strong>启动</strong>：一键 <code>ros2 launch wheeltec_robot_rrt wheeltec_rrt_slam.launch.py</code>（底盘 + SLAM + 探索），
+            或分步 <code>nav2_slam_launch.py</code> + <code>rrt_exploration.launch.py</code>（含 global/local RRT + filter + assigner；
+            注意<strong>包名是 wheeltec_robot_rrt</strong>，目录名带 2）。
+            <strong>圈定探索区域</strong>：等上图出现地图后（SLAM 已跑起来），<strong>直接在图上依次点 5 个点</strong>——前 4 个为边界多边形顶点
+            （<strong>逆时针</strong>，必须把小车圈在内），第 5 个点在小车附近作为 RRT 起始点，每点一个即发布到 <code>/clicked_point</code>
+            （等价 RViz Publish Point，<strong>第 5 个点发布后探索立即开始</strong>）；或填半边长点【方形边界】一键以小车为中心发布全部 5 点。
+            点错了：RRT 节点端收下的点无法撤回，【重新选点】只清面板显示，需重启 <code>rrt_exploration</code> launch 后重点。
+            图例：黄线=边界多边形、绿点=起始点、淡蓝点=RRT 检出前沿（最近 300 个）、红点=过滤后候选目标、绿箭头=小车。
+            探索期间手动遥控（经 nav_arbiter）会取消当前 Nav2 目标，<code>assigner</code> 随后会再派新点；探索对算力敏感，建议 NUC/Jetson 级别上位机。</p>
         </section>
       </div>
     </div>
@@ -1402,7 +1751,7 @@
           <div class="contact-avatar">W</div>
           <div class="contact-body">
             <div class="contact-name">LabRobot Dashboard</div>
-            <p class="contact-desc">面向"Wheeltec S300 移动底盘 + Lebai LM3 机械臂"移动抓取平台的轻量级 Web 仪表盘。底盘部分：实时遥测、速度控制、参数调节、3D 视图、相机预览、日志，以及巡线 / KCF / YOLO / VLA 功能模块；机械臂部分：驱动状态、系统/夹爪/关节控制，以及 HSV / YOLO / KCF / ArUco / VLM 五种视觉抓取方案。全部通过 rosbridge 与 ROS 2 通信。</p>
+            <p class="contact-desc">面向"Wheeltec S300 移动底盘 + Lebai LM3 机械臂"移动抓取平台的轻量级 Web 仪表盘。底盘部分：实时遥测、速度控制、参数调节、3D 视图、相机预览、日志，以及巡线 / KCF / YOLO / 骨架识别 / 路径跟随 / VLA 功能模块和 GMapping / Cartographer / Slam Toolbox / ORB-SLAM2 / RRT 自主探索建图页；机械臂部分：驱动状态、系统/夹爪/关节控制，以及 HSV / YOLO / KCF / ArUco / VLM 五种视觉抓取方案。全部通过 rosbridge 与 ROS 2 通信。</p>
             <ul class="contact-list">
               <li><span class="ck">项目仓库</span><a href="https://github.com/heisd/LabRobot" target="_blank" rel="noopener">github.com/heisd/LabRobot</a></li>
               <li><span class="ck">维护者</span><span>heisd</span></li>
