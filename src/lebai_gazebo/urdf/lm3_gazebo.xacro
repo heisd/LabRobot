@@ -3,7 +3,6 @@
   lm3_gazebo.xacro — Gazebo(Classic 11) 仿真用的 LM3 机械臂描述。
 
   在原有 lm3_macro.xacro 基础上补充 Gazebo 仿真所需:
-    - 把机械臂底座固定到 world(桌面臂);
     - ros2_control(GazeboSystem) + gazebo_ros2_control 插件, 让臂在仿真里可被控制
       (控制器名 lebai_trajectory_controller, 与 MoveIt 的 lm3_controllers.yaml 一致);
     - 末端 eye-in-hand 深度相机, 发布 /camera_arm/* 与 camera_arm_depth_optical_frame,
@@ -11,6 +10,7 @@
 
   注意: 相机安装位置(tool0->camera 的 origin)和内参需按实际手眼标定微调;
         这是仿真脚手架, 真机上的精确数值请以标定为准。
+        Gazebo 中机械臂的高度由 world 文件中的模型位置控制, 而不是 URDF.
 ========================================================================= -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="lebai_lm3">
 
@@ -18,15 +18,6 @@
        <xacro:lebai_lm3 prefix="lebai_"/> 的实例化, 这里只 include, 不要再实例化,
        否则链接/关节重名报错。 -->
   <xacro:include filename="$(find lebai_lm3_support)/urdf/lm3_macro.xacro"/>
-
-  <!-- 底座固定到世界, 抬到桌面高度(与 world 文件里的桌子一致)
-       注: world 是 robot_state_publisher 自动创建的虚拟根链接,
-           URDF 中不需要显式定义 -->
-  <joint name="world_to_base" type="fixed">
-    <parent link="world"/>
-    <child link="lebai_base_link"/>
-    <origin xyz="0 0 1.015" rpy="0 0 0"/>
-  </joint>
 
   <!-- ===================== eye-in-hand 相机 ===================== -->
   <link name="camera_arm_link">
