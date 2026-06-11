@@ -1328,6 +1328,7 @@
   function makeViewerMapLayer() {
     let mesh = null;
     let lastBmp = null;
+    let warnedNoTf = false;   // "有地图无 map TF" 提示只发一次，TF 出现即清
     function destroyMesh() {
       if (!mesh) return;
       try {
@@ -1357,7 +1358,26 @@
       }
       // 地图平面中心在 map 帧的坐标 -> 经 TF 转到 fixed frame
       const tf = tfClient ? tfClient.lookup('map') : null;
-      if (!tf) { mesh.visible = false; return; }
+      if (!tf) {
+        mesh.visible = false;
+        // 有地图数据但没 map TF（SLAM/AMCL 没跑）时不再静默隐藏，说明原因。
+        // 不抢占别的图层已写的状态。
+        if (!warnedNoTf) {
+          warnedNoTf = true;
+          const cur = (($('viewer-status') || {}).textContent) || '';
+          if (!cur) {
+            setViewerStatus('SLAM 地图: 已有 ' + wpMap.w + '×' + wpMap.h +
+              ' 地图数据，但无 map→fixed frame 的 TF（SLAM/AMCL 未跑），地图层暂隐藏' +
+              '——把 Fixed frame 填成 map 可直接查看');
+          }
+        }
+        return;
+      }
+      if (warnedNoTf) {
+        warnedNoTf = false;
+        const cur = (($('viewer-status') || {}).textContent) || '';
+        if (cur.indexOf('SLAM 地图:') === 0) setViewerStatus('');
+      }
       const cx = wpMap.ox + wpMap.w * wpMap.res / 2;
       const cy = wpMap.oy + wpMap.h * wpMap.res / 2;
       const p = quatRotateVec(tf.rotation, { x: cx, y: cy, z: 0 });
@@ -2363,11 +2383,121 @@
       if (res && res.map && res.map.info && res.map.info.width) ingestWpMap(res.map);
       else setWpMapStatus('地图服务返回空地图');
     }, (err) => {
-      setWpMapStatus('加载失败：' + err + '（map_server 在跑吗？SLAM 建图中可等 /map 话题）');
+      // GetMap 失败（map_server 没跑）→ 自动兜底：从包内地图文件直接读
+      if ((($('wp-map-file') || {}).value || '').trim()) {
+        setWpMapStatus('GetMap 失败（' + err + '），改从包内地图文件加载…');
+        fetchWpMapFromFile();
+      } else {
+        setWpMapStatus('加载失败：' + err + '（map_server 在跑吗？SLAM 建图中可等 /map 话题）');
+      }
     });
   }
   const wpMapLoad = $('wp-map-load');
   if (wpMapLoad) wpMapLoad.addEventListener('click', fetchWpMap);
+
+  // ---- 包内地图文件直读（map_server YAML+PGM 格式）----
+  // 经面板 HTTP 的 /pkg/<包名>/… 路由取 wheeltec_nav2 等包 share 里的地图，
+  // 浏览器自己解析 —— 不依赖 map_server/GetMap，WSL 无硬件、未启动导航时
+  // 也能看图/标航点。GetMap 失败时自动兜底到这里。
+  function parseMapYaml(text) {
+    const meta = { negate: 0, occupied_thresh: 0.65, free_thresh: 0.196, origin: [0, 0, 0] };
+    text.split(/\r?\n/).forEach((line) => {
+      const m = /^\s*([A-Za-z_]+)\s*:\s*(.+?)\s*$/.exec(line);
+      if (!m) return;
+      const key = m[1];
+      const val = m[2];
+      if (key === 'image') meta.image = val.replace(/^['"]|['"]$/g, '');
+      else if (key === 'resolution') meta.resolution = parseFloat(val);
+      else if (key === 'negate') meta.negate = parseInt(val, 10) || 0;
+      else if (key === 'occupied_thresh') meta.occupied_thresh = parseFloat(val);
+      else if (key === 'free_thresh') meta.free_thresh = parseFloat(val);
+      else if (key === 'origin') {
+        const nums = val.replace(/[[\]]/g, '').split(',').map(Number);
+        if (nums.length >= 2) meta.origin = nums;
+      }
+    });
+    return meta;
+  }
+
+  // P5(二进制)/P2(文本) PGM → OccupancyGrid 同构对象。行序要翻转：PGM 第 0
+  // 行是图片顶部，OccupancyGrid 第 0 行是地图底部（origin 在左下角）。
+  function pgmToGrid(bytes, meta) {
+    let pos = 0;
+    const isSpace = (c) => c === 32 || c === 9 || c === 10 || c === 13;
+    function token() {
+      for (;;) {
+        while (pos < bytes.length && isSpace(bytes[pos])) pos++;
+        if (bytes[pos] === 35) {   // '#' 注释到行尾
+          while (pos < bytes.length && bytes[pos] !== 10) pos++;
+        } else break;
+      }
+      let s = '';
+      while (pos < bytes.length && !isSpace(bytes[pos])) s += String.fromCharCode(bytes[pos++]);
+      return s;
+    }
+    const magic = token();
+    if (magic !== 'P5' && magic !== 'P2') throw new Error('不是 PGM(P5/P2) 文件: ' + magic);
+    const w = parseInt(token(), 10);
+    const h = parseInt(token(), 10);
+    const maxval = parseInt(token(), 10) || 255;
+    if (!w || !h) throw new Error('PGM 尺寸解析失败');
+    if (magic === 'P5' && maxval > 255) throw new Error('不支持 16bit PGM');
+    const px = new Array(w * h);
+    if (magic === 'P5') {
+      pos++;   // maxval 后恰好一个空白字节，再往后是裸像素
+      for (let i = 0; i < w * h; i++) px[i] = bytes[pos + i];
+    } else {
+      for (let i = 0; i < w * h; i++) px[i] = parseInt(token(), 10);
+    }
+    // 按 map_server trinary 规则转占用值：p=(max-v)/max（negate=1 时 v/max），
+    // p>occupied→100、p<free→0、其余 -1（未知）
+    const data = new Int8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      const src = y * w;
+      const dst = (h - 1 - y) * w;
+      for (let x = 0; x < w; x++) {
+        const v = px[src + x];
+        const p = meta.negate ? v / maxval : (maxval - v) / maxval;
+        data[dst + x] = p > meta.occupied_thresh ? 100 : (p < meta.free_thresh ? 0 : -1);
+      }
+    }
+    return {
+      info: {
+        width: w,
+        height: h,
+        resolution: meta.resolution,
+        origin: { position: { x: meta.origin[0] || 0, y: meta.origin[1] || 0 } },
+      },
+      data,
+    };
+  }
+
+  function fetchWpMapFromFile() {
+    const path = ((($('wp-map-file') || {}).value) || '').trim();
+    if (!path) { setWpMapStatus('未填包内地图文件路径'); return; }
+    setWpMapStatus('从包内地图文件加载…');
+    fetch(path).then((resp) => {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status + '：' + path);
+      return resp.text();
+    }).then((ytext) => {
+      const meta = parseMapYaml(ytext);
+      if (!meta.image || !meta.resolution) throw new Error('YAML 缺 image/resolution 字段');
+      const imgUrl = /^(\/|https?:)/.test(meta.image)
+        ? meta.image
+        : path.replace(/[^/]*$/, '') + meta.image;   // image 相对 yaml 所在目录
+      return fetch(imgUrl).then((resp) => {
+        if (!resp.ok) throw new Error('HTTP ' + resp.status + '：' + imgUrl);
+        return resp.arrayBuffer();
+      }).then((buf) => {
+        ingestWpMap(pgmToGrid(new Uint8Array(buf), meta));
+      });
+    }).catch((err) => {
+      setWpMapStatus('包文件加载失败：' + ((err && err.message) || err) +
+        '（wheeltec_dashboard 重编译启用 /pkg/ 路由了吗？包名/路径对吗？）');
+    });
+  }
+  const wpMapFileLoad = $('wp-map-file-load');
+  if (wpMapFileLoad) wpMapFileLoad.addEventListener('click', fetchWpMapFromFile);
 
   // map 世界坐标 ↔ 显示画布坐标（位图已预翻转，y 轴只需一次镜像换算）
   function wpWorldToCanvas(wx, wy, view) {

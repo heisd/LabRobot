@@ -6,6 +6,31 @@
 
 ---
 
+## 第 17 轮 — SLAM 地图包内文件直读（无 map_server 也能显示）
+
+### 背景（WSL 测试中地图不显示的根因）
+
+地图层有两道门槛：① 地图数据——`/map` 话题只有 SLAM 建图中才周期发布，
+map_server 的发布是 transient_local，经 rosbridge 的 volatile 订阅收不到，
+只能靠 GetMap 服务兜底；② `map→fixed frame` 的 TF——SLAM/AMCL 没跑就没有。
+WSL 测试时导航栈整套没启动，两道都不满足，与 WSL 本身无关。
+
+### 包内地图文件直读
+
+- "地图航点管理"卡新增**包内地图文件**输入 + "从包加载"按钮（默认
+  `/pkg/wheeltec_nav2/map/WHEELTEC.yaml`）：经面板 HTTP 的 `/pkg/` 路由
+  取地图文件，浏览器自己解析 map_server 格式（YAML 元数据 + P5/P2 PGM
+  位图，含 negate/阈值/origin、PGM↔OccupancyGrid 行序翻转），转成与
+  GetMap 相同的 wpMap 数据——**不依赖 map_server/GetMap，WSL 无硬件、
+  未启动导航时也能看图/标航点**。已用真实 WHEELTEC.pgm（640×640）离线
+  验证解析正确。
+- **GetMap 失败自动兜底**：原"加载地图"按钮与连接时的自动加载在 GetMap
+  失败后自动改读包内文件，无需手动切换。
+- 3D 视图地图层不再静默隐藏：有地图数据但无 map TF（SLAM/AMCL 未跑）时
+  状态栏说明原因，并提示"Fixed frame 填 map 可直接查看"；TF 出现自动清除。
+
+---
+
 ## 第 16 轮 — 导航栏"AI 对话"页签（Ollama + DeepSeek API）、顶栏机械臂在线徽标
 
 ### AI 对话页签
