@@ -1701,6 +1701,31 @@
     <!-- ============ 机械臂仿真 (Gazebo 抓取场景转发) ============ -->
     <div class="tab-panel" id="panel-armsim">
       <section class="card card-wide">
+        <h2>仿真启停 <span class="muted">(sim_launcher · 网页一键启动 Gazebo)</span></h2>
+        <div class="fn-stream-toolbar">
+          <label>抓取世界
+            <select id="armsim-world">
+              <option value="grab_world">grab_world（通用：可乐罐/木块/啤酒）</option>
+              <option value="grab_hsv_color">grab_hsv_color（HSV 颜色抓取）</option>
+              <option value="grab_yolo">grab_yolo（YOLO 抓取）</option>
+              <option value="grab_kcf">grab_kcf（KCF 跟踪抓取）</option>
+              <option value="grab_aruco">grab_aruco（ArUco 抓取）</option>
+              <option value="grab_vlm">grab_vlm（VLM 语言抓取）</option>
+            </select>
+          </label>
+          <button class="sim-start" data-key="arm" data-world-sel="armsim-world">启动仿真</button>
+          <button class="sim-stop rc-stop" data-key="arm">停止</button>
+          <span class="sim-launch-status ctrl-src ctrl-src-idle" data-key="arm">仿真: —</span>
+        </div>
+        <p class="hint">点"启动仿真"= 后端 <code>sim_launcher</code> 执行
+          <code>ros2 launch lebai_gazebo gazebo_grab.launch.py world:=&lt;所选&gt;</code>（Gazebo 场景 +
+          机械臂 + 相机 + MoveIt + HSV 视觉 + 抓取服务）。<strong>需在能跑 Gazebo 的机器上</strong>启动
+          dashboard（<code>enable_sim_launcher:=true</code>，默认开）；切换世界会先停旧的再起新的。
+          <strong>ArUco 世界首次用前</strong>先 <code>python3 src/lebai_gazebo/scripts/make_aruco_marker.py</code>
+          生成可识别标记。机械臂控制仍在"监控与抓取"页。</p>
+      </section>
+
+      <section class="card card-wide">
         <h2>机械臂抓取仿真 <span class="muted">(lebai_gazebo · Gazebo 场景转发到 Web)</span></h2>
         <div class="fn-stream-toolbar">
           <label>场景画面话题
@@ -1721,6 +1746,7 @@
         <div class="vla-quick">
           <button class="arch-link" data-tab="arm" data-armsubtab="ctrl">去"监控与抓取"控制机械臂</button>
           <button class="arch-link" data-tab="arm" data-armsubtab="hsv">HSV 抓取调参</button>
+          <button class="arch-link" data-tab="overview">在 3D 视图看关节运动</button>
         </div>
         <p class="hint">把抓取仿真的整个 Gazebo 场景(桌子 + 物体 + 机械臂)经
           <code>/sim_scene/arm/image_raw</code> 转成 MJPEG 显示在网页里——机器人/工作站无需开 Gazebo
@@ -1728,7 +1754,10 @@
           （Gazebo 场景 + 机械臂 + 相机 + MoveIt + HSV 视觉 + 抓取服务）；只看场景/机械臂用
           <code>ros2 launch lebai_gazebo gazebo.launch.py</code>。机械臂的<strong>上电/关节/夹爪/抓取控制</strong>
           都在"监控与抓取"页（仿真与真机话题一致，面板直接可用），抓取闭环触发后这里的<strong>目标距离</strong>会实时更新。
-          下方两路为眼在手相机与 HSV 识别调试图。仿真相机/画质/端口设置与"组件状态"页的 web_video_server 共用。</p>
+          下方两路为眼在手相机与 HSV 识别调试图。仿真相机/画质/端口设置与"组件状态"页的 web_video_server 共用。
+          想看机械臂的<strong>三维关节运动</strong>：去"系统总览"的 3D 视图（仿真发布 <code>/joint_states</code> 与
+          <code>/tf</code>），"URDF 节点"填 <code>/robot_state_publisher</code>、Fixed frame 填 <code>world</code>
+          （仿真里机械臂固定在 world 原点）。</p>
       </section>
 
       <section class="card card-wide">
@@ -1770,6 +1799,28 @@
     <!-- ============ 机器人底盘仿真 (Gazebo 底盘场景转发) ============ -->
     <div class="tab-panel" id="panel-chassissim">
       <section class="card card-wide">
+        <h2>仿真启停 <span class="muted">(sim_launcher · 网页一键启动 Gazebo)</span></h2>
+        <div class="fn-stream-toolbar">
+          <label>底盘世界
+            <select id="chassissim-world">
+              <option value="wheeltec_slam_nav">wheeltec_slam_nav（建图/导航/避障）</option>
+              <option value="wheeltec_rrt_explore">wheeltec_rrt_explore（RRT 自主探索）</option>
+              <option value="wheeltec_line_follow">wheeltec_line_follow（巡线 QR）</option>
+              <option value="wheeltec_target_follow">wheeltec_target_follow（目标跟随/检测）</option>
+              <option value="wheeltec_vla_nav">wheeltec_vla_nav（VLA 语音导航）</option>
+            </select>
+          </label>
+          <button class="sim-start" data-key="chassis" data-world-sel="chassissim-world">启动仿真</button>
+          <button class="sim-stop rc-stop" data-key="chassis">停止</button>
+          <span class="sim-launch-status ctrl-src ctrl-src-idle" data-key="chassis">仿真: —</span>
+        </div>
+        <p class="hint">点"启动仿真"= 后端 <code>sim_launcher</code> 执行
+          <code>ros2 launch wheeltec_gazebo gazebo.launch.py world:=&lt;所选&gt;</code>（巡线/探索世界会自动带上
+          合适的出生点）。启动后用"底盘控制"页或键盘遥控 <code>/cmd_vel</code> 驱动仿真车；切换世界会先停旧的再起新的。
+          <strong>需在能跑 Gazebo 的机器上</strong>启动 dashboard（<code>enable_sim_launcher:=true</code>，默认开）。</p>
+      </section>
+
+      <section class="card card-wide">
         <h2>机器人底盘仿真 <span class="muted">(wheeltec_gazebo · Gazebo 场景转发到 Web)</span></h2>
         <div class="fn-stream-toolbar">
           <label>场景画面话题
@@ -1786,6 +1837,7 @@
           <button class="arch-link" data-tab="mapping">建图</button>
           <button class="arch-link" data-tab="function" data-subtab="line">巡线</button>
           <button class="arch-link" data-tab="function" data-subtab="vla">导航</button>
+          <button class="arch-link" data-tab="overview">在 3D 视图看运动</button>
         </div>
         <p class="hint">把 Wheeltec 底盘仿真的整个 Gazebo 场景经 <code>/sim_scene/chassis/image_raw</code>
           转成 MJPEG 显示在网页里。底盘话题与真机对齐：<strong>"底盘控制"页或键盘遥控发 <code>/cmd_vel</code> 即可驱动仿真车</strong>，

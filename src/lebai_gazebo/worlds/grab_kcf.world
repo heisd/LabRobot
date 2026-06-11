@@ -1,0 +1,72 @@
+<?xml version="1.0" ?>
+<!-- =========================================================================
+  grab_kcf.world — 机械臂"KCF 跟踪抓取"世界(Gazebo Classic 11)。
+
+  功能定位: grab_demo 的 kcf_grab(kcf_node, 框选/HSV 播种后用 KCF 跟踪目标再抓)。
+  桌上一个醒目的主目标(可乐罐) + 一个干扰物(木块), 在 Dashboard"KCF 跟踪抓取"页
+  直接在画面上拖拽框选可乐罐即可开始跟踪, 验证框选→跟踪→抓取。
+
+  模型取自本机 ~/.gazebo/models。场景相机发布 /sim_scene/arm/image_raw。
+========================================================================= -->
+<sdf version="1.6">
+  <world name="grab_kcf">
+
+    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
+    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
+
+    <include>
+      <name>table</name>
+      <uri>model:///home/user/.gazebo/models/table</uri>
+      <pose>0.55 0 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>coke_can</name>
+      <uri>model:///home/user/.gazebo/models/coke_can</uri>
+      <pose>0.50 0.0 1.015 0 0 0</pose>
+    </include>
+    <include>
+      <name>wood_cube</name>
+      <uri>model:///home/user/.gazebo/models/wood_cube_5cm</uri>
+      <pose>0.60 0.16 1.015 0 0 0</pose>
+    </include>
+
+    <!-- ===================== 场景相机(转发到 Web /sim_scene/arm/image_raw) ===================== -->
+    <model name="scene_camera">
+      <static>true</static>
+      <pose>1.8 -1.3 1.7 0 0.35 2.4</pose>
+      <link name="link">
+        <visual name="vis"><geometry><box><size>0.04 0.04 0.04</size></box></geometry></visual>
+        <sensor type="camera" name="scene_cam">
+          <always_on>true</always_on>
+          <update_rate>15</update_rate>
+          <camera name="scene">
+            <horizontal_fov>1.2</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.05</near><far>50</far></clip>
+          </camera>
+          <plugin name="scene_cam_controller" filename="libgazebo_ros_camera.so">
+            <ros>
+              <namespace>/sim_scene/arm</namespace>
+              <remapping>scene/image_raw:=image_raw</remapping>
+              <remapping>scene/camera_info:=camera_info</remapping>
+            </ros>
+            <camera_name>scene</camera_name>
+            <frame_name>scene_camera</frame_name>
+          </plugin>
+        </sensor>
+      </link>
+    </model>
+
+    <physics name="default_physics" default="0" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <gui fullscreen="0">
+      <camera name="user_camera"><pose>1.8 -1.3 1.7 0 0.35 2.4</pose></camera>
+    </gui>
+
+  </world>
+</sdf>

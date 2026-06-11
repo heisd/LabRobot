@@ -2,8 +2,9 @@ import os
 import yaml
 import xacro
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, TimerAction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
@@ -30,9 +31,13 @@ def generate_launch_description():
     sim_time = {"use_sim_time": True}
 
     # ---- 1) Gazebo 场景 + 机械臂 + 相机 + 控制器 ----
+    # world 参数选择抓取世界(透传给 gazebo.launch.py):
+    #   grab_world(默认) / grab_hsv_color / grab_yolo / grab_kcf / grab_aruco / grab_vlm
+    world = LaunchConfiguration("world")
     gz_pkg = get_package_share_directory("lebai_gazebo")
     gazebo = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(gz_pkg, "launch", "gazebo.launch.py"))
+        PythonLaunchDescriptionSource(os.path.join(gz_pkg, "launch", "gazebo.launch.py")),
+        launch_arguments={"world": world}.items(),
     )
 
     # ---- 2) MoveIt move_group (仿真配置, 复用 lebai_lm3_moveit_config 的参数) ----
@@ -128,6 +133,10 @@ def generate_launch_description():
     delayed = TimerAction(period=12.0, actions=[move_group, hsv, grab_service])
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            "world", default_value="grab_world",
+            description="抓取世界名: grab_world / grab_hsv_color / grab_yolo / "
+                        "grab_kcf / grab_aruco / grab_vlm"),
         gazebo,
         static_tf_base,
         delayed,

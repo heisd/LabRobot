@@ -21,6 +21,7 @@
   let armVlmInstrPub = null;   // /vlm/instruction publisher (机械臂 VLM 抓取)
   let armVlmConfirmPub = null; // /vlm/confirm publisher (确认/取消抓取)
   let kcfBboxPub = null;       // /kcf_node/select_bbox publisher (KCF 手动框选)
+  let simLaunchPub = null;     // /sim_launch/cmd publisher (网页一键启停 Gazebo 仿真)
   let rechargeFlagPub = null;  // /robot_recharge_flag publisher (自动回充 1开/0关)
   let securityPub = null;      // /chassis_security publisher (固件安全等级 0/1)
   let bodyModePub = null;      // /mode publisher (骨架识别 1=姿态交互 2=跟随)
@@ -157,6 +158,10 @@
     if (kcfBboxPub) {
       try { kcfBboxPub.unadvertise(); } catch (_) { /* ignore */ }
       kcfBboxPub = null;
+    }
+    if (simLaunchPub) {
+      try { simLaunchPub.unadvertise(); } catch (_) { /* ignore */ }
+      simLaunchPub = null;
     }
     if (rechargeFlagPub) {
       try { rechargeFlagPub.unadvertise(); } catch (_) { /* ignore */ }
@@ -487,6 +492,17 @@
       ros, name: '/vlm/confirm', messageType: 'std_msgs/msg/Bool',
     });
     armVlmConfirmPub.advertise();
+
+    // 仿真启停 (sim_launcher): 发命令到 /sim_launch/cmd, 订阅 /sim_launch/status 反映状态。
+    simLaunchPub = new ROSLIB.Topic({
+      ros, name: '/sim_launch/cmd', messageType: 'std_msgs/msg/String',
+    });
+    simLaunchPub.advertise();
+    sub('/sim_launch/status', 'std_msgs/msg/String', (msg) => {
+      let obj = null;
+      try { obj = JSON.parse(msg.data || '{}'); } catch (_) { return; }
+      renderSimLaunch(obj);
+    });
 
     sub('/robot_status', 'lebai_interfaces/msg/RobotStatus', renderArmStatus, { throttle_rate: 200 });
     sub('/gripper_status', 'lebai_interfaces/msg/GripperStatus', (msg) => {
@@ -1797,6 +1813,41 @@
   document.querySelectorAll('#subpanel-line .fn-img').forEach(applyFnStream);
   // 首页（系统总览）默认可见，其"相机原始流"卡片也立即拉流。
   kickVisibleFnStreams($('panel-overview'));
+
+  // ---------- 仿真启停 (sim_launcher: /sim_launch/cmd + /sim_launch/status) ----------
+  function sendSimCmd(text) {
+    if (!simLaunchPub) { alert('未连接 rosbridge，无法发送仿真命令'); return; }
+    simLaunchPub.publish(new ROSLIB.Message({ data: text }));
+  }
+  document.querySelectorAll('.sim-start').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.key;
+      const sel = document.getElementById(btn.dataset.worldSel);
+      const world = sel ? sel.value : '';
+      if (key && world) sendSimCmd('start ' + key + ' ' + world);
+    });
+  });
+  document.querySelectorAll('.sim-stop').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.key) sendSimCmd('stop ' + btn.dataset.key);
+    });
+  });
+  // 后端 sim_launcher 广播的状态(JSON) -> 更新各页"仿真:"徽标。
+  function renderSimLaunch(obj) {
+    const items = (obj && obj.items) || {};
+    const enable = !(obj && obj.enable === false);
+    document.querySelectorAll('.sim-launch-status').forEach((el) => {
+      const it = items[el.dataset.key];
+      el.classList.remove('ctrl-src-idle', 'ctrl-src-active');
+      if (it && it.running) {
+        el.textContent = '仿真: 运行中 · ' + (it.world || '');
+        el.classList.add('ctrl-src-active');
+      } else {
+        el.textContent = enable ? '仿真: 未运行' : '仿真: 只读(未启用启停)';
+        el.classList.add('ctrl-src-idle');
+      }
+    });
+  }
 
   // ---------- Lidar status (double_lidar_fusion) ----------
   const LIDAR_SRC = [

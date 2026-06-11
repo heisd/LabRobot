@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<!-- aruco_marker — 平放在桌上、正面朝上的 ArUco 标记小牌(供眼在手相机俯视识别)。
+     边长 0.05m(与 aruco_grab.launch.py 的 markerLength 一致)。纯视觉无碰撞。
+     纹理为占位图; 运行 lebai_gazebo/scripts/make_aruco_marker.py 生成真正可被
+     aruco_node(dictionary_id 6)识别的标记后覆盖 materials/textures/aruco_marker.png。 -->
+<sdf version="1.6">
+  <model name="aruco_marker">
+    <static>true</static>
+    <link name="link">
+      <visual name="marker">
+        <pose>0 0 0.004 0 0 0</pose>
+        <geometry><box><size>0.05 0.05 0.008</size></box></geometry>
+        <material>
+          <script>
+            <uri>model://aruco_marker/materials/scripts</uri>
+            <uri>model://aruco_marker/materials/textures</uri>
+            <name>ArUco/Marker</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

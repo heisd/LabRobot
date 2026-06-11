@@ -40,6 +40,35 @@ source install/setup.bash
 ros2 launch lebai_gazebo gazebo.launch.py
 ```
 
+### 按抓取功能选择世界（文件名即功能）
+
+`gazebo.launch.py` 与 `gazebo_grab.launch.py` 都支持 `world` 参数（默认 `grab_world`），
+按要验证的抓取方案切换：
+
+| 抓取功能 | world | 场内物体 |
+|---|---|---|
+| 通用 | `grab_world` | 可乐罐 / 木块 / 啤酒 |
+| HSV 颜色抓取 | `grab_hsv_color` | 红/绿色块 + 红可乐罐（默认抓红色，改 HSV 抓绿色）|
+| YOLO 抓取 | `grab_yolo` | 啤酒(bottle)/杯子(cup)/碗(bowl)/可乐罐 |
+| KCF 跟踪抓取 | `grab_kcf` | 一个主目标 + 一个干扰物（画面拖框跟踪）|
+| ArUco 抓取 | `grab_aruco` | ArUco 标记牌（`model://aruco_marker`）+ 木块 |
+| VLM 语言抓取 | `grab_vlm` | 可乐罐/啤酒/碗/杯子/锤子（自然语言选物）|
+
+```bash
+ros2 launch lebai_gazebo gazebo_grab.launch.py world:=grab_yolo
+```
+
+> **ArUco 世界首次用前**：纹理默认是占位图，先生成可识别标记（需 opencv-contrib）：
+> ```bash
+> python3 src/lebai_gazebo/scripts/make_aruco_marker.py        # 默认 DICT_6X6_250 id 0
+> ```
+> 生成的图会覆盖 `models/aruco_marker/materials/textures/aruco_marker.png`；若识别不到，
+> 按你们 `aruco_node` 的实际字典改 `--dict/--id` 重新生成。`model://aruco_marker` 由本包
+> 的 `GAZEBO_MODEL_PATH` 环境钩子解析（**需先 colcon build 并 source install/setup.bash**）。
+
+> **在 Dashboard 一键启动**：dashboard launch 起了 `sim_launcher` 节点，在面板"机械臂仿真"页
+> 选好世界点"启动仿真"，等价后端执行上面的 `ros2 launch …`（详见 wheeltec_dashboard）。
+
 会打开 Gazebo GUI，自动加载场景和机械臂。控制器起来后可以验证：
 
 ```bash
