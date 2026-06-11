@@ -133,21 +133,30 @@ ros2 topic pub --once /tts_text std_msgs/msg/String "{data: '你好，我是小�
 Web 端用法见 `wheeltec_dashboard`（VLA 子页）：自动加载 `/map_server/map` 的
 已建地图，地图上按下选点、拖动定朝向，填名保存即可。
 
-## 导航仲裁（手动随时打断 Nav2 / VLA）
+## 导航仲裁（手动 / KCF / 巡线 / YOLO 随时打断 Nav2 / VLA）
 
 新增 `nav_arbiter` 节点（随 `vla_bringup.launch.py` 自动启动，`start_arbiter:=false`
 可关）。原理：RViz/dashboard 的 `/goal_pose` 和 VLA 的目标都汇入 bt_navigator 的
-`navigate_to_pose`，所以**打断 = 取消该动作的全部目标**：
+`navigate_to_pose`，所以**打断 = 取消该动作的全部目标**。
 
-- 订阅手动速度（`cmd_vel_manual` + `cmd_vel_keyboard`）：dashboard 遥控自动
+总优先级：**手动 > 功能模块（KCF / 巡线 / YOLO，平级谁新鲜谁算）> Nav2/VLA**
+
+- **手动层**：订阅 `cmd_vel_manual` + `cmd_vel_keyboard`（dashboard 遥控自动
   双发到 `cmd_vel_manual`；实体键盘用
-  `ros2 run wheeltec_robot_keyboard wheeltec_keyboard --ros-args -r cmd_vel:=cmd_vel_manual`。
-- 收到手动速度 → 立即取消 navigate_to_pose 全部目标（零 UUID = cancel all），
-  并转发手动速度；手动窗口为滑动 `manual_timeout`（默认 2s）。
-- 手动期间若自主导航又输出（监听 `cmd_vel_nav`，humble 默认存在）→ 限频重复
-  取消——手动期间 VLA/Nav2 插不进来。
-- 窗口结束发一帧零速兜底并恢复 AUTO；状态在 `nav_arbiter/status`
-  （`MANUAL|AUTO: 说明`），dashboard VLA 卡实时显示。
+  `ros2 run wheeltec_robot_keyboard wheeltec_keyboard --ros-args -r cmd_vel:=cmd_vel_manual`）。
+  收到即取消 navigate_to_pose 全部目标（零 UUID = cancel all）并转发手动速度；
+  手动窗口为滑动 `manual_timeout`（默认 2s）。
+- **功能模块层**：订阅 `kcf/cmd_vel`、`yolo/cmd_vel`、`line_follow/cmd_vel`
+  （与 `simple_follower_ros2` cmd_arbiter 的输入同名，即各 `*_arbiter` launch
+  的 remap 约定）。任一话题新鲜（`func_timeout` 1s 内）即视为功能模块在驱动 →
+  取消自主导航目标；**速度不在此转发**——转发与二维码路径动作仍由
+  cmd_arbiter 负责。配套改动：cmd_arbiter 失去全部控制源时只发一帧零速后
+  **保持静默**（原先 20Hz 持续发零速会抢 /cmd_vel，导致空闲时无法自主导航），
+  并新增订阅 `cmd_vel_manual`（与键盘同级）——两个仲裁器可常开共存。
+- 高优先级层活跃期间若自主导航又输出（监听 `cmd_vel_nav`，humble 默认存在）
+  → 限频重复取消——VLA/Nav2 插不进来。
+- 全部空闲恢复 AUTO（离开手动层时发一帧零速兜底）；状态在
+  `nav_arbiter/status`（`MANUAL|FUNC|AUTO: 说明`），dashboard VLA 卡实时显示。
 
 ## 配置
 

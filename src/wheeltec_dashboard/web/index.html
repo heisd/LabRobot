@@ -794,7 +794,7 @@
             </div>
             <div id="vla-timeline" class="vla-timeline"></div>
           </div>
-          <p class="hint">指令发布到 <code>/vla/instruction</code>；麦克风识别走 <code>/voice_words</code>。决策与导航状态来自 <code>/vla/status</code>，目标点见 RViz 或 <code>/goal_pose</code>。需先启动 <code>vla_navigator</code> 节点与 rosbridge。<strong>手动打断</strong>：启动 <code>nav_arbiter</code>（随 <code>vla_bringup</code> 自动拉起）后，本面板的遥控按键/WASD 一动就会取消 Nav2/VLA 的当前导航目标（手动期间自主目标也插不进来，松手约 2s 后恢复）；实体键盘节点用 <code>ros2 run wheeltec_robot_keyboard wheeltec_keyboard --ros-args -r cmd_vel:=cmd_vel_manual</code> 同样可打断。</p>
+          <p class="hint">指令发布到 <code>/vla/instruction</code>；麦克风识别走 <code>/voice_words</code>。决策与导航状态来自 <code>/vla/status</code>，目标点见 RViz 或 <code>/goal_pose</code>。需先启动 <code>vla_navigator</code> 节点与 rosbridge。<strong>导航仲裁</strong>（<code>nav_arbiter</code>，随 <code>vla_bringup</code> 自动拉起）：优先级 <strong>手动 &gt; KCF/巡线/YOLO &gt; Nav2/VLA</strong>。本面板的遥控按键/WASD 一动即取消当前自主导航目标（手动期间自主目标插不进来，松手约 2s 后恢复）；KCF/巡线/YOLO 任一功能模块活跃时（<code>kcf|yolo|line_follow/cmd_vel</code> 有数据）同样自动取消 Nav2/VLA 目标，速度转发仍由 <code>cmd_arbiter</code> 负责（其空闲时已改为静默，与导航共存）。实体键盘节点用 <code>ros2 run wheeltec_robot_keyboard wheeltec_keyboard --ros-args -r cmd_vel:=cmd_vel_manual</code> 参与打断（同时可打断功能模块与导航）。</p>
         </section>
 
         <section class="card card-wide">

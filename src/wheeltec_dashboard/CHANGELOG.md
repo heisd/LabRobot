@@ -6,6 +6,64 @@
 
 ---
 
+## 第 11 轮 — KCF / 巡线 / YOLO 接入导航仲裁（手动 > 功能模块 > Nav2/VLA）
+
+### 背景
+
+第 9 轮的 `nav_arbiter` 只仲裁"手动 vs Nav2/VLA"。本轮把底盘三个功能模块
+（KCF 跟踪 / 巡线 / YOLO 跟随）也纳入，形成完整优先级：
+**手动 > 功能模块（三者平级谁新鲜谁算）> Nav2/VLA**。
+排查中发现并修复一个潜在冲突：`cmd_arbiter`（simple_follower_ros2）
+空闲时以 20Hz 持续发零速 `/cmd_vel`——只要它在跑，Nav2/VLA 就永远被
+零速流打架，无法自主导航。
+
+### nav_arbiter（vla_navigation，需重编译）
+
+- 新增**功能模块层**：订阅 `kcf/cmd_vel`、`yolo/cmd_vel`、
+  `line_follow/cmd_vel`（与 cmd_arbiter 输入同名，即各 `*_arbiter` launch
+  的 remap 约定，话题可参数化 `func_topics`/`func_timeout`）。任一话题
+  新鲜（1s 内）即视为功能模块在驱动 → 取消 navigate_to_pose 全部目标；
+  活跃期间 Nav2 再输出则限频重复取消。
+- **速度不在 nav_arbiter 转发**——转发与二维码路径动作仍由 cmd_arbiter
+  负责，职责不重叠：nav_arbiter 管"自主导航让位"，cmd_arbiter 管
+  "功能模块内部混控与下发"。
+- 状态升级为三态 `MANUAL|FUNC|AUTO`，离开手动层补一帧零速兜底（原行为）。
+
+### cmd_arbiter（simple_follower_ros2，需重编译）
+
+- **空闲静默修复**：失去全部控制源时只发一帧零速停车，之后保持静默——
+  修掉与 Nav2/VLA 的 20Hz 零速抢话题问题，两个仲裁器从此可常开共存
+  （巡线/KCF/YOLO launch 与导航 launch 同时跑不再互相干扰）。
+- 新增订阅 `cmd_vel_manual`（参数 `manual_topic`，与键盘同级同处理）：
+  dashboard 遥控（已双发该话题）现在也能打断 KCF/巡线/YOLO，
+  不再只有实体键盘（cmd_vel_keyboard）能打断。
+
+### 前端 dashboard
+
+- `renderNavArbiter` 识别三态：MANUAL/FUNC 显示橙色（自主导航已让位）、
+  AUTO 绿色；层级切换边沿写入 VLA 时间线（含具体功能模块名，如
+  "KCF 跟踪 控制中, 自主导航已让位"）。
+- VLA 卡 hint 更新为完整优先级说明。
+
+### 文件改动汇总（第 11 轮）
+
+| 文件 | 变化 |
+| --- | --- |
+| `../vla_navigation/vla_navigation/nav_arbiter.py` | 功能模块层、三态状态机 |
+| `../simple_follower_ros2/simple_follower_ros2/cmd_arbiter.py` | 空闲静默、cmd_vel_manual 输入 |
+| `../vla_navigation/README.md` | 仲裁章节重写 |
+| `web/app.js` / `web/index.html` | 三态渲染、hint |
+
+### 验证清单
+
+- [ ] 重编译 `colcon build --packages-select vla_navigation simple_follower_ros2` 后：单独跑巡线/KCF/YOLO 的 `*_arbiter` launch，功能正常（仲裁链 cmd_arbiter → /cmd_vel 不变）。
+- [ ] 跑 `vla_bringup` + `wheeltec_robot_kcf_arbiter`：框选目标 KCF 开始跟踪后，VLA 卡"导航仲裁"变橙"KCF 跟踪 控制中"；此时发"去厨房"，目标被立即取消、小车继续跟踪。
+- [ ] KCF 停止（目标丢失/节点关闭）1s 后仲裁回 AUTO（绿色），再发"去厨房"正常导航。
+- [ ] 巡线进行中按面板 W 键：手动立即接管（巡线和导航都让位）；松手 2s 后巡线恢复驱动。
+- [ ] 只跑 cmd_arbiter（无任何功能模块）+ Nav2：`ros2 topic hz /cmd_vel` 无 20Hz 零速流，导航不被干扰（空闲静默生效）。
+
+---
+
 ## 第 10 轮 — 麦克风连接失败日志（上位机）+ 面板显著显示 + C63A 原理图入库
 
 ### 麦克风连接日志（wheeltec_mic_ros2，需重编译）

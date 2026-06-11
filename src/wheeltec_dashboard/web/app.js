@@ -1534,25 +1534,28 @@
     appendTimeline('vla-timeline', VLA_MAX_LINES, text);
   }
 
-  // 导航仲裁状态（nav_arbiter/status: "MANUAL|AUTO: 说明"）。
-  // 指标实时刷，MANUAL/AUTO 切换的边沿写进 VLA 时间线。
+  // 导航仲裁状态（nav_arbiter/status: "MANUAL|FUNC|AUTO: 说明"）。
+  // 优先级 手动 > 功能模块(KCF/巡线/YOLO) > Nav2/VLA；指标实时刷，
+  // 层级切换的边沿写进 VLA 时间线。
   let navArbState = '';
   function renderNavArbiter(msg) {
     const text = (msg.data || '').trim();
-    const manual = /^MANUAL/i.test(text);
+    const stripped = text.replace(/^(MANUAL|FUNC|AUTO):\s*/i, '');
+    const state = /^MANUAL/i.test(text) ? 'MANUAL'
+      : (/^FUNC/i.test(text) ? 'FUNC' : 'AUTO');
     const el = $('vla-arbiter');
     if (el) {
-      el.textContent = text.replace(/^(MANUAL|AUTO):\s*/i, '') || '—';
+      el.textContent = stripped || '—';
       el.classList.remove('ok', 'warn');
-      el.classList.add(manual ? 'warn' : 'ok');
+      el.classList.add(state === 'AUTO' ? 'ok' : 'warn');
     }
-    const state = manual ? 'MANUAL' : 'AUTO';
     if (state !== navArbState) {
       const first = navArbState === '';   // 首条状态只记录不渲染成"切换"
       navArbState = state;
       if (!first) {
-        addVlaStatus(manual ? '[仲裁] 手动接管，自主导航目标已取消'
-          : '[仲裁] 手动释放，自主导航恢复可用');
+        if (state === 'MANUAL') addVlaStatus('[仲裁] 手动接管，自主导航目标已取消');
+        else if (state === 'FUNC') addVlaStatus('[仲裁] ' + (stripped || '功能模块接管，自主导航已让位'));
+        else addVlaStatus('[仲裁] 恢复自主导航可用');
       }
     }
   }
