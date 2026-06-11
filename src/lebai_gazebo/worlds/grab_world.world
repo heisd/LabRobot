@@ -2,37 +2,37 @@
 <!-- =========================================================================
   grab_world.world — 抓取仿真场景(Gazebo Classic)。
 
-  含: 地面、阳光、一张桌子, 以及几个 Gazebo 标准模型物体(可乐罐/木块/啤酒)。
-  这些用 model:// 引用 Gazebo 模型库(首次会自动从 Fuel 下载)。
+  含: 地面、阳光、一张桌子, 以及几个标准模型物体(可乐罐/木块/啤酒)。
+  所有模型从本地 ~/.gazebo/models 目录加载，无需联网下载。
   在 Gazebo GUI 左侧 "Insert" 面板可以继续拖入更多标准物体或你自己的机械臂模型。
 ========================================================================= -->
 <sdf version="1.6">
   <world name="grab_world">
 
-    <include><uri>model://ground_plane</uri></include>
-    <include><uri>model://sun</uri></include>
+    <include><uri>file:///home/user/.gazebo/models/ground_plane</uri></include>
+    <include><uri>file:///home/user/.gazebo/models/sun</uri></include>
 
     <!-- 桌子: 桌面约 1.0m 高 -->
     <include>
       <name>table</name>
-      <uri>model://table</uri>
+      <uri>file:///home/user/.gazebo/models/table</uri>
       <pose>0.55 0 0 0 0 0</pose>
     </include>
 
     <!-- 标准物体(放在桌面上 ~1.015m) -->
     <include>
       <name>coke_can</name>
-      <uri>model://coke_can</uri>
+      <uri>file:///home/user/.gazebo/models/coke_can</uri>
       <pose>0.45 0.10 1.015 0 0 0</pose>
     </include>
     <include>
       <name>wood_cube</name>
-      <uri>model://wood_cube_5cm</uri>
+      <uri>file:///home/user/.gazebo/models/wood_cube_5cm</uri>
       <pose>0.45 -0.10 1.015 0 0 0</pose>
     </include>
     <include>
       <name>beer</name>
-      <uri>model://beer</uri>
+      <uri>file:///home/user/.gazebo/models/beer</uri>
       <pose>0.60 0.0 1.015 0 0 0</pose>
     </include>
 
