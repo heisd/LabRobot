@@ -1,0 +1,15 @@
+material QR/Stop
+{
+  technique
+  {
+    pass
+    {
+      texture_unit
+      {
+        texture qr_stop.png
+        filtering anisotropic
+        max_anisotropy 8
+      }
+    }
+  }
+}

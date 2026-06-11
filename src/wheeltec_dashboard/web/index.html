@@ -1800,7 +1800,7 @@
         <div class="arm-joints">
           <div class="arm-joint-row"><span>建图 / 导航 / 避障</span><span><code>wheeltec_slam_nav</code></span><span><code>ros2 launch wheeltec_gazebo gazebo.launch.py</code></span></div>
           <div class="arm-joint-row"><span>RRT 自主探索 / 迷宫</span><span><code>wheeltec_rrt_explore</code></span><span><code>… gazebo.launch.py world:=wheeltec_rrt_explore</code></span></div>
-          <div class="arm-joint-row"><span>巡线</span><span><code>wheeltec_line_follow</code></span><span><code>… gazebo.launch.py world:=wheeltec_line_follow</code></span></div>
+          <div class="arm-joint-row"><span>巡线 (QR 固定转角)</span><span><code>wheeltec_line_follow</code></span><span><code>… world:=wheeltec_line_follow x:=-3.0 y:=0.0</code></span></div>
           <div class="arm-joint-row"><span>目标跟随 / 检测</span><span><code>wheeltec_target_follow</code></span><span><code>… gazebo.launch.py world:=wheeltec_target_follow</code></span></div>
           <div class="arm-joint-row"><span>VLA 语音导航 / 路径跟随</span><span><code>wheeltec_vla_nav</code></span><span><code>… gazebo.launch.py world:=wheeltec_vla_nav</code></span></div>
         </div>
@@ -1820,7 +1820,7 @@
           </div>
         </div>
         <p class="hint">每个世界文件名都带功能名，一看即知用途：<code>wheeltec_slam_nav</code>(建图/导航/避障)、
-          <code>wheeltec_rrt_explore</code>(RRT 探索/迷宫)、<code>wheeltec_line_follow</code>(巡线，地面红色闭环线)、
+          <code>wheeltec_rrt_explore</code>(RRT 探索/迷宫)、<code>wheeltec_line_follow</code>(巡线，<strong>不带随机分叉的 QR 巡线</strong>：带路口的红线 + 每个路口一张我们的 QR 码贴图，QR 定角转向)、
           <code>wheeltec_target_follow</code>(行人/物体，供 KCF/YOLO/骨架跟随与 YOLO 检测)、
           <code>wheeltec_vla_nav</code>(VLA 语音导航/路径跟随，分区房间含书架/餐桌/柜子/回充等可命名地标)。场景里的障碍物都来自本机
           <code>~/.gazebo/models</code> 标准模型。先 <code>colcon build --packages-select wheeltec_gazebo</code> 再启动，

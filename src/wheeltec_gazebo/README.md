@@ -14,10 +14,12 @@ Wheeltec 移动底盘的 **Gazebo Classic 11** 仿真：一台自洽的差速底
 | `urdf/wheeltec_gazebo.xacro` | Wheeltec 差速底盘：车体 + 左右驱动轮 + 万向轮 + 2D 雷达 + 前向相机；带 diff_drive / ray / camera 三个 gazebo_ros 插件 |
 | `worlds/wheeltec_slam_nav.world` | **建图 / 导航 / 避障**：grey_wall 围成的房间 + 书架/柜子/桌子/垃圾桶/锥桶/行人 |
 | `worlds/wheeltec_rrt_explore.world` | **RRT 自主探索 / 迷宫**：外圈墙 + NIST 迷宫墙隔出走廊与未知区域 |
-| `worlds/wheeltec_line_follow.world` | **巡线**：地面红色闭环赛道(4×3m，纯视觉) + 起点锥桶 |
+| `worlds/wheeltec_line_follow.world` | **巡线(QR 固定转角)**：带多个路口的红色线路 + 每个路口一张 QR 码 + 起点锥桶 |
 | `worlds/wheeltec_target_follow.world` | **目标跟随 / 检测**：行人(站/走) + 物体，供 KCF/YOLO/骨架跟随与 YOLO 检测 |
 | `worlds/wheeltec_vla_nav.world` | **VLA 语音导航 / 路径跟随**：分区房间 + 书架/餐桌/柜子/回充/访客等可命名地标 |
+| `models/qr_*` | **QR 码标识牌模型**：把 `simple_follower_ros2/qr_codes` 的 PNG 贴成 Gazebo 模型(立方体各面贴码) |
 | `launch/gazebo.launch.py` | 启动 Gazebo + 选定世界 + 生成底盘 |
+| `hooks/wheeltec_gazebo.dsv.in` | 把本包 `models/` 加进 `GAZEBO_MODEL_PATH`，让 `model://qr_*` 能解析 |
 
 **世界文件名都带功能名**，一看即知用途。所有障碍物来自本机 `~/.gazebo/models`
 标准模型，URI 用与 `lebai_gazebo/worlds/grab_world.world` 一致的绝对路径
@@ -43,7 +45,8 @@ source install/setup.bash
 ros2 launch wheeltec_gazebo gazebo.launch.py
 
 # 按功能切换世界(world 参数 = 文件名，不带 .world)
-ros2 launch wheeltec_gazebo gazebo.launch.py world:=wheeltec_line_follow
+# 巡线世界建议从线路起点出生:
+ros2 launch wheeltec_gazebo gazebo.launch.py world:=wheeltec_line_follow x:=-3.0 y:=0.0
 ros2 launch wheeltec_gazebo gazebo.launch.py world:=wheeltec_rrt_explore x:=-3.0 y:=-3.0
 ros2 launch wheeltec_gazebo gazebo.launch.py world:=wheeltec_target_follow
 ros2 launch wheeltec_gazebo gazebo.launch.py world:=wheeltec_vla_nav
@@ -71,7 +74,13 @@ ros2 topic pub --once /cmd_vel geometry_msgs/Twist "{linear: {x: 0.2}}"  # 前�
 - **建图**：`world:=wheeltec_slam_nav` 或 `wheeltec_rrt_explore`，再起 SLAM
   （GMapping/Cartographer/Toolbox）；建图页地图实时刷新。
 - **RRT 探索**：`world:=wheeltec_rrt_explore`，起 rrt_exploration，在建图页画边界点。
-- **巡线**：`world:=wheeltec_line_follow`，起 `simple_follower_ros2`，相机俯看红线循迹。
+- **巡线(不带随机分叉的 QR 巡线)**：`world:=wheeltec_line_follow x:=-3.0 y:=0.0`，起
+  `ros2 launch simple_follower_ros2 line_follow_qr_fixed.launch.py`（=`line_follow_plain`
+  纯巡线 + `qr_detector` + `cmd_arbiter`）。纯巡线只跟着线走、不做分叉决策；线路上的**每个
+  路口都摆了一张 QR 码**(`models/qr_*`，由 `simple_follower_ros2/qr_codes` 的 PNG 贴成)，
+  车载相机读到 `path:left` / `path:right` / `path:stop` 后由 `cmd_arbiter` 定角转向——
+  整条线路的转向**完全由 QR 唯一确定，无随机分叉**：
+  起点→A`path:left`→左上`path:right`→右上`path:right`→B`path:left`→终点`path:stop`。
 - **跟随 / 检测**：`world:=wheeltec_target_follow`，起 KCF/YOLO/bodyreader 跟随场内行人。
 - **VLA 语音导航 / 路径跟随**：`world:=wheeltec_vla_nav`，起 `vla_navigation` 的 vla_navigator，
   对房间里的书架/餐桌/柜子/回充区等地标做自然语言导航；路径录制/回放(wheeltec_path_follow)同此世界。
@@ -88,5 +97,14 @@ ros2 topic pub --once /cmd_vel geometry_msgs/Twist "{linear: {x: 0.2}}"  # 前�
    `libgazebo_ros_ray_sensor.so` / `libgazebo_ros_camera.so`）。若用 Ignition/gz-sim，
    插件名与 world 语法需改用 `ros_gz` 对应版本。
 5. **模型路径**：见第一节的 home 路径说明；模型不在 `~/.gazebo/models` 时会加载失败。
-6. **更逼真外观**：想让车体像真车，把 `base_link` 的 `<box>` 视觉换成
+   QR 码模型(`model://qr_*`)由本包 `models/` 经 `GAZEBO_MODEL_PATH` 解析，**务必先
+   `colcon build` 并 `source install/setup.bash`**（环境钩子在那时才生效），否则巡线世界
+   会找不到 QR 模型。
+6. **QR 码识别**：QR 码贴在路口的小立方体各面上(`models/qr_*`，纹理即
+   `simple_follower_ros2/qr_codes/*.png`)。仿真里能否稳定识别取决于车载相机的高度/俯角
+   与 QR 牌位姿——读不到就微调 `camera_joint` 俯角、或调各 `<include>` 的 `<pose>` 让 QR
+   正对相机；强烈建议装 `pyzbar`(比 `cv2.QRCodeDetector` 鲁棒得多)。想加新内容的 QR：把
+   PNG 放进某个 `models/qr_xxx/materials/textures/`，仿照现有 `model.config / model.sdf /
+   *.material` 三件套即可。
+7. **更逼真外观**：想让车体像真车，把 `base_link` 的 `<box>` 视觉换成
    `package://rm_description/meshes/rm_eco65_arm/s300_pro_base_link.STL`（仅视觉，碰撞仍可留 box）。
