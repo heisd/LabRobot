@@ -1,0 +1,236 @@
+<?xml version="1.0"?>
+<!-- =========================================================================
+  wheeltec_gazebo.xacro — Wheeltec 移动底盘的 Gazebo(Classic 11) 仿真模型。
+
+  这是一台自洽的差速底盘(无需外部网格/包依赖), 尺寸按 Wheeltec S300 近似:
+    base_footprint → base_link(车体 box) + 左右驱动轮 + 前后万向轮(支撑) + 顶部 2D 雷达
+    + 前向相机。带三个 gazebo_ros 插件, 与本仓库现有话题对齐:
+      - libgazebo_ros_diff_drive : 订阅 /cmd_vel, 发布 /odom 与 odom→base_footprint TF
+        (Dashboard"底盘控制"页的遥控可直接驱动它);
+      - libgazebo_ros_ray_sensor : 发布 /scan(360° 2D 激光, frame=laser);
+      - libgazebo_ros_camera     : 发布 /camera/color/image_raw(+camera_info),
+        与"车上相机"默认话题一致, 巡线/YOLO 检测可直接连。
+
+  说明: 这是仿真脚手架, 开发环境无 Gazebo/ROS, 未能在线验证。轮径/轮距/相机位姿
+  等为近似值, 首次在工作站上跑时按需微调(见 README)。想要更逼真的外观, 可把
+  base_link 的 box 视觉换成 rm_description 的 s300 base_link.STL。
+========================================================================= -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="wheeltec_chassis">
+
+  <!-- ===== 主要尺寸(近似 Wheeltec S300, 按需微调) ===== -->
+  <xacro:property name="wheel_radius"     value="0.05"/>
+  <xacro:property name="wheel_width"      value="0.03"/>
+  <xacro:property name="wheel_separation" value="0.34"/>
+  <xacro:property name="body_len"         value="0.36"/>
+  <xacro:property name="body_wid"         value="0.30"/>
+  <xacro:property name="body_hgt"         value="0.12"/>
+  <xacro:property name="body_z"           value="0.10"/>  <!-- 车体中心离地高 -->
+
+  <!-- ===================== 底盘骨架 ===================== -->
+  <link name="base_footprint"/>
+
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="6.0"/>
+      <inertia ixx="0.06" ixy="0" ixz="0" iyy="0.08" iyz="0" izz="0.10"/>
+    </inertial>
+    <visual>
+      <geometry><box size="${body_len} ${body_wid} ${body_hgt}"/></geometry>
+      <material name="wheeltec_blue"><color rgba="0.20 0.45 0.75 1"/></material>
+    </visual>
+    <collision>
+      <geometry><box size="${body_len} ${body_wid} ${body_hgt}"/></geometry>
+    </collision>
+  </link>
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 ${body_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ===================== 驱动轮宏 ===================== -->
+  <xacro:macro name="drive_wheel" params="name y">
+    <link name="${name}">
+      <inertial>
+        <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+        <mass value="0.3"/>
+        <inertia ixx="3e-4" ixy="0" ixz="0" iyy="3e-4" iyz="0" izz="5e-4"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+        <material name="wheel_black"><color rgba="0.1 0.1 0.1 1"/></material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+      </collision>
+    </link>
+    <joint name="${name}_joint" type="continuous">
+      <parent link="base_link"/>
+      <child link="${name}"/>
+      <origin xyz="0 ${y} ${-body_z + wheel_radius}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+    <gazebo reference="${name}">
+      <mu1>1.0</mu1>
+      <mu2>1.0</mu2>
+      <material>Gazebo/Black</material>
+    </gazebo>
+  </xacro:macro>
+  <xacro:drive_wheel name="left_wheel"  y="${ wheel_separation/2}"/>
+  <xacro:drive_wheel name="right_wheel" y="${-wheel_separation/2}"/>
+
+  <!-- ===================== 万向支撑轮(前/后, 光滑球) ===================== -->
+  <xacro:macro name="caster" params="name x">
+    <link name="${name}">
+      <inertial>
+        <mass value="0.05"/>
+        <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+      </inertial>
+      <visual><geometry><sphere radius="0.02"/></geometry></visual>
+      <collision><geometry><sphere radius="0.02"/></geometry></collision>
+    </link>
+    <joint name="${name}_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="${name}"/>
+      <origin xyz="${x} 0 ${-body_z + 0.02}" rpy="0 0 0"/>
+    </joint>
+    <gazebo reference="${name}">
+      <mu1>0.0</mu1>
+      <mu2>0.0</mu2>
+    </gazebo>
+  </xacro:macro>
+  <xacro:caster name="caster_front" x="${ body_len/2 - 0.04}"/>
+  <xacro:caster name="caster_back"  x="${-body_len/2 + 0.04}"/>
+
+  <!-- ===================== 顶部 2D 激光雷达 ===================== -->
+  <link name="laser">
+    <inertial>
+      <mass value="0.1"/>
+      <inertia ixx="1e-4" ixy="0" ixz="0" iyy="1e-4" iyz="0" izz="1e-4"/>
+    </inertial>
+    <visual><geometry><cylinder radius="0.035" length="0.04"/></geometry>
+      <material name="laser_dark"><color rgba="0.05 0.05 0.05 1"/></material></visual>
+    <collision><geometry><cylinder radius="0.035" length="0.04"/></geometry></collision>
+  </link>
+  <joint name="laser_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser"/>
+    <origin xyz="0 0 ${body_hgt/2 + 0.02}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ===================== 前向相机(供巡线 / YOLO 检测) ===================== -->
+  <link name="camera_link">
+    <inertial>
+      <mass value="0.05"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+    </inertial>
+    <visual><geometry><box size="0.03 0.08 0.03"/></geometry>
+      <material name="cam_grey"><color rgba="0.2 0.2 0.2 1"/></material></visual>
+  </link>
+  <!-- 装在车头, 略向下俯看前方地面(便于看巡线) -->
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin xyz="${body_len/2 - 0.02} 0 ${body_hgt/2}" rpy="0 0.45 0"/>
+  </joint>
+  <!-- 光学坐标系(z 向前, x 向右, y 向下) -->
+  <link name="camera_link_optical"/>
+  <joint name="camera_optical_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_link_optical"/>
+    <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708"/>
+  </joint>
+
+  <!-- ===================== Gazebo 材质 ===================== -->
+  <gazebo reference="base_link"><material>Gazebo/Blue</material></gazebo>
+  <gazebo reference="laser"><material>Gazebo/FlatBlack</material></gazebo>
+  <gazebo reference="camera_link"><material>Gazebo/Grey</material></gazebo>
+
+  <!-- ===================== 差速驱动插件 ===================== -->
+  <gazebo>
+    <plugin name="diff_drive" filename="libgazebo_ros_diff_drive.so">
+      <ros>
+        <namespace>/</namespace>
+      </ros>
+      <update_rate>30</update_rate>
+      <left_joint>left_wheel_joint</left_joint>
+      <right_joint>right_wheel_joint</right_joint>
+      <wheel_separation>${wheel_separation}</wheel_separation>
+      <wheel_diameter>${2 * wheel_radius}</wheel_diameter>
+      <max_wheel_torque>20.0</max_wheel_torque>
+      <max_wheel_acceleration>1.0</max_wheel_acceleration>
+      <command_topic>cmd_vel</command_topic>
+      <publish_odom>true</publish_odom>
+      <publish_odom_tf>true</publish_odom_tf>
+      <publish_wheel_tf>true</publish_wheel_tf>
+      <odometry_topic>odom</odometry_topic>
+      <odometry_frame>odom</odometry_frame>
+      <robot_base_frame>base_footprint</robot_base_frame>
+    </plugin>
+  </gazebo>
+
+  <!-- ===================== 2D 激光雷达传感器 ===================== -->
+  <gazebo reference="laser">
+    <sensor type="ray" name="laser_sensor">
+      <pose>0 0 0 0 0 0</pose>
+      <always_on>true</always_on>
+      <visualize>false</visualize>
+      <update_rate>10</update_rate>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>360</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.15</min>
+          <max>12.0</max>
+          <resolution>0.01</resolution>
+        </range>
+      </ray>
+      <plugin name="laser_controller" filename="libgazebo_ros_ray_sensor.so">
+        <ros>
+          <remapping>~/out:=scan</remapping>
+        </ros>
+        <output_type>sensor_msgs/LaserScan</output_type>
+        <frame_name>laser</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+  <!-- ===================== 前向 RGB 相机传感器 ===================== -->
+  <gazebo reference="camera_link">
+    <sensor type="camera" name="car_cam">
+      <always_on>true</always_on>
+      <update_rate>15</update_rate>
+      <camera name="camera">
+        <horizontal_fov>1.2</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.05</near>
+          <far>20.0</far>
+        </clip>
+      </camera>
+      <plugin name="car_cam_controller" filename="libgazebo_ros_camera.so">
+        <ros>
+          <namespace>/camera</namespace>
+          <remapping>camera/image_raw:=color/image_raw</remapping>
+          <remapping>camera/camera_info:=color/camera_info</remapping>
+        </ros>
+        <camera_name>camera</camera_name>
+        <frame_name>camera_link_optical</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+</robot>

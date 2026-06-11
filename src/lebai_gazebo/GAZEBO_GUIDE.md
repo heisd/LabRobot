@@ -86,7 +86,8 @@ ros2 launch lebai_gazebo gazebo_grab.launch.py
 ros2 service call /obj_grab_service grab_demo/srv/GrabObject "{obj_link: 'target_frame'}"
 ```
 
-> 也可在 Dashboard "仿真"页点【Gazebo 端到端抓取 (HSV+MoveIt)】启动，再到"监控"页看目标距离。
+> 启动后到 Dashboard 顶部"仿真 (Gazebo)"分组的 **机械臂仿真** 页看转发的 Gazebo 场景，
+> 在"监控与抓取"页控制机械臂、看目标距离。
 
 ### 端到端首次跑可能要调的地方（除第六节外）
 
@@ -115,7 +116,20 @@ ros2 service call /obj_grab_service grab_demo/srv/GrabObject "{obj_link: 'target
 5. **物理稳定性**：机械臂 6 个运动连杆有 inertial；base/tool0/gripper 等是占位 link，
    已用 fixed joint 固定到 world，一般稳定。若出现抖动，检查 collision mesh 与质量。
 
-## 七、在 Dashboard 里用
+## 七、在 Dashboard 里看（Gazebo 场景转发到 Web）
 
-打开 Dashboard 顶部新增的 **仿真** 页签，点【Gazebo 仿真场景 + 机械臂】启动即可（绿点=运行中，
-可看日志）。仿真任务与真机任务资源不冲突，但请勿同时连真机以免混淆。
+`grab_world.world` 里加了一个俯视**场景相机**，把整个抓取仿真画面发布成 ROS 图像话题
+`/sim_scene/arm/image_raw`；Dashboard 的 `web_video_server` 把它转成 MJPEG，在顶部
+**仿真 (Gazebo)** 分组的 **机械臂仿真** 页直接显示——机器人/工作站不开 Gazebo GUI 也能
+在网页里看仿真场景。该页同时显示眼在手相机 `/camera_arm/color/image_raw` 与 HSV 识别调试图
+`/color_node/detection_image`，并实时显示抓取目标距离。
+
+用法：
+1. 在能跑 Gazebo 的机器上 `ros2 launch lebai_gazebo gazebo_grab.launch.py`（或 `gazebo.launch.py`）；
+2. 在同一工作空间起 Dashboard（`ros2 launch wheeltec_dashboard dashboard.launch.py`，自带
+   rosbridge + web_video_server）；
+3. 浏览器打开 Dashboard → **机械臂仿真** 页看场景，**监控与抓取** 页控制机械臂。
+
+> 面板只做"场景转发 + 控制"，不在网页里直接拉起 Gazebo 进程（启动仍在终端 `ros2 launch`）。
+> 仿真任务与真机任务资源不冲突，但请勿同时连真机以免混淆。Wheeltec 底盘仿真见
+> `wheeltec_gazebo` 包与面板的 **机器人底盘仿真** 页。

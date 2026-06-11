@@ -37,6 +37,9 @@
       <button class="tab-btn" data-tab="mapping">建图</button>
       <span class="nav-group-label">Lebai 机械臂</span>
       <button class="tab-btn" data-tab="arm">监控与抓取</button>
+      <span class="nav-group-label">仿真 (Gazebo)</span>
+      <button class="tab-btn" data-tab="armsim">机械臂仿真</button>
+      <button class="tab-btn" data-tab="chassissim">机器人底盘仿真</button>
       <span class="nav-group-label nav-group-end"></span>
       <button class="tab-btn" data-tab="chat">AI 对话</button>
       <button class="tab-btn" data-tab="contact">联系作者</button>
@@ -1693,6 +1696,136 @@
           <p class="hint">启动：<code>ros2 launch grab_demo vlm_grab.launch.py</code>。视觉语言模型按一句话（可间接表达）选物抓取：指令发 <code>/vlm/instruction</code>，理解结果见 <code>/vlm/result</code>，需确认时点"确认抓取"（发 <code>/vlm/confirm</code>）。配 <code>voice_instruction_node</code>（本地 Whisper）可直接语音下指令。详见 <code>grab_demo/VLM_GUIDE.md</code>、<code>VOICE_GUIDE.md</code>。</p>
         </section>
       </div>
+    </div>
+
+    <!-- ============ 机械臂仿真 (Gazebo 抓取场景转发) ============ -->
+    <div class="tab-panel" id="panel-armsim">
+      <section class="card card-wide">
+        <h2>机械臂抓取仿真 <span class="muted">(lebai_gazebo · Gazebo 场景转发到 Web)</span></h2>
+        <div class="fn-stream-toolbar">
+          <label>场景画面话题
+            <input class="fn-topic" data-img="armsim-scene" type="text" value="/sim_scene/arm/image_raw" />
+          </label>
+          <button class="fn-reload" data-img="armsim-scene">刷新</button>
+        </div>
+        <div class="cam-frame fn-frame">
+          <img id="armsim-scene" class="cam-img fn-img" data-topic="/sim_scene/arm/image_raw" src="placeholder.svg" alt="gazebo arm scene" />
+          <div class="cam-err" hidden>无法加载流</div>
+        </div>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">目标距离 (/grab_target/distance)</div>
+            <div class="metric-value arm-dist">— m</div>
+          </div>
+        </div>
+        <div class="vla-quick">
+          <button class="arch-link" data-tab="arm" data-armsubtab="ctrl">去"监控与抓取"控制机械臂</button>
+          <button class="arch-link" data-tab="arm" data-armsubtab="hsv">HSV 抓取调参</button>
+        </div>
+        <p class="hint">把抓取仿真的整个 Gazebo 场景(桌子 + 物体 + 机械臂)经
+          <code>/sim_scene/arm/image_raw</code> 转成 MJPEG 显示在网页里——机器人/工作站无需开 Gazebo
+          GUI 也能看仿真画面。启动一键端到端抓取仿真：<code>ros2 launch lebai_gazebo gazebo_grab.launch.py</code>
+          （Gazebo 场景 + 机械臂 + 相机 + MoveIt + HSV 视觉 + 抓取服务）；只看场景/机械臂用
+          <code>ros2 launch lebai_gazebo gazebo.launch.py</code>。机械臂的<strong>上电/关节/夹爪/抓取控制</strong>
+          都在"监控与抓取"页（仿真与真机话题一致，面板直接可用），抓取闭环触发后这里的<strong>目标距离</strong>会实时更新。
+          下方两路为眼在手相机与 HSV 识别调试图。仿真相机/画质/端口设置与"组件状态"页的 web_video_server 共用。</p>
+      </section>
+
+      <section class="card card-wide">
+        <h2>仿真相机 <span class="muted">(眼在手 + HSV 识别调试)</span></h2>
+        <div class="fn-streams">
+          <div class="fn-stream-tile">
+            <div class="fn-cap">机械臂相机 <span class="muted">(/camera_arm/color/image_raw)</span></div>
+            <div class="cam-frame fn-frame">
+              <img id="armsim-cam" class="cam-img fn-img" data-topic="/camera_arm/color/image_raw" src="placeholder.svg" alt="arm sim camera" />
+              <div class="cam-err" hidden>无法加载流</div>
+            </div>
+            <div class="fn-stream-toolbar">
+              <label>话题
+                <input class="fn-topic" data-img="armsim-cam" type="text" value="/camera_arm/color/image_raw" />
+              </label>
+              <button class="fn-reload" data-img="armsim-cam">刷新</button>
+            </div>
+          </div>
+          <div class="fn-stream-tile">
+            <div class="fn-cap">HSV 识别调试 <span class="muted">(/color_node/detection_image)</span></div>
+            <div class="cam-frame fn-frame">
+              <img id="armsim-hsv" class="cam-img fn-img" data-topic="/color_node/detection_image" src="placeholder.svg" alt="hsv detection" />
+              <div class="cam-err" hidden>无法加载流</div>
+            </div>
+            <div class="fn-stream-toolbar">
+              <label>话题
+                <input class="fn-topic" data-img="armsim-hsv" type="text" value="/color_node/detection_image" />
+              </label>
+              <button class="fn-reload" data-img="armsim-hsv">刷新</button>
+            </div>
+          </div>
+        </div>
+        <p class="hint">仿真相机已发布 <code>/camera_arm/color/image_raw</code> 与 <code>/camera_arm/depth/image_raw</code>，
+          HSV/YOLO/KCF/VLM 抓取节点可直接连（建议加 <code>use_sim_time:=true</code>）。<code>gazebo_grab.launch.py</code>
+          默认起 HSV 视觉（红色阈值正好识别桌上可乐罐），其调试图即此处 <code>/color_node/detection_image</code>。</p>
+      </section>
+    </div>
+
+    <!-- ============ 机器人底盘仿真 (Gazebo 底盘场景转发) ============ -->
+    <div class="tab-panel" id="panel-chassissim">
+      <section class="card card-wide">
+        <h2>机器人底盘仿真 <span class="muted">(wheeltec_gazebo · Gazebo 场景转发到 Web)</span></h2>
+        <div class="fn-stream-toolbar">
+          <label>场景画面话题
+            <input class="fn-topic" data-img="chassissim-scene" type="text" value="/sim_scene/chassis/image_raw" />
+          </label>
+          <button class="fn-reload" data-img="chassissim-scene">刷新</button>
+        </div>
+        <div class="cam-frame fn-frame">
+          <img id="chassissim-scene" class="cam-img fn-img" data-topic="/sim_scene/chassis/image_raw" src="placeholder.svg" alt="gazebo chassis scene" />
+          <div class="cam-err" hidden>无法加载流</div>
+        </div>
+        <div class="vla-quick">
+          <button class="arch-link" data-tab="control">去"底盘控制"遥控</button>
+          <button class="arch-link" data-tab="mapping">建图</button>
+          <button class="arch-link" data-tab="function" data-subtab="line">巡线</button>
+          <button class="arch-link" data-tab="function" data-subtab="vla">导航</button>
+        </div>
+        <p class="hint">把 Wheeltec 底盘仿真的整个 Gazebo 场景经 <code>/sim_scene/chassis/image_raw</code>
+          转成 MJPEG 显示在网页里。底盘话题与真机对齐：<strong>"底盘控制"页或键盘遥控发 <code>/cmd_vel</code> 即可驱动仿真车</strong>，
+          <code>/scan</code>、<code>/odom</code> 可在"系统总览"3D 视图查看（<strong>仿真里程计坐标系是 <code>odom</code></strong>，
+          所以 3D 视图 Fixed frame 在仿真时填 <code>odom</code> 而非 odom_combined）。下方为车上相机
+          <code>/camera/color/image_raw</code>（巡线/YOLO 检测可直接用）。</p>
+      </section>
+
+      <section class="card card-wide">
+        <h2>按功能选择世界 <span class="muted">(wheeltec_gazebo · 文件名即功能)</span></h2>
+        <div class="arm-joint-row arm-joint-head"><span>功能</span><span>world 参数</span><span>启动命令</span></div>
+        <div class="arm-joints">
+          <div class="arm-joint-row"><span>建图 / 导航 / 避障</span><span><code>wheeltec_slam_nav</code></span><span><code>ros2 launch wheeltec_gazebo gazebo.launch.py</code></span></div>
+          <div class="arm-joint-row"><span>RRT 自主探索 / 迷宫</span><span><code>wheeltec_rrt_explore</code></span><span><code>… gazebo.launch.py world:=wheeltec_rrt_explore</code></span></div>
+          <div class="arm-joint-row"><span>巡线</span><span><code>wheeltec_line_follow</code></span><span><code>… gazebo.launch.py world:=wheeltec_line_follow</code></span></div>
+          <div class="arm-joint-row"><span>目标跟随 / 检测</span><span><code>wheeltec_target_follow</code></span><span><code>… gazebo.launch.py world:=wheeltec_target_follow</code></span></div>
+          <div class="arm-joint-row"><span>VLA 语音导航 / 路径跟随</span><span><code>wheeltec_vla_nav</code></span><span><code>… gazebo.launch.py world:=wheeltec_vla_nav</code></span></div>
+        </div>
+        <div class="fn-streams">
+          <div class="fn-stream-tile">
+            <div class="fn-cap">车上相机 <span class="muted">(/camera/color/image_raw)</span></div>
+            <div class="cam-frame fn-frame">
+              <img id="chassissim-cam" class="cam-img fn-img" data-topic="/camera/color/image_raw" src="placeholder.svg" alt="chassis sim camera" />
+              <div class="cam-err" hidden>无法加载流</div>
+            </div>
+            <div class="fn-stream-toolbar">
+              <label>话题
+                <input class="fn-topic" data-img="chassissim-cam" type="text" value="/camera/color/image_raw" />
+              </label>
+              <button class="fn-reload" data-img="chassissim-cam">刷新</button>
+            </div>
+          </div>
+        </div>
+        <p class="hint">每个世界文件名都带功能名，一看即知用途：<code>wheeltec_slam_nav</code>(建图/导航/避障)、
+          <code>wheeltec_rrt_explore</code>(RRT 探索/迷宫)、<code>wheeltec_line_follow</code>(巡线，地面红色闭环线)、
+          <code>wheeltec_target_follow</code>(行人/物体，供 KCF/YOLO/骨架跟随与 YOLO 检测)、
+          <code>wheeltec_vla_nav</code>(VLA 语音导航/路径跟随，分区房间含书架/餐桌/柜子/回充等可命名地标)。场景里的障碍物都来自本机
+          <code>~/.gazebo/models</code> 标准模型。先 <code>colcon build --packages-select wheeltec_gazebo</code> 再启动，
+          各功能节点建议加 <code>use_sim_time:=true</code>。详见 <code>src/wheeltec_gazebo/README.md</code>。</p>
+      </section>
     </div>
 
     <!-- ============ AI 对话 ============ -->

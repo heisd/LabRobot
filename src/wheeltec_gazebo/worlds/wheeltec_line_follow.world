@@ -1,0 +1,105 @@
+<?xml version="1.0" ?>
+<!-- =========================================================================
+  wheeltec_line_follow.world — Wheeltec 底盘"巡线"世界(Gazebo Classic 11)。
+
+  功能定位: 巡线(simple_follower_ros2 的 line_follow / line_follow_qr)。
+  地面上用一圈红色细条画出 4×3m 的闭环赛道(纯视觉, 无碰撞, 不挡车), 车载相机
+  俯看红线即可循迹; 起点用两个锥桶标识。巡线节点默认找红色(line_color=0 / HSV 红),
+  正好匹配本赛道线色。
+
+  线条是自定义的细长 box, 不依赖 ~/.gazebo/models; 锥桶等仍来自标准模型库。
+  俯视场景相机发布 /sim_scene/chassis/image_raw, 经 web_video_server 在 Dashboard 查看。
+========================================================================= -->
+<sdf version="1.6">
+  <world name="wheeltec_line_follow">
+
+    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
+    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
+
+    <!-- ===================== 红色闭环赛道线(4×3m 矩形, 仅视觉) ===================== -->
+    <model name="track_line">
+      <static>true</static>
+      <pose>0 0 0 0 0 0</pose>
+      <link name="link">
+        <!-- 下边 -->
+        <visual name="seg_bottom">
+          <pose>0 -1.5 0.006 0 0 0</pose>
+          <geometry><box><size>4.06 0.06 0.012</size></box></geometry>
+          <material><ambient>0.9 0.05 0.05 1</ambient><diffuse>0.9 0.05 0.05 1</diffuse></material>
+        </visual>
+        <!-- 上边 -->
+        <visual name="seg_top">
+          <pose>0 1.5 0.006 0 0 0</pose>
+          <geometry><box><size>4.06 0.06 0.012</size></box></geometry>
+          <material><ambient>0.9 0.05 0.05 1</ambient><diffuse>0.9 0.05 0.05 1</diffuse></material>
+        </visual>
+        <!-- 左边 -->
+        <visual name="seg_left">
+          <pose>-2.0 0 0.006 0 0 0</pose>
+          <geometry><box><size>0.06 3.06 0.012</size></box></geometry>
+          <material><ambient>0.9 0.05 0.05 1</ambient><diffuse>0.9 0.05 0.05 1</diffuse></material>
+        </visual>
+        <!-- 右边 -->
+        <visual name="seg_right">
+          <pose>2.0 0 0.006 0 0 0</pose>
+          <geometry><box><size>0.06 3.06 0.012</size></box></geometry>
+          <material><ambient>0.9 0.05 0.05 1</ambient><diffuse>0.9 0.05 0.05 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 起点两个锥桶(在下边线起点两侧) -->
+    <include>
+      <name>start_cone_l</name>
+      <uri>model:///home/user/.gazebo/models/construction_cone</uri>
+      <pose>-1.6 -1.85 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>start_cone_r</name>
+      <uri>model:///home/user/.gazebo/models/construction_cone</uri>
+      <pose>-1.6 -1.15 0 0 0 0</pose>
+    </include>
+
+    <!-- ===================== 俯视场景相机(转发到 Web) ===================== -->
+    <model name="scene_camera">
+      <static>true</static>
+      <pose>4.0 -4.0 4.2 0 0.62 2.356</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.05 0.05 0.05</size></box></geometry>
+        </visual>
+        <sensor type="camera" name="scene_cam">
+          <always_on>true</always_on>
+          <update_rate>15</update_rate>
+          <camera name="scene">
+            <horizontal_fov>1.05</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.1</near><far>100</far></clip>
+          </camera>
+          <plugin name="scene_cam_controller" filename="libgazebo_ros_camera.so">
+            <ros>
+              <namespace>/sim_scene/chassis</namespace>
+              <remapping>scene/image_raw:=image_raw</remapping>
+              <remapping>scene/camera_info:=camera_info</remapping>
+            </ros>
+            <camera_name>scene</camera_name>
+            <frame_name>scene_camera</frame_name>
+          </plugin>
+        </sensor>
+      </link>
+    </model>
+
+    <physics name="default_physics" default="0" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <gui fullscreen="0">
+      <camera name="user_camera">
+        <pose>4.5 -4.5 4.5 0 0.55 2.356</pose>
+      </camera>
+    </gui>
+
+  </world>
+</sdf>

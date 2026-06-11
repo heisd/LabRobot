@@ -65,7 +65,8 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
 
 页面顶部为导航栏，按机器人本体的两个部分 —— **Wheeltec 底盘** 与
 **Lebai 机械臂** —— 分组（也支持 `#overview`、`#components`、`#control`、
-`#function`、`#mapping`、`#arm`、`#chat`、`#contact` 锚点深链）。顶栏右侧常驻
+`#function`、`#mapping`、`#arm`、`#armsim`、`#chassissim`、`#chat`、`#contact`
+锚点深链）。顶栏右侧常驻
 **机械臂在线徽标**（`/robot_status` 3 秒内有数据=在线绿、断流=离线红、
 未连 rosbridge=灰）：
 
@@ -94,6 +95,18 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
 - **Lebai 机械臂**
   - **监控与抓取**（含子页面）：监控与控制、HSV / YOLO / KCF / ArUco / VLM
     五种 grab_demo 抓取方案
+- **仿真 (Gazebo)**（把 Gazebo 场景经 web_video_server 转 MJPEG 转发到网页，
+  机器人/工作站不开 Gazebo GUI 也能看仿真画面；启动仍在终端 `ros2 launch`）
+  - **机械臂仿真**：转发抓取仿真场景 `/sim_scene/arm/image_raw`（lebai_gazebo
+    `grab_world.world` 新增的俯视场景相机）+ 眼在手相机 + HSV 调试图 + 目标距离；
+    控制在"监控与抓取"页。启动 `ros2 launch lebai_gazebo gazebo_grab.launch.py`。
+  - **机器人底盘仿真**：转发底盘仿真场景 `/sim_scene/chassis/image_raw` + 车上相机
+    `/camera/color/image_raw`；底盘话题与真机对齐（`/cmd_vel` 遥控、`/scan`、`/odom`）。
+    由 **wheeltec_gazebo** 包提供，**按功能分多个世界**（文件名即功能）：
+    `wheeltec_slam_nav`(建图/导航/避障)、`wheeltec_rrt_explore`(RRT 探索)、
+    `wheeltec_line_follow`(巡线)、`wheeltec_target_follow`(跟随/检测)、
+    `wheeltec_vla_nav`(VLA 语音导航/路径跟随)。启动
+    `ros2 launch wheeltec_gazebo gazebo.launch.py world:=<名字>`。
 - **AI 对话**：与大模型文字聊天，三种后端可切——Ollama·ROS 服务
   （`/chat_service`，ollama_ros_chat）、Ollama·ROS 话题流式
   （`/chat_message`→`/chat_response` 逐字渲染）、**DeepSeek API 联网直连**

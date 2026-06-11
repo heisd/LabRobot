@@ -1,0 +1,14 @@
+cmake_minimum_required(VERSION 3.8)
+project(wheeltec_gazebo)
+
+find_package(ament_cmake REQUIRED)
+
+# 仅安装资源文件(urdf / worlds / launch)
+install(DIRECTORY
+  urdf
+  worlds
+  launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
+ament_package()
