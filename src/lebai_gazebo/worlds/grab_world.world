@@ -9,30 +9,30 @@
 <sdf version="1.6">
   <world name="grab_world">
 
-    <include><uri>file:///home/user/.gazebo/models/ground_plane</uri></include>
-    <include><uri>file:///home/user/.gazebo/models/sun</uri></include>
+    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
+    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
 
     <!-- 桌子: 桌面约 1.0m 高 -->
     <include>
       <name>table</name>
-      <uri>file:///home/user/.gazebo/models/table</uri>
+      <uri>model:///home/user/.gazebo/models/table</uri>
       <pose>0.55 0 0 0 0 0</pose>
     </include>
 
     <!-- 标准物体(放在桌面上 ~1.015m) -->
     <include>
       <name>coke_can</name>
-      <uri>file:///home/user/.gazebo/models/coke_can</uri>
+      <uri>model:///home/user/.gazebo/models/coke_can</uri>
       <pose>0.45 0.10 1.015 0 0 0</pose>
     </include>
     <include>
       <name>wood_cube</name>
-      <uri>file:///home/user/.gazebo/models/wood_cube_5cm</uri>
+      <uri>model:///home/user/.gazebo/models/wood_cube_5cm</uri>
       <pose>0.45 -0.10 1.015 0 0 0</pose>
     </include>
     <include>
       <name>beer</name>
-      <uri>file:///home/user/.gazebo/models/beer</uri>
+      <uri>model:///home/user/.gazebo/models/beer</uri>
       <pose>0.60 0.0 1.015 0 0 0</pose>
     </include>
 
