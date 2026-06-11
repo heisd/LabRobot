@@ -1410,7 +1410,7 @@
     buildViewer();
     disposeLayers();
 
-    const fixedFrame = $('vw-fixed').value.trim() || 'odom_combined';
+    const fixedFrame = $('vw-fixed').value.trim() || 'odom';
     const scanTopic = $('vw-scan').value.trim();
     const odomTopic = $('vw-odom').value.trim();
 
