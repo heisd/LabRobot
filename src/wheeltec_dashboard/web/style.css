@@ -1125,6 +1125,223 @@ main {
 }
 .arm-yolo-buttons .yp span { font-size: 11px; opacity: 0.75; }
 
+/* --------- 自动回充 / 安全等级 / RGB 灯带（底盘控制页） --------- */
+.sec-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+/* 与 .teleop-sliders label 同款纵排（标签在上、控件在下），按钮与控件底对齐 */
+.sec-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.sec-row select {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 8px;
+  border-radius: 4px;
+}
+.sec-row button,
+.rc-btns button,
+.rgb-row button {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sec-row button:hover,
+.rc-btns button:hover,
+.rgb-row button:hover { filter: brightness(1.15); }
+
+.rc-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.rc-btns .rc-stop { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
+.rc-btns .rc-stop:hover { border-color: var(--err); color: var(--err); filter: none; }
+
+.rgb-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.rgb-row input[type="color"] {
+  width: 56px;
+  height: 34px;
+  padding: 2px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.rgb-text {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--muted);
+  min-width: 130px;
+}
+
+/* 下发指令解析值一般较长，缩小字号防溢出 */
+.stm32-lastcmd { font-size: 13px; }
+
+/* 骨架识别：找回目标 ID 输入 */
+.body-recover {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.body-recover input {
+  width: 70px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 8px;
+  border-radius: 4px;
+}
+
+/* VLA 航点标定助手 */
+.wp-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+.wp-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.wp-form input {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 4px;
+  min-width: 180px;
+}
+.wp-form button {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wp-form button:hover { filter: brightness(1.15); }
+.wp-yaml {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
+/* 地图航点管理：地图画布 + 工具条 + 航点列表 */
+.wp-map-toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.wp-map-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.wp-map-toolbar input {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 4px;
+  min-width: 160px;
+}
+.wp-map-toolbar button {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wp-map-toolbar button:hover { filter: brightness(1.15); }
+.wp-map-wrap {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--panel-2);
+  margin-bottom: 10px;
+}
+#wp-map {
+  display: block;
+  width: 100%;
+  cursor: crosshair;
+  touch-action: none;   /* 触屏拖动定朝向时不滚动页面 */
+}
+.wp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.wp-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 8px;
+  align-items: center;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 13px;
+}
+.wp-row-pos {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.wp-row button {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.wp-row button:hover { border-color: var(--accent); color: var(--accent); }
+.wp-row .wp-del:hover { border-color: var(--err); color: var(--err); }
+
 /* --------- Mobile / narrow-screen tweaks --------- */
 @media (max-width: 640px) {
   header {
@@ -1153,3 +1370,103 @@ main {
   }
   .log-row .ln { display: none; }
 }
+
+/* 语音组件卡: 麦克风连接提示行 */
+.voice-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.voice-tip-row button {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.voice-tip-row button:hover { border-color: var(--accent); color: var(--accent); }
+.err-text { color: var(--err); }
+
+/* 传感器在线监控: 绿/红/灰指示灯墙 + 串口设备表 */
+.sw-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.sw-tile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 12px;
+}
+.sw-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+  box-shadow: 0 0 0 0 transparent;
+}
+.sw-dot.on {
+  background: var(--ok);
+  box-shadow: 0 0 6px rgba(63, 185, 80, 0.8);
+}
+.sw-dot.off {
+  background: var(--err);
+  box-shadow: 0 0 6px rgba(248, 81, 73, 0.8);
+}
+.sw-label { font-weight: 600; font-size: 13px; }
+.sw-state { font-size: 12px; color: var(--muted); }
+.sw-state.on { color: var(--ok); }
+.sw-state.off { color: var(--err); }
+.sw-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.sw-row {
+  display: grid;
+  grid-template-columns: 180px 150px 1fr;
+  gap: 10px;
+  align-items: center;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.sw-alias { font-weight: 600; }
+.sw-port { font-variant-numeric: tabular-nums; color: var(--accent); }
+.sw-usbid {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (max-width: 640px) {
+  .sw-row { grid-template-columns: 1fr; gap: 2px; }
+}
+
+/* 3D 视图: 机器人模型 / SLAM 地图 开关 */
+.viewer-controls .vw-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-end;
+  padding-bottom: 6px;
+  white-space: nowrap;
+}
+.viewer-controls .vw-check input { width: auto; padding: 0; }

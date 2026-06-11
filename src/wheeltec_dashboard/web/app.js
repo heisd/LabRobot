@@ -15,11 +15,19 @@
   let ros = null;
   const subs = [];   // active subscriptions
   let cmdVelPub = null;
+  let cmdVelManualPub = null;  // /cmd_vel_manual: 同步发给 nav_arbiter, 手动打断 Nav2/VLA
   let vlaInstrPub = null;  // /vla/instruction publisher
   let ttsPub = null;       // /tts_text publisher
   let armVlmInstrPub = null;   // /vlm/instruction publisher (机械臂 VLM 抓取)
   let armVlmConfirmPub = null; // /vlm/confirm publisher (确认/取消抓取)
   let kcfBboxPub = null;       // /kcf_node/select_bbox publisher (KCF 手动框选)
+  let rechargeFlagPub = null;  // /robot_recharge_flag publisher (自动回充 1开/0关)
+  let securityPub = null;      // /chassis_security publisher (固件安全等级 0/1)
+  let bodyModePub = null;      // /mode publisher (骨架识别 1=姿态交互 2=跟随)
+  let bodyRecoveryPub = null;  // /recoveryid publisher (骨架识别找回锁定目标)
+  let wpTf = null;             // map→base_footprint TF (VLA 地图航点管理)
+  let wpCmdPub = null;         // /vla/waypoint_cmd publisher (航点增删, 后端持久化)
+  let goalPosePub = null;      // /goal_pose publisher (航点列表"导航"按钮直达)
   let lidarSubs = [];      // per-source LaserScan subs (managed separately so
                            // the lidar card can re-subscribe on topic change)
   const lidarLast = {};    // key -> { time, points, min }
@@ -119,6 +127,10 @@
       try { cmdVelPub.unadvertise(); } catch (_) { /* ignore */ }
       cmdVelPub = null;
     }
+    if (cmdVelManualPub) {
+      try { cmdVelManualPub.unadvertise(); } catch (_) { /* ignore */ }
+      cmdVelManualPub = null;
+    }
     if (vlaInstrPub) {
       try { vlaInstrPub.unadvertise(); } catch (_) { /* ignore */ }
       vlaInstrPub = null;
@@ -139,6 +151,37 @@
       try { kcfBboxPub.unadvertise(); } catch (_) { /* ignore */ }
       kcfBboxPub = null;
     }
+    if (rechargeFlagPub) {
+      try { rechargeFlagPub.unadvertise(); } catch (_) { /* ignore */ }
+      rechargeFlagPub = null;
+    }
+    if (securityPub) {
+      try { securityPub.unadvertise(); } catch (_) { /* ignore */ }
+      securityPub = null;
+    }
+    if (bodyModePub) {
+      try { bodyModePub.unadvertise(); } catch (_) { /* ignore */ }
+      bodyModePub = null;
+    }
+    if (bodyRecoveryPub) {
+      try { bodyRecoveryPub.unadvertise(); } catch (_) { /* ignore */ }
+      bodyRecoveryPub = null;
+    }
+    if (wpTf) {
+      try { wpTf.dispose(); } catch (_) { /* ignore */ }
+      wpTf = null;
+    }
+    if (wpCmdPub) {
+      try { wpCmdPub.unadvertise(); } catch (_) { /* ignore */ }
+      wpCmdPub = null;
+    }
+    if (goalPosePub) {
+      try { goalPosePub.unadvertise(); } catch (_) { /* ignore */ }
+      goalPosePub = null;
+    }
+    // 航点列表属于上一个连接的后端, 清掉避免误导; 地图位图保留(重连通常同一张图)
+    vlaWaypoints = [];
+    renderWpList();
     // 机械臂侧状态属于上一个连接：清掉，避免换机器人重连后残留
     // 旧关节行 / 旧的 YOLO 目标选中态（armJointMap 也因此不会无限增长）。
     armJointMap.clear();
@@ -168,25 +211,51 @@
     });
 
     sub('/robot_charging_flag', 'std_msgs/msg/Bool', (msg) => {
-      const el = $('m-charging');
-      el.textContent = msg.data ? '是' : '否';
-      el.classList.toggle('ok', !!msg.data);
-    });
-    sub('/robot_charging_current', 'std_msgs/msg/Float32', (msg) => {
-      $('m-charge-current').textContent = msg.data.toFixed(2) + ' A';
-    });
-    sub('/robot_red_flag', 'std_msgs/msg/Bool', (msg) => {
-      ['m-red', 'stm32-red'].forEach((id) => {
+      ['m-charging', 'rc-charging'].forEach((id) => {
         const el = $(id);
         if (!el) return;
-        el.textContent = msg.data ? '触发' : '正常';
-        el.classList.remove('ok', 'err');
-        el.classList.add(msg.data ? 'err' : 'ok');
+        el.textContent = msg.data ? '是' : '否';
+        el.classList.toggle('ok', !!msg.data);
+      });
+    });
+    sub('/robot_charging_current', 'std_msgs/msg/Float32', (msg) => {
+      ['m-charge-current', 'rc-current'].forEach((id) => {
+        const el = $(id);
+        if (el) el.textContent = msg.data.toFixed(2) + ' A';
+      });
+    });
+    // red flag = 回充红外：固件回充帧 rx[3] 是收到充电桩红外的对管个数
+    // (ChargeDev.RedNum 0-4)，驱动转成 Bool 发布 —— 不是急停信号。
+    sub('/robot_red_flag', 'std_msgs/msg/Bool', (msg) => {
+      ['m-red', 'stm32-red', 'rc-red'].forEach((id) => {
+        const el = $(id);
+        if (!el) return;
+        el.textContent = msg.data ? '检测到充电桩' : '未检测';
+        el.classList.remove('ok', 'warn', 'err');
+        if (msg.data) el.classList.add('ok');   // 未检测是常态，不着色
       });
     });
     sub('/self_check_data', 'std_msgs/msg/UInt32', (msg) => {
       $('m-selfcheck').textContent = '0x' + msg.data.toString(16).toUpperCase();
     });
+    // 传感器在线监控（sensor_watchdog）：各传感器绿/红灯 + 串口设备表。
+    sub('/sensor_watchdog/status', 'std_msgs/msg/String', (msg) => {
+      let obj = null;
+      try { obj = JSON.parse(msg.data || '{}'); } catch (_) { return; }
+      swTime = Date.now();
+      renderSensorWatchdog(obj);
+    }, { throttle_rate: 500 });
+
+    // 下位机使能位（24字节帧 rx[1]）：固件真实的"允许移动"信号。
+    // 需重编译 turn_on_wheeltec_robot 才有此话题，没有时指标保持 "—"。
+    sub('/robot_enable_flag', 'std_msgs/msg/Bool', (msg) => {
+      stm32Time = Date.now();
+      updateStm32Enable(!!msg.data);
+    }, { throttle_rate: 200 });
+    // 下位机回充模式回读（回充帧 rx[5]）：固件确认已进入/退出 ChargeMode。
+    sub('/robot_recharge_mode', 'std_msgs/msg/Bool', (msg) => {
+      updateRechargeMode(!!msg.data);
+    }, { throttle_rate: 200 });
 
     sub('/odom', 'nav_msgs/msg/Odometry', (msg) => {
       stm32Time = Date.now();   // /odom 只在串口帧校验通过时发布 → 下位机在线信号
@@ -226,6 +295,80 @@
       messageType: 'geometry_msgs/msg/Twist',
     });
     cmdVelPub.advertise();
+    // 同一份手动速度再发一路给 nav_arbiter（没跑仲裁节点时此话题无人订阅，
+    // 无副作用）：仲裁器收到即取消 Nav2/VLA 的导航目标，手动随时打断自主。
+    cmdVelManualPub = new ROSLIB.Topic({
+      ros, name: '/cmd_vel_manual', messageType: 'geometry_msgs/msg/Twist',
+    });
+    cmdVelManualPub.advertise();
+    // 导航仲裁状态（nav_arbiter）：VLA 卡显示 + 接管/释放边沿进时间线。
+    sub('/nav_arbiter/status', 'std_msgs/msg/String', renderNavArbiter);
+
+    // 自动回充开关与固件安全等级：都是驱动里的标志位，随下一帧 cmd_vel
+    // 序列化进串口帧（frame[1]/frame[2]）下发，因此发布后要补发一帧 cmd_vel。
+    rechargeFlagPub = new ROSLIB.Topic({
+      ros, name: '/robot_recharge_flag', messageType: 'std_msgs/msg/Int8',
+    });
+    rechargeFlagPub.advertise();
+    securityPub = new ROSLIB.Topic({
+      ros, name: '/chassis_security', messageType: 'std_msgs/msg/Int8',
+    });
+    securityPub.advertise();
+
+    // 驱动发给下位机的 11 字节控制帧原样回发（/robot_serial_tx，需重编译驱动），
+    // 按通信协议表解析后进 STM32 卡的"最近下发指令"与事件栏。
+    sub('/robot_serial_tx', 'std_msgs/msg/UInt8MultiArray', (msg) => {
+      ingestStm32Tx(msg.data || []);
+    }, { throttle_rate: 100 });
+
+    // 骨架识别 (wheeltec_bodyreader)：姿态/人数/模式订阅 + 模式切换/找回目标发布。
+    bodyModePub = new ROSLIB.Topic({
+      ros, name: '/mode', messageType: 'std_msgs/msg/Int8',
+    });
+    bodyModePub.advertise();
+    bodyRecoveryPub = new ROSLIB.Topic({
+      ros, name: '/recoveryid', messageType: 'std_msgs/msg/Int16',
+    });
+    bodyRecoveryPub.advertise();
+    sub('/body_posture', 'bodyreader_msg/msg/Bodyposture', renderBodyPosture, { throttle_rate: 200 });
+    sub('/bodylist', 'bodyreader_msg/msg/Bodylist', (msg) => {
+      const el = $('body-count');
+      if (el) el.textContent = String(msg.count != null ? msg.count : '—');
+    }, { throttle_rate: 500 });
+    sub('/mode', 'std_msgs/msg/Int8', (msg) => {
+      const el = $('body-mode');
+      if (!el) return;
+      const m = +msg.data;
+      el.textContent = m === 2 ? '跟随' : (m === 1 ? '姿态交互' : String(m));
+      el.classList.remove('ok', 'warn');
+      el.classList.add(m === 2 ? 'warn' : 'ok');   // 跟随会动真车，标 warn 提醒
+    });
+
+    // VLA 地图航点管理：独立 TF 客户端固定以 map 为参考系（3D 视图那份的
+    // fixed frame 跟随用户输入，默认 odom_combined，不能复用）。
+    wpTf = makeTfClient(ros, 'map');
+    wpCmdPub = new ROSLIB.Topic({
+      ros, name: '/vla/waypoint_cmd', messageType: 'std_msgs/msg/String',
+    });
+    wpCmdPub.advertise();
+    goalPosePub = new ROSLIB.Topic({
+      ros, name: '/goal_pose', messageType: 'geometry_msgs/msg/PoseStamped',
+    });
+    goalPosePub.advertise();
+    // 后端 vla_navigator 广播的航点列表（变更即发 + 3s 周期，晚连也能拿到）
+    sub('/vla/waypoints', 'std_msgs/msg/String', (msg) => {
+      let obj = null;
+      try { obj = JSON.parse(msg.data || '{}'); } catch (_) { return; }
+      vlaWaypoints = (obj && obj.waypoints) || [];
+      wpFile = (obj && obj.file) || '';
+      renderWpList();
+      wpRedraw();
+    });
+    // SLAM 建图中 /map 周期发布（volatile）可直接收到；map_server 的
+    // transient_local 帧可能收不到 —— 由 GetMap 服务兜底（fetchWpMap）。
+    sub('/map', 'nav_msgs/msg/OccupancyGrid', ingestWpMap,
+      { queue_length: 1, throttle_rate: 2000 });
+    wpMapTried = false;   // 每次连接自动尝试一次 GetMap
 
     // VLA: publish instructions / TTS text, watch recognition + status.
     vlaInstrPub = new ROSLIB.Topic({
@@ -253,12 +396,23 @@
     sub('/cmd_arbiter/status', 'std_msgs/msg/String', (msg) => updateCtrlSource(msg.data));
 
     // Voice subsystem status (wheeltec_mic + tts_make).
+    // 驱动改造后: 串口打开失败/拔线断开都会发 voice_flag=0(失败态每 10s 随
+    // 重试重发), 重连成功发 1 —— 这里据此渲染并把边沿写进卡内提示。
     sub('/voice_flag', 'std_msgs/msg/Int8', (msg) => {
       const el = $('voice-mic'); if (!el) return;
       const ok = msg.data === 1 || msg.data === true;
-      el.textContent = ok ? '已初始化' : '未就绪';
+      el.textContent = ok ? '已初始化' : '离线（串口未连接）';
       el.classList.remove('ok', 'err');
       el.classList.add(ok ? 'ok' : 'err');
+      if (voiceMicState !== ok) {
+        voiceMicState = ok;
+        const tip = $('voice-mic-tip');
+        if (tip) {
+          tip.textContent = (ok ? '✓ 麦克风已连接' : '⚠ 麦克风串口连接失败，驱动每 10s 自动重试中——查看下方日志面板（按 mic 过滤）')
+            + ' · ' + new Date().toLocaleTimeString();
+          tip.classList.toggle('err-text', !ok);
+        }
+      }
     });
     sub('/awake_flag', 'std_msgs/msg/Int8', (msg) => {
       const el = $('voice-awake'); if (!el) return;
@@ -387,10 +541,13 @@
     curVx = vx; curWz = wz;
     cmdReadout.textContent = `vx=${vx.toFixed(2)}, wz=${wz.toFixed(2)}`;
     if (!cmdVelPub) return;
-    cmdVelPub.publish(new ROSLIB.Message({
+    const msg = new ROSLIB.Message({
       linear: { x: vx, y: 0, z: 0 },
       angular: { x: 0, y: 0, z: wz },
-    }));
+    });
+    cmdVelPub.publish(msg);
+    // 手动通道：nav_arbiter 据此打断 Nav2/VLA 的自主导航
+    if (cmdVelManualPub) cmdVelManualPub.publish(msg);
   }
 
   function computeCmd(btn) {
@@ -949,6 +1106,215 @@
     };
   }
 
+  // ---- 机器人模型 (URDF) 图层 ----
+  // 经 rosbridge 调 <node>/get_parameters 取已展开的 robot_description（xacro
+  // 在 launch 时已处理），浏览器 DOMParser 解析 link/visual。每个 link 的位姿
+  // 不做关节运动学——robot_state_publisher 已把所有 link 发进 /tf，直接用
+  // 既有的 tfClient.lookup(link) 摆放。网格经 web_server 的 /pkg/ 路由加载。
+  function urdfRpyToQuat(rpyStr) {
+    const p = String(rpyStr || '0 0 0').trim().split(/\s+/).map(Number);
+    // URDF rpy 是固定轴 XYZ（R = Rz·Ry·Rx），对应 THREE 内旋序 'ZYX'
+    return new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(p[0] || 0, p[1] || 0, p[2] || 0, 'ZYX'));
+  }
+  function urdfVec(str, def) {
+    const p = String(str || '').trim().split(/\s+/).map(Number);
+    return [p[0] || def, p[1] || def, p[2] || def];
+  }
+  function meshUrlFromPackageUri(uri) {
+    const m = /^package:\/\/([^/]+)\/(.+)$/.exec((uri || '').trim());
+    return m ? '/pkg/' + m[1] + '/' + m[2] : null;
+  }
+
+  function makeUrdfLayer(nodeName) {
+    let disposed = false;
+    const linkGroups = new Map();   // link 名 -> THREE.Group
+    const disposables = [];         // geometry/material 待释放
+
+    function materialFor(colorArr) {
+      const c = colorArr || [0.55, 0.6, 0.66, 1];
+      const mat = new THREE.MeshLambertMaterial({
+        color: new THREE.Color(c[0], c[1], c[2]),
+        transparent: c[3] < 0.99,
+        opacity: c[3],
+      });
+      disposables.push(mat);
+      return mat;
+    }
+
+    function buildFromXml(xml) {
+      if (disposed || !viewer) return;
+      const doc = new DOMParser().parseFromString(xml, 'text/xml');
+      const robot = doc.querySelector('robot');
+      if (!robot) { setViewerStatus('URDF 解析失败: ' + nodeName); return; }
+      // robot 级命名材质表（visual 里可只写名字引用）
+      const namedColors = {};
+      Array.from(robot.children).filter((n) => n.tagName === 'material').forEach((m) => {
+        const c = m.querySelector('color');
+        if (m.getAttribute('name') && c) {
+          namedColors[m.getAttribute('name')] =
+            String(c.getAttribute('rgba') || '').trim().split(/\s+/).map(Number);
+        }
+      });
+
+      let linkCount = 0;
+      Array.from(robot.children).filter((n) => n.tagName === 'link').forEach((link) => {
+        const visuals = Array.from(link.children).filter((n) => n.tagName === 'visual');
+        if (!visuals.length) return;
+        const grp = new THREE.Group();
+        grp.visible = false;   // 等 TF 就位再显示
+        visuals.forEach((vis) => {
+          const holder = new THREE.Group();
+          const origin = Array.from(vis.children).find((n) => n.tagName === 'origin');
+          if (origin) {
+            const xyz = urdfVec(origin.getAttribute('xyz'), 0);
+            holder.position.set(xyz[0], xyz[1], xyz[2]);
+            holder.quaternion.copy(urdfRpyToQuat(origin.getAttribute('rpy')));
+          }
+          // 颜色：visual 内联 color > 命名材质 > 默认灰
+          let colorArr = null;
+          const matEl = vis.querySelector('material');
+          if (matEl) {
+            const c = matEl.querySelector('color');
+            if (c) colorArr = String(c.getAttribute('rgba') || '').trim().split(/\s+/).map(Number);
+            else if (matEl.getAttribute('name')) colorArr = namedColors[matEl.getAttribute('name')] || null;
+          }
+          const geomEl = vis.querySelector('geometry');
+          const meshEl = geomEl && geomEl.querySelector('mesh');
+          const boxEl = geomEl && geomEl.querySelector('box');
+          const cylEl = geomEl && geomEl.querySelector('cylinder');
+          const sphEl = geomEl && geomEl.querySelector('sphere');
+          if (meshEl) {
+            const url = meshUrlFromPackageUri(meshEl.getAttribute('filename'));
+            const scale = urdfVec(meshEl.getAttribute('scale'), 1);
+            if (url && /\.stl$/i.test(url) && THREE.STLLoader) {
+              new THREE.STLLoader().load(url, (geom) => {
+                if (disposed) { geom.dispose(); return; }
+                disposables.push(geom);
+                const mesh = new THREE.Mesh(geom, materialFor(colorArr));
+                mesh.scale.set(scale[0], scale[1], scale[2]);
+                holder.add(mesh);
+              }, undefined, () => setViewerStatus('URDF 网格加载失败: ' + url +
+                '（web_server 是否已重编译启用 /pkg/ 路由？）'));
+            } else if (url && /\.dae$/i.test(url) && THREE.ColladaLoader) {
+              new THREE.ColladaLoader().load(url, (dae) => {
+                if (disposed || !dae || !dae.scene) return;
+                dae.scene.scale.set(scale[0], scale[1], scale[2]);
+                holder.add(dae.scene);
+              }, undefined, () => setViewerStatus('URDF 网格加载失败: ' + url));
+            }
+          } else if (boxEl) {
+            const s = urdfVec(boxEl.getAttribute('size'), 0.1);
+            const geom = new THREE.BoxGeometry(s[0], s[1], s[2]);
+            disposables.push(geom);
+            holder.add(new THREE.Mesh(geom, materialFor(colorArr)));
+          } else if (cylEl) {
+            const r = parseFloat(cylEl.getAttribute('radius')) || 0.05;
+            const l = parseFloat(cylEl.getAttribute('length')) || 0.1;
+            const geom = new THREE.CylinderGeometry(r, r, l, 24);
+            disposables.push(geom);
+            const mesh = new THREE.Mesh(geom, materialFor(colorArr));
+            mesh.rotation.x = Math.PI / 2;   // URDF 圆柱沿 Z，THREE 沿 Y
+            holder.add(mesh);
+          } else if (sphEl) {
+            const r = parseFloat(sphEl.getAttribute('radius')) || 0.05;
+            const geom = new THREE.SphereGeometry(r, 20, 14);
+            disposables.push(geom);
+            holder.add(new THREE.Mesh(geom, materialFor(colorArr)));
+          }
+          grp.add(holder);
+        });
+        viewer.scene.add(grp);
+        linkGroups.set(link.getAttribute('name'), grp);
+        linkCount++;
+      });
+      setViewerStatus('');
+      console.info('URDF 模型已加载: %s（%d 个可视 link）', nodeName, linkCount);
+    }
+
+    // 取 robot_description 参数（xacro 已在 launch 时展开为纯 URDF）
+    const req = new ROSLIB.ServiceRequest({ names: ['robot_description'] });
+    paramService(nodeName, 'get_parameters').callService(req, (res) => {
+      const val = res && res.values && res.values[0];
+      const xml = (val && val.type === PT_STRING) ? val.string_value : '';
+      if (!xml) { setViewerStatus('URDF: ' + nodeName + ' 没有 robot_description 参数'); return; }
+      buildFromXml(xml);
+    }, (err) => setViewerStatus('URDF 获取失败 (' + nodeName + '): ' + err +
+      '（robot_state_publisher 是否在跑？）'));
+
+    // 每 100ms 按 TF 摆放各 link（robot_state_publisher 已发布全部 link 的 TF）
+    const timer = setInterval(() => {
+      if (!tfClient) return;
+      linkGroups.forEach((grp, name) => {
+        const tf = tfClient.lookup(name);
+        if (!tf) { grp.visible = false; return; }
+        grp.visible = true;
+        grp.position.set(tf.translation.x, tf.translation.y, tf.translation.z);
+        grp.quaternion.set(tf.rotation.x, tf.rotation.y, tf.rotation.z, tf.rotation.w);
+      });
+    }, 100);
+
+    return {
+      dispose() {
+        disposed = true;
+        clearInterval(timer);
+        linkGroups.forEach((grp) => { try { viewer.scene.remove(grp); } catch (_) { /* ignore */ } });
+        linkGroups.clear();
+        disposables.forEach((d) => { try { d.dispose(); } catch (_) { /* ignore */ } });
+        disposables.length = 0;
+      },
+    };
+  }
+
+  // ---- SLAM 地图 (/map) 图层 ----
+  // 复用 VLA 航点卡维护的全局 wpMap（GetMap 服务 + /map 话题，含预翻转位图），
+  // 以 CanvasTexture 平面铺在地面，位姿 = map 帧原点经 TF 变换到 fixed frame。
+  function makeViewerMapLayer() {
+    let mesh = null;
+    let lastBmp = null;
+    function destroyMesh() {
+      if (!mesh) return;
+      try {
+        if (viewer) viewer.scene.remove(mesh);
+        mesh.geometry.dispose();
+        if (mesh.material.map) mesh.material.map.dispose();
+        mesh.material.dispose();
+      } catch (_) { /* ignore */ }
+      mesh = null;
+    }
+    const timer = setInterval(() => {
+      if (!viewer) return;
+      if (!wpMap) { if (mesh) mesh.visible = false; return; }
+      if (wpMap.bmp !== lastBmp) {   // 首次或 SLAM 更新了地图 -> 重建贴图平面
+        destroyMesh();
+        lastBmp = wpMap.bmp;
+        const tex = new THREE.CanvasTexture(wpMap.bmp);
+        tex.minFilter = THREE.LinearFilter;   // NPOT 画布禁 mipmap
+        tex.generateMipmaps = false;
+        const geo = new THREE.PlaneGeometry(wpMap.w * wpMap.res, wpMap.h * wpMap.res);
+        const mat = new THREE.MeshBasicMaterial({
+          map: tex, transparent: true, opacity: 0.85, depthWrite: false,
+        });
+        mesh = new THREE.Mesh(geo, mat);
+        mesh.renderOrder = -1;   // 垫底，雷达点/模型画在其上
+        viewer.scene.add(mesh);
+      }
+      // 地图平面中心在 map 帧的坐标 -> 经 TF 转到 fixed frame
+      const tf = tfClient ? tfClient.lookup('map') : null;
+      if (!tf) { mesh.visible = false; return; }
+      const cx = wpMap.ox + wpMap.w * wpMap.res / 2;
+      const cy = wpMap.oy + wpMap.h * wpMap.res / 2;
+      const p = quatRotateVec(tf.rotation, { x: cx, y: cy, z: 0 });
+      mesh.position.set(p.x + tf.translation.x, p.y + tf.translation.y,
+        p.z + tf.translation.z - 0.01);   // 略低于地面防 Z-fighting
+      mesh.quaternion.set(tf.rotation.x, tf.rotation.y, tf.rotation.z, tf.rotation.w);
+      mesh.visible = true;
+    }, 500);
+    return {
+      dispose() { clearInterval(timer); destroyMesh(); },
+    };
+  }
+
   function buildViewer() {
     if (viewer) return;
     const host = $('viewer');
@@ -981,6 +1347,12 @@
     grid.rotation.x = Math.PI / 2;
     scene.add(grid);
     scene.add(new THREE.AxesHelper(0.5));
+
+    // URDF 网格用受光材质，需要光源（点云/线条材质不受影响）。
+    scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    dirLight.position.set(3, -2, 6);
+    scene.add(dirLight);
 
     viewer = { scene, camera, renderer, controls, host };
 
@@ -1065,10 +1437,20 @@
       viewerLayers.push(makeScanLayer(scanTopic));
     }
 
-    // NOTE: the /map (OccupancyGrid) and URDF layers used ros3djs, which is
-    // incompatible with the three.js version loaded here, so they are not
-    // rendered. Scan + odom trajectory cover the common case. The /map and
-    // URDF input fields are currently inert.
+    // SLAM 地图层（复用 wpMap 全局地图数据；没有时尝试 GetMap 拉一次）
+    const showMap = $('vw-show-map');
+    if (!showMap || showMap.checked) {
+      viewerLayers.push(makeViewerMapLayer());
+      if (!wpMap && ros) fetchWpMap();
+    }
+
+    // 机器人模型层：每个 robot_state_publisher 节点一层（底盘/机械臂可并列）
+    const showUrdf = $('vw-show-urdf');
+    if (!showUrdf || showUrdf.checked) {
+      const nodes = (($('vw-urdf') || {}).value || '/robot_state_publisher')
+        .split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+      nodes.forEach((n) => viewerLayers.push(makeUrdfLayer(n)));
+    }
 
     if (odomTopic) {
       const lineMat = new THREE.LineBasicMaterial({ color: 0x58a6ff });
@@ -1097,6 +1479,11 @@
   }
 
   $('vw-apply').addEventListener('click', rebuildViewer);
+  // 勾选机器人模型 / SLAM 地图开关即时生效（与"应用"等价，重建图层）
+  ['vw-show-urdf', 'vw-show-map'].forEach((id) => {
+    const el = $(id);
+    if (el) el.addEventListener('change', rebuildViewer);
+  });
   $('vw-clear-path').addEventListener('click', () => {
     odomPoints.length = 0;
     if (odomPath) {
@@ -1385,6 +1772,32 @@
     appendTimeline('vla-timeline', VLA_MAX_LINES, text);
   }
 
+  // 导航仲裁状态（nav_arbiter/status: "MANUAL|FUNC|AUTO: 说明"）。
+  // 优先级 手动 > 功能模块(KCF/巡线/YOLO) > Nav2/VLA；指标实时刷，
+  // 层级切换的边沿写进 VLA 时间线。
+  let navArbState = '';
+  function renderNavArbiter(msg) {
+    const text = (msg.data || '').trim();
+    const stripped = text.replace(/^(MANUAL|FUNC|AUTO):\s*/i, '');
+    const state = /^MANUAL/i.test(text) ? 'MANUAL'
+      : (/^FUNC/i.test(text) ? 'FUNC' : 'AUTO');
+    const el = $('vla-arbiter');
+    if (el) {
+      el.textContent = stripped || '—';
+      el.classList.remove('ok', 'warn');
+      el.classList.add(state === 'AUTO' ? 'ok' : 'warn');
+    }
+    if (state !== navArbState) {
+      const first = navArbState === '';   // 首条状态只记录不渲染成"切换"
+      navArbState = state;
+      if (!first) {
+        if (state === 'MANUAL') addVlaStatus('[仲裁] 手动接管，自主导航目标已取消');
+        else if (state === 'FUNC') addVlaStatus('[仲裁] ' + (stripped || '功能模块接管，自主导航已让位'));
+        else addVlaStatus('[仲裁] 恢复自主导航可用');
+      }
+    }
+  }
+
   function sendInstruction(text) {
     const t = (text || '').trim();
     if (!t) return;
@@ -1417,6 +1830,19 @@
     if (e.key === 'Enter') { sendTts(ttsInput.value); ttsInput.value = ''; }
   });
 
+  // 语音组件卡: 麦克风连接状态边沿提示 + 一键跳到日志面板按 mic 过滤。
+  let voiceMicState = null;
+  const voiceLogBtn = $('voice-log-btn');
+  if (voiceLogBtn) voiceLogBtn.addEventListener('click', () => {
+    const f = $('log-filter');
+    if (f) {
+      f.value = 'mic';
+      f.dispatchEvent(new Event('input'));   // 触发既有 rerenderAll
+    }
+    const logCard = $('log-view');
+    if (logCard) logCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+
   // Voice-component TTS box (各组件状态) shares the same /tts_text publisher.
   const voiceTtsInput = $('voice-tts-input');
   const voiceTtsSend = $('voice-tts-send');
@@ -1430,6 +1856,53 @@
     const v = $('vla-timeline');
     if (v) v.innerHTML = '';
   });
+
+  // ---------- 传感器在线监控 (sensor_watchdog) ----------
+  // 各传感器模块"绿灯=在线 / 红灯=不在线 / 灰灯=暂无数据"，外加上位机
+  // 当前连接的串口设备表（udev 别名 · 占用串口 · USB 设备 ID）。
+  let swTime = 0;   // 最近一次 /sensor_watchdog/status 到达时间
+
+  function renderSensorWatchdog(obj) {
+    const view = $('sw-sensors');
+    if (view) {
+      const sensors = (obj && obj.sensors) || [];
+      view.innerHTML = sensors.map((s) => {
+        const cls = s.online === true ? 'on' : (s.online === false ? 'off' : '');
+        const state = s.online === true ? '在线' : (s.online === false ? '不在线' : '暂无数据');
+        return `<div class="sw-tile" title="${escapeHTML(s.topic || '')}">` +
+          `<span class="sw-dot ${cls}"></span>` +
+          `<span class="sw-label">${escapeHTML(s.label || '?')}</span>` +
+          `<span class="sw-state ${cls}">${state}</span></div>`;
+      }).join('') || '<span class="muted">（watchdog 未配置任何监控项）</span>';
+    }
+    const dev = $('sw-devices');
+    if (dev) {
+      const devices = (obj && obj.devices) || [];
+      const cnt = $('sw-dev-count');
+      if (cnt) cnt.textContent = devices.length + ' 个';
+      dev.innerHTML = devices.map((d) =>
+        `<div class="sw-row">` +
+        `<span class="sw-alias">${escapeHTML(d.alias || '（无别名）')}</span>` +
+        `<span class="sw-port">${escapeHTML(d.port || '—')}</span>` +
+        `<span class="sw-usbid" title="${escapeHTML(d.usb_id || '')}">${escapeHTML(d.usb_id || '—')}</span></div>`
+      ).join('') || '<div class="muted">（未发现串口设备）</div>';
+    }
+  }
+
+  // watchdog 节点本身断流（未启动/未重编译）时灯全部回灰并提示。
+  setInterval(() => {
+    if (!swTime || Date.now() - swTime < 5000) return;
+    swTime = 0;
+    const view = $('sw-sensors');
+    if (view) {
+      view.querySelectorAll('.sw-dot, .sw-state').forEach((el) => {
+        el.classList.remove('on', 'off');
+      });
+      view.querySelectorAll('.sw-state').forEach((el) => { el.textContent = '未知'; });
+      view.insertAdjacentHTML('beforeend',
+        '<span class="muted">（sensor_watchdog 数据中断——节点是否在跑？）</span>');
+    }
+  }, 2000);
 
   // ---------- 下位机 STM32F407 (turn_on_wheeltec_robot · serial) ----------
   // /odom、/PowerVoltage 等话题只有串口帧校验通过才发布（wheeltec_robot.cpp
@@ -1455,9 +1928,16 @@
     const low = v < STM32_MIN_MOVE_VOLT;
     const move = $('stm32-move');
     if (move) {
-      move.textContent = low ? '禁动 (<' + STM32_MIN_MOVE_VOLT + 'V)' : '允许';
-      move.classList.remove('ok', 'err');
-      move.classList.add(low ? 'err' : 'ok');
+      // 固件只在"低压且未回充"时禁动（robot_en_check: Vol<20 && ChargeMode==0）。
+      if (low && stm32RechargeMode === true) {
+        move.textContent = '允许（回充中低压豁免）';
+        move.classList.remove('ok', 'err');
+        move.classList.add('warn');
+      } else {
+        move.textContent = low ? '禁动 (<' + STM32_MIN_MOVE_VOLT + 'V)' : '允许';
+        move.classList.remove('ok', 'err', 'warn');
+        move.classList.add(low ? 'err' : 'ok');
+      }
     }
     const now = Date.now();
     if (stm32LowVolt !== low) {
@@ -1473,6 +1953,44 @@
       stm32LowVoltLogTime = now;   // 持续低压每 60s 重复提醒一次，不刷屏
       addStm32Log('⚠ 持续低压 ' + v.toFixed(2) + 'V（<' + STM32_MIN_MOVE_VOLT +
         'V 禁动），请充电');
+    }
+  }
+
+  // 固件使能位 en_flag（/robot_enable_flag，24字节帧 rx[1]）。失能边沿写事件
+  // 日志并列出固件的可能失能原因（RobotControl_task.h errCode 枚举）。
+  let stm32Enable = null;   // null=未知（话题没来过，旧驱动没有此话题）
+  function updateStm32Enable(en) {
+    const el = $('stm32-enable');
+    if (el) {
+      el.textContent = en ? '使能（可移动）' : '失能（禁止移动）';
+      el.classList.remove('ok', 'err');
+      el.classList.add(en ? 'ok' : 'err');
+    }
+    if (stm32Enable !== en) {
+      stm32Enable = en;
+      if (en) {
+        addStm32Log('固件使能恢复，底盘允许移动');
+      } else {
+        addStm32Log('⚠ 固件已失能禁止移动 —— 可能原因：低压(<20V 且未回充) / ' +
+          '急停开关按下 / 软件急停 / 驱动器离线或报错');
+      }
+    }
+  }
+
+  // 下位机回充模式回读（/robot_recharge_mode，回充帧 rx[5]）。
+  let stm32RechargeMode = null;
+  function updateRechargeMode(on) {
+    ['rc-mode', 'stm32-recharge-mode'].forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      el.textContent = on ? '回充中' : '未开启';
+      el.classList.remove('ok', 'warn');
+      if (on) el.classList.add('warn');
+    });
+    if (stm32RechargeMode !== on) {
+      stm32RechargeMode = on;
+      addStm32Log(on ? '固件已进入自动回充模式（充电桩红外引导控制底盘，低压不禁动）'
+        : '固件已退出自动回充模式');
     }
   }
 
@@ -1500,6 +2018,539 @@
       if (v) v.innerHTML = '';
     });
   }
+
+  // ---------- 自动回充 / 安全等级 / RGB 灯带（底盘控制页，对齐新固件协议） ----------
+  // 回充与安全等级都只是驱动里的标志位，要随下一帧 cmd_vel 序列化进串口帧
+  // （frame[1]=AutoRecharge / frame[2]=SecurityPLY）才真正到达固件，所以
+  // 发布标志位后都补发一帧 cmd_vel 立即生效。
+  function setCardMsg(id, text) {
+    const el = $(id);
+    if (!el) return;
+    el.textContent = text ? (text + ' · ' + new Date().toLocaleTimeString()) : '';
+  }
+
+  function sendRechargeFlag(v) {
+    if (!rechargeFlagPub) { setCardMsg('rc-msg', '未连接 rosbridge'); return; }
+    rechargeFlagPub.publish(new ROSLIB.Message({ data: v }));
+    publishCmd(0, 0);   // 推一帧零速把标志位带下去（同时确保寻桩从静止开始）
+    setCardMsg('rc-msg', v ? '已下发回充指令' : '已退出回充');
+    addStm32Log(v ? '> 开始自动回充（/robot_recharge_flag=1，等待固件回读确认）'
+      : '> 退出自动回充（/robot_recharge_flag=0）');
+  }
+  const rcStart = $('rc-start');
+  if (rcStart) rcStart.addEventListener('click', () => {
+    if (!window.confirm('开始自动回充？小车将由充电桩红外引导自主移动寻桩' +
+        '（手动遥控可随时打断）。')) return;
+    sendRechargeFlag(1);
+  });
+  const rcStop = $('rc-stop');
+  if (rcStop) rcStop.addEventListener('click', () => sendRechargeFlag(0));
+
+  const secApply = $('sec-apply');
+  if (secApply) secApply.addEventListener('click', () => {
+    const sel = $('sec-level');
+    const v = sel ? parseInt(sel.value, 10) : 0;
+    if (!securityPub) { setCardMsg('sec-msg', '未连接 rosbridge'); return; }
+    if (v === 1 && !window.confirm('安全等级 1：固件将保持最后一次速度，' +
+        '速度流中断（断网/节点崩溃）后小车不会自动停车。确认切换？')) return;
+    securityPub.publish(new ROSLIB.Message({ data: v }));
+    publishCmd(curVx, curWz);   // 重发当前速度把等级带下去
+    setCardMsg('sec-msg', '已应用等级 ' + v);
+    addStm32Log('> 底盘安全等级 → ' + v + (v === 0 ? '（速度流中断自动停车）' : '（保持最后速度，注意安全）'));
+  });
+
+  // RGB 灯带：颜色选择器 -> /set_rgb_color 服务（驱动转 0x04 串口帧）。
+  const rgbColor = $('rgb-color');
+  function rgbFromPicker() {
+    const hex = (rgbColor && rgbColor.value || '#000000').replace('#', '');
+    return {
+      r: parseInt(hex.slice(0, 2), 16) || 0,
+      g: parseInt(hex.slice(2, 4), 16) || 0,
+      b: parseInt(hex.slice(4, 6), 16) || 0,
+    };
+  }
+  function showRgbText() {
+    const el = $('rgb-rgbtext');
+    if (!el) return;
+    const c = rgbFromPicker();
+    el.textContent = `R ${c.r} · G ${c.g} · B ${c.b}`;
+  }
+  if (rgbColor) rgbColor.addEventListener('input', showRgbText);
+  showRgbText();
+
+  function callSetRgb(en, c) {
+    if (!ros) { setCardMsg('rgb-msg', '未连接 rosbridge'); return; }
+    const srv = new ROSLIB.Service({
+      ros, name: '/set_rgb_color', serviceType: 'robot_interfaces/srv/SetRgb',
+    });
+    srv.callService(new ROSLIB.ServiceRequest({ en: !!en, r: c.r, g: c.g, b: c.b }), (res) => {
+      const ok = res && /success/i.test(res.res || '');
+      setCardMsg('rgb-msg', (ok ? '✓ ' : '✗ ') + ((res && res.res) || '无响应'));
+    }, (err) => {
+      setCardMsg('rgb-msg', '✗ 调用失败（驱动是否已重编译启用 set_rgb_color？）');
+      console.error('set_rgb_color failed', err);
+    });
+  }
+  const rgbApply = $('rgb-apply');
+  if (rgbApply) rgbApply.addEventListener('click', () => callSetRgb(true, rgbFromPicker()));
+  const rgbOff = $('rgb-off');
+  if (rgbOff) rgbOff.addEventListener('click', () => callSetRgb(false, { r: 0, g: 0, b: 0 }));
+
+  // ---------- 下发串口帧解析（/robot_serial_tx，按通信协议表） ----------
+  // 11 字节控制帧: 7B [模式选择位] [预留/安全级] [Vx高 Vx低 Vy高 Vy低 Vz高 Vz低] BCC 7D
+  // 模式选择位: 0=速度控制(关闭自动回充) 1/2=自动回充 3=红外对接速度 4=灯带RGB。
+  // "最近下发指令"实时刷新；命令类型(签名)变化才写事件栏，速度数值变化不刷屏。
+  let stm32TxLastSig = null;
+
+  function parseStm32Tx(bytes) {
+    if (!bytes || bytes.length < 11 || bytes[0] !== 0x7B || bytes[10] !== 0x7D) return null;
+    let bcc = 0;
+    for (let i = 0; i < 9; i++) bcc ^= bytes[i];
+    const bccOk = bcc === bytes[9];
+    const s16 = (h, l) => { let v = ((h & 0xff) << 8) | (l & 0xff); if (v > 32767) v -= 65536; return v; };
+    const mode = bytes[1];
+    let text, sig;
+    if (mode === 4) {
+      text = bytes[2]
+        ? `设置灯带颜色 R${bytes[3]} G${bytes[4]} B${bytes[5]}`
+        : '灯带恢复默认模式';
+      sig = `rgb|${bytes[2]}|${bytes[3]},${bytes[4]},${bytes[5]}`;
+    } else {
+      const vx = s16(bytes[3], bytes[4]) / 1000;
+      const vy = s16(bytes[5], bytes[6]) / 1000;
+      const vz = s16(bytes[7], bytes[8]) / 1000;
+      const vel = `Vx=${vx.toFixed(2)} Vy=${vy.toFixed(2)} Vz=${vz.toFixed(2)}`;
+      if (mode === 3) {
+        text = `红外对接速度 ${vel}`;
+        sig = 'red_vel';
+      } else if (mode === 1 || mode === 2) {
+        text = `自动回充模式 ${vel}`;
+        sig = 'recharge';
+      } else {
+        text = `速度控制 ${vel}` + (bytes[2] === 1 ? '（安全级1·保持速度）' : '');
+        sig = `vel|sec${bytes[2]}`;
+      }
+    }
+    if (!bccOk) { text += ' [BCC 校验错]'; sig += '|badbcc'; }
+    return { text, sig, bccOk };
+  }
+
+  function ingestStm32Tx(bytes) {
+    const p = parseStm32Tx(bytes);
+    const el = $('stm32-lastcmd');
+    if (!p) {
+      if (el) el.textContent = '无法解析（帧头/帧尾不符）';
+      return;
+    }
+    if (el) {
+      el.textContent = p.text;
+      el.classList.remove('ok', 'err');
+      el.classList.add(p.bccOk ? 'ok' : 'err');
+    }
+    if (p.sig !== stm32TxLastSig) {
+      stm32TxLastSig = p.sig;
+      const hex = Array.from(bytes.slice(0, 11), (b) => (b & 0xff).toString(16).padStart(2, '0').toUpperCase()).join(' ');
+      addStm32Log('↓ 下发: ' + p.text + ' [' + hex + ']');
+    }
+  }
+
+  // ---------- 骨架识别 (wheeltec_bodyreader) ----------
+  // /body_posture: 锁定状态/质心(mm)/姿态标志; /bodylist: 人数; /mode: 1交互 2跟随。
+  let bodyPostureTime = 0;
+
+  function renderBodyPosture(msg) {
+    bodyPostureTime = Date.now();
+    const lock = +msg.lock_status;
+    const lockEl = $('body-lock');
+    if (lockEl) {
+      lockEl.textContent = lock === 2 ? '已锁定' : (lock === 1 ? '检测到人（未锁定）' : '无人');
+      lockEl.classList.remove('ok', 'warn', 'err');
+      lockEl.classList.add(lock === 2 ? 'ok' : 'warn');
+    }
+    const idEl = $('body-id');
+    if (idEl) idEl.textContent = lock === 2 ? String(msg.bodyid) : '—';
+    const z = +msg.centerofmass_z;   // mm，深度方向
+    const x = +msg.centerofmass_x;
+    const distEl = $('body-dist');
+    if (distEl) distEl.textContent = z > 0 ? (z / 1000).toFixed(2) + ' m' : '— m';
+    const angEl = $('body-angle');
+    if (angEl) angEl.textContent = z > 0 ? (Math.atan2(x, z) * 180 / Math.PI).toFixed(1) + ' °' : '— °';
+    const gestures = [];
+    if (msg.akimibo) gestures.push('叉腰(锁定)');
+    if (msg.left_hand_raised) gestures.push('举左手');
+    if (msg.right_hand_raised) gestures.push('举右手');
+    if (msg.left_arm_out) gestures.push('平举左臂');
+    if (msg.right_arm_out) gestures.push('平举右臂');
+    if (msg.left_foot_up) gestures.push('抬左脚');
+    if (msg.right_foot_up) gestures.push('抬右脚');
+    const gEl = $('body-gesture');
+    if (gEl) gEl.textContent = gestures.length ? gestures.join('、') : '—';
+    const fEl = $('body-fall');
+    if (fEl) {
+      fEl.textContent = msg.fall ? '⚠ 跌倒' : '正常';
+      fEl.classList.remove('ok', 'err');
+      fEl.classList.add(msg.fall ? 'err' : 'ok');
+    }
+  }
+
+  // 节点停止 3 秒后清回 "—"，避免陈旧姿态误导。
+  setInterval(() => {
+    if (bodyPostureTime && Date.now() - bodyPostureTime > 3000) {
+      bodyPostureTime = 0;
+      ['body-lock', 'body-id', 'body-gesture', 'body-fall'].forEach((id) => {
+        const el = $(id);
+        if (el) { el.textContent = '—'; el.classList.remove('ok', 'warn', 'err'); }
+      });
+      const d = $('body-dist'); if (d) d.textContent = '— m';
+      const a = $('body-angle'); if (a) a.textContent = '— °';
+    }
+  }, 1000);
+
+  function sendBodyMode(m) {
+    if (!bodyModePub) { alert('未连接 rosbridge'); return; }
+    bodyModePub.publish(new ROSLIB.Message({ data: m }));
+  }
+  const bodyModeFollow = $('body-mode-follow');
+  if (bodyModeFollow) bodyModeFollow.addEventListener('click', () => {
+    if (!window.confirm('切换到跟随模式？锁定目标后机器人会直接发 /cmd_vel 跟人移动。')) return;
+    sendBodyMode(2);
+  });
+  const bodyModeInteract = $('body-mode-interact');
+  if (bodyModeInteract) bodyModeInteract.addEventListener('click', () => sendBodyMode(1));
+  const bodyRecoverSend = $('body-recover-send');
+  if (bodyRecoverSend) bodyRecoverSend.addEventListener('click', () => {
+    if (!bodyRecoveryPub) { alert('未连接 rosbridge'); return; }
+    const v = parseInt(($('body-recover-id') || {}).value, 10);
+    if (Number.isNaN(v)) { alert('请输入数字 ID'); return; }
+    bodyRecoveryPub.publish(new ROSLIB.Message({ data: v }));
+  });
+
+  // ---------- VLA 地图航点管理 ----------
+  // 在已建好的地图(OccupancyGrid)上选点保存命名航点：后端 vla_navigator 收到
+  // /vla/waypoint_cmd 后立即生效并持久化到 ~/.ros/vla_waypoints.yaml（重启
+  // 优先加载）。地图来源：/map 话题（SLAM 建图中可直接收到）+ GetMap 服务
+  // 兜底（map_server 的 transient_local 帧 rosbridge 可能收不到）。
+  let wpPose = null;        // { x, y, yaw } 小车当前位姿（map 下）
+  let wpSel = null;         // { x, y, yaw } 地图上选中的目标位姿
+  let wpMap = null;         // { w, h, res, ox, oy, bmp } 已渲染地图位图
+  let wpMapTried = false;   // 本次连接是否已自动尝试 GetMap
+  let vlaWaypoints = [];    // 后端广播的航点列表
+  let wpFile = '';          // 后端持久化文件路径（显示用）
+
+  function setWpMapStatus(text) {
+    const el = $('wp-map-status');
+    if (el) el.textContent = text || '';
+  }
+
+  // OccupancyGrid.data: int8[]，rosbridge 可能给普通数组或 base64 串，都处理。
+  function decodeGridData(data) {
+    if (typeof data === 'string') {
+      const bin = atob(data);
+      const out = new Int8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) {
+        const b = bin.charCodeAt(i) & 0xff;
+        out[i] = b > 127 ? b - 256 : b;
+      }
+      return out;
+    }
+    return data || [];
+  }
+
+  function ingestWpMap(grid) {
+    if (!grid || !grid.info || !grid.info.width || !grid.info.height) return;
+    const w = grid.info.width, h = grid.info.height;
+    const data = decodeGridData(grid.data);
+    const bmp = document.createElement('canvas');
+    bmp.width = w; bmp.height = h;
+    const ctx = bmp.getContext('2d');
+    const img = ctx.createImageData(w, h);
+    for (let y = 0; y < h; y++) {
+      const srcRow = y * w;
+      const dstRow = (h - 1 - y) * w;   // 预翻转：map 的 y 向上，canvas 向下
+      for (let x = 0; x < w; x++) {
+        const v = data[srcRow + x];
+        let r, g, b;
+        if (v < 0) { r = 0x2d; g = 0x38; b = 0x45; }        // 未知
+        else if (v < 50) { r = 0xe6; g = 0xed; b = 0xf3; }  // 空闲
+        else { r = 0x0d; g = 0x11; b = 0x17; }              // 占用
+        const o = (dstRow + x) * 4;
+        img.data[o] = r; img.data[o + 1] = g; img.data[o + 2] = b; img.data[o + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    wpMap = {
+      w, h,
+      res: grid.info.resolution,
+      ox: grid.info.origin ? grid.info.origin.position.x : 0,
+      oy: grid.info.origin ? grid.info.origin.position.y : 0,
+      bmp,
+    };
+    setWpMapStatus(`${w}×${h} @ ${(+grid.info.resolution).toFixed(3)} m/格`);
+    wpRedraw();
+  }
+
+  function fetchWpMap() {
+    if (!ros) { setWpMapStatus('未连接 rosbridge'); return; }
+    const srvName = (($('wp-map-srv') || {}).value || '/map_server/map').trim();
+    setWpMapStatus('加载地图中…（大地图可能要几秒）');
+    const srv = new ROSLIB.Service({ ros, name: srvName, serviceType: 'nav_msgs/srv/GetMap' });
+    srv.callService(new ROSLIB.ServiceRequest({}), (res) => {
+      if (res && res.map && res.map.info && res.map.info.width) ingestWpMap(res.map);
+      else setWpMapStatus('地图服务返回空地图');
+    }, (err) => {
+      setWpMapStatus('加载失败：' + err + '（map_server 在跑吗？SLAM 建图中可等 /map 话题）');
+    });
+  }
+  const wpMapLoad = $('wp-map-load');
+  if (wpMapLoad) wpMapLoad.addEventListener('click', fetchWpMap);
+
+  // map 世界坐标 ↔ 显示画布坐标（位图已预翻转，y 轴只需一次镜像换算）
+  function wpWorldToCanvas(wx, wy, view) {
+    return {
+      x: (wx - wpMap.ox) / wpMap.res * view.s,
+      y: view.h - (wy - wpMap.oy) / wpMap.res * view.s,
+    };
+  }
+  function wpCanvasToWorld(cx, cy, view) {
+    return {
+      x: cx / view.s * wpMap.res + wpMap.ox,
+      y: (view.h - cy) / view.s * wpMap.res + wpMap.oy,
+    };
+  }
+
+  function drawWpArrow(ctx, p, worldYaw, color, r) {
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(-worldYaw);   // 画布 y 翻转 → 旋向取负
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(-r * 0.6, r * 0.55);
+    ctx.lineTo(-r * 0.6, -r * 0.55);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function wpRedraw() {
+    const canvas = $('wp-map');
+    if (!canvas || !canvas.offsetParent || !wpMap) return;
+    const wrap = canvas.parentElement;
+    const dispW = Math.max(240, Math.min(wrap.clientWidth || 640, 900));
+    const s = dispW / wpMap.w;
+    const dispH = Math.max(140, Math.round(wpMap.h * s));
+    if (canvas.width !== dispW || canvas.height !== dispH) {
+      canvas.width = dispW;
+      canvas.height = dispH;
+    }
+    const view = { s, w: dispW, h: dispH };
+    canvas._view = view;   // pointer 事件换算用
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, dispW, dispH);
+    ctx.drawImage(wpMap.bmp, 0, 0, dispW, dispH);
+    // 已保存航点（蓝点 + 名字）
+    ctx.font = '11px sans-serif';
+    vlaWaypoints.forEach((wp) => {
+      const p = wpWorldToCanvas(+wp.x, +wp.y, view);
+      ctx.fillStyle = '#58a6ff';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillText(wp.name, p.x + 6, p.y - 4);
+    });
+    // 小车实时位姿（绿色箭头）
+    const tf = wpTf ? wpTf.lookup('base_footprint') : null;
+    if (tf) {
+      drawWpArrow(ctx, wpWorldToCanvas(tf.translation.x, tf.translation.y, view),
+        yawFromQuat(tf.rotation), '#3fb950', 9);
+    }
+    // 当前选点（黄色箭头）
+    if (wpSel) {
+      drawWpArrow(ctx, wpWorldToCanvas(wpSel.x, wpSel.y, view), wpSel.yaw, '#d29922', 9);
+    }
+  }
+
+  function updateWpSelText() {
+    const el = $('wp-sel');
+    if (!el) return;
+    if (!wpSel) { el.textContent = '—'; return; }
+    el.textContent = `x=${wpSel.x.toFixed(3)}  y=${wpSel.y.toFixed(3)}  yaw=${wpSel.yaw.toFixed(3)} rad (${(wpSel.yaw * 180 / Math.PI).toFixed(1)}°)`;
+  }
+
+  // 地图取点交互：按下定位置，按住拖动定朝向（同 RViz 2D Goal Pose），触屏可用。
+  (function initWpMapPick() {
+    const canvas = $('wp-map');
+    if (!canvas) return;
+    let downWorld = null;
+    function evWorld(e) {
+      const view = canvas._view;
+      if (!view || !wpMap) return null;
+      const r = canvas.getBoundingClientRect();
+      if (!r.width || !r.height) return null;
+      const cx = (e.clientX - r.left) * (canvas.width / r.width);
+      const cy = (e.clientY - r.top) * (canvas.height / r.height);
+      return wpCanvasToWorld(cx, cy, view);
+    }
+    canvas.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const w = evWorld(e);
+      if (!w) return;
+      downWorld = w;
+      wpSel = { x: w.x, y: w.y, yaw: wpSel ? wpSel.yaw : 0 };
+      updateWpSelText();
+      wpRedraw();
+      try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      e.preventDefault();
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!downWorld) return;
+      const w = evWorld(e);
+      if (!w) return;
+      const dx = w.x - downWorld.x, dy = w.y - downWorld.y;
+      // 拖出 3 个栅格以上才算在定朝向，避免手抖把 yaw 打飞
+      if (Math.hypot(dx, dy) > wpMap.res * 3) wpSel.yaw = Math.atan2(dy, dx);
+      updateWpSelText();
+      wpRedraw();
+    });
+    const finish = () => { downWorld = null; };
+    canvas.addEventListener('pointerup', finish);
+    canvas.addEventListener('pointercancel', finish);
+  })();
+
+  // 周期刷新：当前位姿 + 地图重绘 + 首次自动拉地图（仅子页可见时工作）。
+  setInterval(() => {
+    const el = $('wp-cur');
+    if (!el || !el.offsetParent) return;   // 子页不可见时不刷新
+    const tf = wpTf ? wpTf.lookup('base_footprint') : null;
+    if (!tf) {
+      wpPose = null;
+      el.textContent = ros ? '未定位（map TF 不可用，需启动 Nav2/AMCL）' : '未连接';
+      el.classList.remove('ok');
+    } else {
+      const yaw = yawFromQuat(tf.rotation);
+      wpPose = { x: tf.translation.x, y: tf.translation.y, yaw };
+      el.textContent = `x=${wpPose.x.toFixed(3)}  y=${wpPose.y.toFixed(3)}  yaw=${yaw.toFixed(3)} rad (${(yaw * 180 / Math.PI).toFixed(1)}°)`;
+      el.classList.add('ok');
+    }
+    if (!wpMap && ros && !wpMapTried) { wpMapTried = true; fetchWpMap(); }
+    wpRedraw();
+  }, 500);
+
+  function wpAliases() {
+    return (($('wp-alias') || {}).value || '')
+      .split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+  }
+
+  function sendWpCmd(obj) {
+    if (!wpCmdPub) { setCardMsg('wp-msg', '未连接 rosbridge'); return false; }
+    wpCmdPub.publish(new ROSLIB.Message({ data: JSON.stringify(obj) }));
+    return true;
+  }
+
+  const wpSave = $('wp-save');
+  if (wpSave) wpSave.addEventListener('click', () => {
+    const name = (($('wp-name') || {}).value || '').trim();
+    if (!name) { alert('请先填航点名（如：厨房）'); return; }
+    const pose = wpSel || wpPose;
+    if (!pose) { alert('请先在地图上选点，或等定位收敛后用当前位姿'); return; }
+    const ok = sendWpCmd({
+      action: 'add',
+      name,
+      aliases: wpAliases(),
+      x: +pose.x.toFixed(3),
+      y: +pose.y.toFixed(3),
+      yaw: +pose.yaw.toFixed(3),
+    });
+    if (ok) setCardMsg('wp-msg', '已发送保存 "' + name + '"（等列表刷新确认）');
+  });
+
+  const wpUseCur = $('wp-use-cur');
+  if (wpUseCur) wpUseCur.addEventListener('click', () => {
+    if (!wpPose) { alert('当前没有有效定位（map→base_footprint TF 不可用）'); return; }
+    wpSel = { x: wpPose.x, y: wpPose.y, yaw: wpPose.yaw };
+    updateWpSelText();
+    wpRedraw();
+  });
+
+  // 航点列表：来自后端广播，带"导航 / 删除"操作（事件委托，重渲染不丢绑定）。
+  function renderWpList() {
+    const view = $('wp-list');
+    if (!view) return;
+    const cnt = $('wp-count');
+    if (cnt) cnt.textContent = vlaWaypoints.length + ' 个' + (wpFile ? ' · ' + wpFile : '');
+    if (!vlaWaypoints.length) {
+      view.innerHTML = '<div class="muted">（后端暂无航点，或 vla_navigator 未启动 / 未重编译）</div>';
+      return;
+    }
+    view.innerHTML = vlaWaypoints.map((wp) => {
+      const alias = (wp.aliases && wp.aliases.length)
+        ? ` <span class="muted">(${escapeHTML(wp.aliases.join('/'))})</span>` : '';
+      return `<div class="wp-row" data-name="${escapeHTML(wp.name)}">` +
+        `<span class="wp-row-name">${escapeHTML(wp.name)}${alias}</span>` +
+        `<span class="wp-row-pos">x=${(+wp.x).toFixed(2)} y=${(+wp.y).toFixed(2)} yaw=${(+(wp.yaw || 0)).toFixed(2)}</span>` +
+        `<button type="button" data-act="goto">导航</button>` +
+        `<button type="button" data-act="del" class="wp-del">删除</button></div>`;
+    }).join('');
+  }
+
+  const wpList = $('wp-list');
+  if (wpList) wpList.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    const row = btn.closest('.wp-row');
+    const name = row && row.dataset.name;
+    const wp = vlaWaypoints.find((w) => w.name === name);
+    if (!wp) return;
+    if (btn.dataset.act === 'del') {
+      if (!window.confirm('删除航点 "' + name + '"？（会同步写入持久化文件）')) return;
+      if (sendWpCmd({ action: 'remove', name })) {
+        setCardMsg('wp-msg', '已发送删除 "' + name + '"');
+      }
+    } else if (btn.dataset.act === 'goto') {
+      if (!goalPosePub) { setCardMsg('wp-msg', '未连接 rosbridge'); return; }
+      if (!window.confirm('导航到 "' + name + '" (x=' + (+wp.x).toFixed(2) +
+          ', y=' + (+wp.y).toFixed(2) + ')？小车将开始移动。')) return;
+      const yaw = +(wp.yaw || 0);
+      goalPosePub.publish(new ROSLIB.Message({
+        header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
+        pose: {
+          position: { x: +wp.x, y: +wp.y, z: 0 },
+          orientation: { x: 0, y: 0, z: Math.sin(yaw / 2), w: Math.cos(yaw / 2) },
+        },
+      }));
+      setCardMsg('wp-msg', '已发布 /goal_pose → ' + name);
+    }
+  });
+
+  // 备用手动流程：生成可追加进 config/waypoints.yaml 的片段（优先用地图选点）。
+  const wpGen = $('wp-gen');
+  if (wpGen) wpGen.addEventListener('click', () => {
+    const out = $('wp-yaml');
+    if (!out) return;
+    const pose = wpSel || wpPose;
+    if (!pose) { alert('请先在地图上选点，或等定位收敛'); return; }
+    const name = (($('wp-name') || {}).value || '').trim();
+    if (!name) { alert('请先填航点名（如：厨房）'); return; }
+    const aliases = wpAliases();
+    const lines = [`  - name: "${name}"`];
+    if (aliases.length) lines.push(`    aliases: [${aliases.map((a) => `"${a}"`).join(', ')}]`);
+    lines.push(`    x: ${pose.x.toFixed(3)}`);
+    lines.push(`    y: ${pose.y.toFixed(3)}`);
+    lines.push(`    yaw: ${pose.yaw.toFixed(3)}`);
+    out.value = lines.join('\n');
+  });
+  const wpCopy = $('wp-copy');
+  if (wpCopy) wpCopy.addEventListener('click', () => {
+    const out = $('wp-yaml');
+    if (!out || !out.value) return;
+    out.select();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(out.value).catch(() => document.execCommand('copy'));
+    } else {
+      document.execCommand('copy');
+    }
+  });
 
   // ---------- 机械臂 (Lebai LM3: lebai_driver + grab_demo) ----------
   // 状态显示走 /robot_status、/gripper_status、/joint_states 等话题；控制走

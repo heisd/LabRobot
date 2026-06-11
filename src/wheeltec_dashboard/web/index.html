@@ -10,6 +10,9 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.118.3/build/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.118.3/examples/js/controls/OrbitControls.js"></script>
+  <!-- URDF 机器人模型的网格加载器（与 three 同版本，避免再踩 ros3djs 的版本冲突） -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.118.3/examples/js/loaders/STLLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.118.3/examples/js/loaders/ColladaLoader.js"></script>
 </head>
 <body>
   <div class="topbar">
@@ -57,6 +60,7 @@
               <button class="arch-link" data-tab="function" data-subtab="line">巡线</button>
               <button class="arch-link" data-tab="function" data-subtab="kcf">KCF 跟随</button>
               <button class="arch-link" data-tab="function" data-subtab="yolo">YOLO 检测</button>
+              <button class="arch-link" data-tab="function" data-subtab="body">骨架识别</button>
               <button class="arch-link" data-tab="function" data-subtab="vla">VLA 语音导航</button>
             </div>
           </div>
@@ -89,7 +93,7 @@
       </section>
 
       <section class="card card-wide">
-        <h2>3D 视图 <span class="muted">(three.js · 雷达)</span></h2>
+        <h2>3D 视图 <span class="muted">(three.js · 雷达 · 机器人模型 · SLAM 地图)</span></h2>
         <div class="viewer-controls">
           <label>Fixed frame
             <input id="vw-fixed" type="text" value="odom_combined" />
@@ -100,12 +104,17 @@
           <label>/odom
             <input id="vw-odom" type="text" value="/odom" />
           </label>
+          <label>URDF 节点（可逗号分隔多个）
+            <input id="vw-urdf" type="text" value="/robot_state_publisher" />
+          </label>
+          <label class="vw-check"><input id="vw-show-urdf" type="checkbox" checked /> 机器人模型</label>
+          <label class="vw-check"><input id="vw-show-map" type="checkbox" checked /> SLAM 地图</label>
           <button id="vw-apply">应用</button>
           <button id="vw-clear-path">清空轨迹</button>
         </div>
         <div id="viewer" class="viewer"></div>
         <div id="viewer-status" class="viewer-status"></div>
-        <p class="hint">图层：Grid / 坐标轴 / LaserScan(<code>/scan</code>) / Odom 轨迹。TF 直接订阅 <code>/tf</code>+<code>/tf_static</code>，无需 tf2_web_republisher。融合输出 <code>/scan</code> 来自 double_lidar_fusion；单台故障时可把 <code>/scan</code> 改成 <code>/scan1</code> 或 <code>/scan2</code> 看单雷达。</p>
+        <p class="hint">图层：Grid / 坐标轴 / LaserScan(<code>/scan</code>) / Odom 轨迹 / <strong>机器人模型(URDF)</strong> / <strong>SLAM 地图(/map)</strong>。TF 直接订阅 <code>/tf</code>+<code>/tf_static</code>，无需 tf2_web_republisher。<strong>机器人模型</strong>：经 rosbridge 调 URDF 节点的 <code>get_parameters</code> 取已展开的 <code>robot_description</code>，浏览器解析后按每个 link 的实时 TF 摆放；网格文件（STL/DAE）由面板 HTTP 服务的 <code>/pkg/&lt;包名&gt;/…</code> 路由提供（重编译 wheeltec_dashboard 生效）。机械臂模型若由独立的 robot_state_publisher 发布，在"URDF 节点"里用逗号补上其节点名即可。<strong>SLAM 地图</strong>：复用 VLA 子页的 <code>/map</code> 数据（map_server GetMap + SLAM 实时刷新），按 map→fixed frame 的 TF 铺在地面——建图时 fixed frame 填 <code>map</code> 看图最直观；未定位（无 map TF）时地图层自动隐藏。</p>
       </section>
 
       <section class="card">
@@ -124,7 +133,7 @@
             <div id="m-charge-current" class="metric-value">— A</div>
           </div>
           <div class="metric">
-            <div class="metric-label">急停 (red flag)</div>
+            <div class="metric-label">回充红外 (red flag)</div>
             <div id="m-red" class="metric-value">—</div>
           </div>
           <div class="metric">
@@ -157,6 +166,19 @@
 
     <!-- ============ 各组件状态 ============ -->
     <div class="tab-panel" id="panel-components">
+      <section class="card card-wide">
+        <h2>传感器在线状态与串口设备 <span class="muted">(sensor_watchdog)</span></h2>
+        <div id="sw-sensors" class="sw-grid">
+          <span class="muted">等待 sensor_watchdog 数据…（随 dashboard launch 启动，需重编译 wheeltec_dashboard）</span>
+        </div>
+        <div class="vla-timeline-head">
+          <span>已连接的串口设备（udev 别名 · 占用串口 · USB 设备 ID）</span>
+          <span id="sw-dev-count" class="muted"></span>
+        </div>
+        <div id="sw-devices" class="sw-devices"></div>
+        <p class="hint">由 <code>sensor_watchdog</code> 节点（随 dashboard launch 自动启动）以"话题有数据 = 设备在线"统一判活：<strong>绿灯=在线、红灯=不在线、灰灯=启动宽限期内暂无数据</strong>。上线/掉线/持续离线都会向 <code>/rosout</code> 打日志（INFO"已上线" / ERROR"设备不在线"，离线每 30s 重复提醒）——日志面板按 <code>sensor_watchdog</code> 过滤即可看到。默认监控：车载相机 / 雷达1 / 雷达2 / IMU / <strong>下位机 STM32</strong>（串口遥测 /PowerVoltage）/ <strong>Lebai 机械臂</strong>（/robot_status，走以太网不占串口）/ 机械臂相机。串口设备表来自 <code>/dev/wheeltec_*</code> udev 别名与 <code>/dev/serial/by-id</code>（含厂商/产品/序列号的 USB 设备 ID），<strong>拔掉即从表中消失</strong>，只显示当前连接的设备。监控项可用 <code>sensors</code> 参数增删（格式 <code>标签|话题|消息类型|超时秒</code>）。</p>
+      </section>
+
       <section class="card">
         <h2>雷达 <span class="muted">(double_lidar_fusion)</span></h2>
         <div class="lidar-cfg">
@@ -210,17 +232,29 @@
               <div id="stm32-move" class="metric-value">—</div>
             </div>
             <div class="metric">
-              <div class="metric-label">急停 (red flag)</div>
+              <div class="metric-label">固件使能 (en_flag)</div>
+              <div id="stm32-enable" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">回充红外信号</div>
               <div id="stm32-red" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">回充模式（固件确认）</div>
+              <div id="stm32-recharge-mode" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">最近下发指令（已解析）</div>
+              <div id="stm32-lastcmd" class="metric-value stm32-lastcmd">—</div>
             </div>
           </div>
         </div>
         <div class="vla-timeline-head">
-          <span>下位机事件（在线/离线 · 低压禁动）</span>
+          <span>下位机事件（在线/离线 · 低压禁动 · 下发命令解析）</span>
           <button id="stm32-log-clear">清空</button>
         </div>
         <div id="stm32-log" class="vla-timeline stm32-log"></div>
-        <p class="hint">下位机 STM32F407 经串口（serial 包，帧头 <code>0x7B</code>）连接 <code>turn_on_wheeltec_robot</code>：<code>/odom</code>、<code>/PowerVoltage</code> 等话题只有串口帧校验通过才发布，因此<strong>话题有数据 = 下位机在线</strong>（2 秒无帧判离线）。<strong>电压低于 20V 时底盘禁止移动</strong>：状态变化与持续低压会记录到上方事件栏，驱动节点同时向 <code>/rosout</code> 打 WARN（见本页日志面板）。</p>
+        <p class="hint">下位机 STM32F407（固件源码见 <code>firmware/KeilSingleChipProject</code>，FreeRTOS；主控板 C63A 原理图见 <code>firmware/C63A原理图_V2.0_2025-06-16.pdf</code>）经串口连接 <code>turn_on_wheeltec_robot</code>，以 20Hz 上行三个数据包：24 字节基础帧（<code>0x7B…0x7D</code>，速度/IMU/电压/使能位）+ 19 字节超声波帧（<code>0xFA…0xFC</code>）+ 8 字节回充帧（<code>0x7C…0x7F</code>）。话题只有帧校验通过才发布，因此<strong>话题有数据 = 下位机在线</strong>（2 秒无帧判离线）。<strong>固件使能 (en_flag)</strong> 为固件真实的"允许移动"信号：低压（&lt;20V 且未在回充）/ 急停开关按下 / 软件急停 / 任一驱动器离线或报错，任一条件都会失能（需重编译 turn_on_wheeltec_robot 才有 <code>/robot_enable_flag</code> 话题）。注意：<strong>回充模式中固件忽略低压禁动</strong>；新固件的自检字段恒为 0（<code>/self_check_data</code> 显示 0x0 属正常）。<strong>下发命令解析</strong>：驱动把发给下位机的 11 字节控制帧原样发布到 <code>/robot_serial_tx</code>（需重编译），面板按通信协议表解析"模式选择位"（0=速度控制 / 1、2=自动回充 / 3=红外对接速度 / 4=灯带 RGB）与目标速度并校验 BCC——"最近下发指令"实时刷新，命令<strong>类型变化</strong>时写入事件栏（速度数值变化不刷屏）。</p>
       </section>
 
       <section class="card">
@@ -255,11 +289,15 @@
             <div id="voice-words" class="metric-value">—</div>
           </div>
         </div>
+        <div class="voice-tip-row">
+          <span id="voice-mic-tip" class="muted"></span>
+          <button id="voice-log-btn" type="button">查看麦克风日志</button>
+        </div>
         <div class="vla-row">
           <input id="voice-tts-input" type="text" placeholder="让小车说话…（发布到 /tts_text）" />
           <button id="voice-tts-send">播报</button>
         </div>
-        <p class="hint">来自 wheeltec_mic：唤醒 <code>/awake_flag</code>、声源角 <code>/awake_angle</code>、识别 <code>/voice_words</code>；播报经 tts_make 订阅 <code>/tts_text</code>。需先启动麦克风语音 launch（如 <code>mic_init.launch.py</code> / <code>base.launch.py</code>）。</p>
+        <p class="hint">来自 wheeltec_mic：唤醒 <code>/awake_flag</code>、声源角 <code>/awake_angle</code>、识别 <code>/voice_words</code>；播报经 tts_make 订阅 <code>/tts_text</code>。需先启动麦克风语音 launch（如 <code>mic_init.launch.py</code> / <code>base.launch.py</code>）。<strong>连接检测</strong>：麦克风物理接在上位机 USB（<code>/dev/wheeltec_mic</code>），驱动改造后<strong>打开失败/拔线断开会发布 <code>/voice_flag=0</code></strong>（上方"麦克风"变红）并每 10s 自动重试、向 <code>/rosout</code> 打 ERROR——点"查看麦克风日志"直达日志面板（按 mic 过滤）；插回即自动恢复，无需重启节点（需重编译 wheeltec_mic_ros2）。下位机 C63A 不经手麦克风，无法在固件侧感知。</p>
       </section>
 
       <section class="card card-wide">
@@ -363,8 +401,59 @@
               当前指令: <span id="cmd-current">vx=0.00, wz=0.00</span>
             </div>
             <button id="e-stop" class="e-stop" type="button" title="立即发送 (0,0) 到 /cmd_vel">急停 STOP</button>
+            <div class="sec-row">
+              <label>安全等级
+                <select id="sec-level">
+                  <option value="0" selected>0 — 速度流中断自动停车（安全）</option>
+                  <option value="1">1 — 保持最后速度（危险）</option>
+                </select>
+              </label>
+              <button id="sec-apply" type="button">应用</button>
+              <span id="sec-msg" class="muted"></span>
+            </div>
           </div>
         </div>
+        <p class="hint">安全等级发布到 <code>/chassis_security</code>，随<strong>下一帧 cmd_vel</strong> 写入固件 SecurityLevel：等级 0 时若固件没有持续收到速度指令会主动停车（看门狗）；等级 1 时保持最后一次速度——仅在网络抖动导致频繁误停时短暂使用，<strong>断网后小车不会自己停</strong>。应用后面板会自动补发一帧当前速度使其立即生效。</p>
+      </section>
+
+      <section class="card">
+        <h2>自动回充 <span class="muted">(/robot_recharge_flag · 回充帧 0x7C)</span></h2>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">回充模式（固件确认）</div>
+            <div id="rc-mode" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">回充红外信号</div>
+            <div id="rc-red" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">充电中</div>
+            <div id="rc-charging" class="metric-value">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">充电电流</div>
+            <div id="rc-current" class="metric-value">— A</div>
+          </div>
+        </div>
+        <div class="rc-btns">
+          <button id="rc-start" type="button">开始自动回充</button>
+          <button id="rc-stop" type="button" class="rc-stop">退出回充</button>
+          <span id="rc-msg" class="muted"></span>
+        </div>
+        <p class="hint">"开始"发布 <code>1</code> 到 <code>/robot_recharge_flag</code> 并自动补发一帧零速 cmd_vel（标志位只随 cmd_vel 帧下发到固件）。进入回充后由<strong>充电桩红外引导（CAN 设备）控制底盘</strong>寻桩对接；其优先级最低，手动遥控可随时打断。固件细节：未收到红外信号或已在充电时寻桩速度为 0；<strong>回充模式中低压不禁动</strong>；灯带转为充电指示（充电电流大时红色、趋近充满转绿色）。"回充模式（固件确认）"来自下位机回充帧的回读 <code>/robot_recharge_mode</code>（需重编译驱动）。</p>
+      </section>
+
+      <section class="card">
+        <h2>RGB 灯带 <span class="muted">(/set_rgb_color · 0x04 帧)</span></h2>
+        <div class="rgb-row">
+          <input id="rgb-color" type="color" value="#00c8ff" title="选择灯带颜色" />
+          <span id="rgb-rgbtext" class="rgb-text">R 0 · G 200 · B 255</span>
+          <button id="rgb-apply" type="button">设置颜色</button>
+          <button id="rgb-off" type="button">关闭灯带</button>
+          <span id="rgb-msg" class="muted"></span>
+        </div>
+        <p class="hint">调用 <code>turn_on_wheeltec_robot</code> 的 <code>/set_rgb_color</code> 服务（robot_interfaces/SetRgb），向固件下发 <code>7B 04 en R G B … 7D</code> 帧设置用户自定义灯色（需重编译驱动以启用该服务）。固件灯带优先级：充电指示 &gt; 低电量 &gt; 超声波障碍警示 &gt; 用户自定义 —— 这些状态活跃时自定义色会被暂时覆盖，状态解除后恢复。</p>
       </section>
 
       <section class="card card-wide">
@@ -413,6 +502,7 @@
         <button class="subtab-btn active" data-subtab="line">巡线</button>
         <button class="subtab-btn" data-subtab="kcf">KCF 跟踪</button>
         <button class="subtab-btn" data-subtab="yolo">YOLO 检测</button>
+        <button class="subtab-btn" data-subtab="body">骨架识别</button>
         <button class="subtab-btn" data-subtab="vla">VLA 语音导航</button>
       </nav>
 
@@ -589,6 +679,102 @@
         </section>
       </div>
 
+      <!-- 骨架识别 / 体感跟随 (wheeltec_bodyreader) -->
+      <div class="subtab-panel" id="subpanel-body">
+        <section class="card card-wide">
+          <h2>骨架识别 / 体感跟随 <span class="muted">(wheeltec_bodyreader · Astra Body Tracking)</span></h2>
+          <div class="fn-streams">
+            <div class="fn-stream-tile">
+              <div class="fn-cap">骨架叠加画面 <span class="muted">(/body/body_display)</span></div>
+              <div class="cam-frame fn-frame">
+                <img id="body-stream" class="cam-img fn-img" data-topic="/body/body_display" src="placeholder.svg" alt="body display" />
+                <div class="cam-err" hidden>无法加载流</div>
+              </div>
+              <div class="fn-stream-toolbar">
+                <label>话题
+                  <input class="fn-topic" data-img="body-stream" type="text" value="/body/body_display" />
+                </label>
+                <button class="fn-reload" data-img="body-stream">刷新</button>
+              </div>
+            </div>
+          </div>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">锁定状态</div>
+              <div id="body-lock" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">视野内人数 (/bodylist)</div>
+              <div id="body-count" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">锁定目标 ID</div>
+              <div id="body-id" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">目标距离</div>
+              <div id="body-dist" class="metric-value">— m</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">横向偏角</div>
+              <div id="body-angle" class="metric-value">— °</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">当前模式 (/mode)</div>
+              <div id="body-mode" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">活跃姿态</div>
+              <div id="body-gesture" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">跌倒检测</div>
+              <div id="body-fall" class="metric-value">—</div>
+            </div>
+          </div>
+          <div class="rc-btns">
+            <button id="body-mode-follow" type="button">跟随模式 (2)</button>
+            <button id="body-mode-interact" type="button">姿态交互模式 (1)</button>
+            <label class="body-recover">找回目标 ID
+              <input id="body-recover-id" type="number" min="0" step="1" value="1" />
+            </label>
+            <button id="body-recover-send" type="button">发送 /recoveryid</button>
+          </div>
+          <div class="params param-group">
+            <div class="param-row">
+              <label>跟随 PID 节点</label>
+              <input class="pg-node" type="text" value="/body_follower" list="node-list" />
+              <button class="pg-refresh">读取当前值</button>
+            </div>
+            <div class="param-row" data-param="bodyfollow_x_p" data-type="double">
+              <label>bodyfollow_x_p（距离 P）</label>
+              <input type="number" step="0.01" />
+              <button class="param-apply">应用</button>
+              <span class="param-current">—</span>
+            </div>
+            <div class="param-row" data-param="bodyfollow_x_d" data-type="double">
+              <label>bodyfollow_x_d（距离 D）</label>
+              <input type="number" step="0.01" />
+              <button class="param-apply">应用</button>
+              <span class="param-current">—</span>
+            </div>
+            <div class="param-row" data-param="bodyfollow_z_p" data-type="double">
+              <label>bodyfollow_z_p（转向 P）</label>
+              <input type="number" step="0.1" />
+              <button class="param-apply">应用</button>
+              <span class="param-current">—</span>
+            </div>
+            <div class="param-row" data-param="bodyfollow_z_d" data-type="double">
+              <label>bodyfollow_z_d（转向 D）</label>
+              <input type="number" step="0.1" />
+              <button class="param-apply">应用</button>
+              <span class="param-current">—</span>
+            </div>
+          </div>
+          <p class="hint">启动：<code>ros2 launch bodyreader bodyfollow.launch.py</code>（Astra 深度相机骨骼识别 + 跟随 + 骨架叠加图）。<strong>叉腰</strong>锁定/切换跟随目标；锁定后跟随保持约 2m 距离（写死在 follower）。<strong>姿态交互模式</strong>下：抬右脚=前进、抬左脚=后退、举左手=右转、举右手=左转、平举左/右臂=横移（仅全向底盘）、跌倒=蜂鸣器告警（<code>/buzzer_flag</code>）。模式也可由人<strong>双手平举</strong>切换（需 <code>open_switch:=true</code>）。跟随会直接发 <code>/cmd_vel</code>——请保留"底盘控制"页的急停手段；PID 默认值保守，按场地调上方参数（即时生效）。</p>
+        </section>
+      </div>
+
       <!-- VLA 语音导航 -->
       <div class="subtab-panel" id="subpanel-vla">
         <section class="card card-wide">
@@ -614,6 +800,10 @@
                 <div class="metric-label">语音播报 (/tts_text)</div>
                 <div id="vla-say" class="metric-value">—</div>
               </div>
+              <div class="metric">
+                <div class="metric-label">导航仲裁 (nav_arbiter)</div>
+                <div id="vla-arbiter" class="metric-value">—</div>
+              </div>
             </div>
             <div class="vla-row">
               <input id="tts-input" type="text" placeholder="让小车说话…（发布到 /tts_text）" />
@@ -625,7 +815,51 @@
             </div>
             <div id="vla-timeline" class="vla-timeline"></div>
           </div>
-          <p class="hint">指令发布到 <code>/vla/instruction</code>；麦克风识别走 <code>/voice_words</code>。决策与导航状态来自 <code>/vla/status</code>，目标点见 RViz 或 <code>/goal_pose</code>。需先启动 <code>vla_navigator</code> 节点与 rosbridge。</p>
+          <p class="hint">指令发布到 <code>/vla/instruction</code>；麦克风识别走 <code>/voice_words</code>。决策与导航状态来自 <code>/vla/status</code>，目标点见 RViz 或 <code>/goal_pose</code>。需先启动 <code>vla_navigator</code> 节点与 rosbridge。<strong>导航仲裁</strong>（<code>nav_arbiter</code>，随 <code>vla_bringup</code> 自动拉起）：优先级 <strong>手动 &gt; KCF/巡线/YOLO &gt; Nav2/VLA</strong>。本面板的遥控按键/WASD 一动即取消当前自主导航目标（手动期间自主目标插不进来，松手约 2s 后恢复）；KCF/巡线/YOLO 任一功能模块活跃时（<code>kcf|yolo|line_follow/cmd_vel</code> 有数据）同样自动取消 Nav2/VLA 目标，速度转发仍由 <code>cmd_arbiter</code> 负责（其空闲时已改为静默，与导航共存）。实体键盘节点用 <code>ros2 run wheeltec_robot_keyboard wheeltec_keyboard --ros-args -r cmd_vel:=cmd_vel_manual</code> 参与打断（同时可打断功能模块与导航）。</p>
+        </section>
+
+        <section class="card card-wide">
+          <h2>地图航点管理 <span class="muted">(在已建地图上选点 · /vla/waypoint_cmd 持久化)</span></h2>
+          <div class="wp-map-toolbar">
+            <label>地图服务
+              <input id="wp-map-srv" type="text" value="/map_server/map" />
+            </label>
+            <button id="wp-map-load" type="button">加载地图</button>
+            <span id="wp-map-status" class="muted"></span>
+          </div>
+          <div class="wp-map-wrap">
+            <canvas id="wp-map"></canvas>
+          </div>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">当前位姿 (map → base_footprint)</div>
+              <div id="wp-cur" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">选中位置（按下选点 · 拖动定朝向）</div>
+              <div id="wp-sel" class="metric-value">—</div>
+            </div>
+          </div>
+          <div class="wp-form">
+            <label>航点名
+              <input id="wp-name" type="text" placeholder="如：厨房" />
+            </label>
+            <label>别名（逗号分隔，可空）
+              <input id="wp-alias" type="text" placeholder="如：kitchen, 做饭的地方" />
+            </label>
+            <button id="wp-save" type="button">保存到机器人</button>
+            <button id="wp-use-cur" type="button">用当前位姿</button>
+            <button id="wp-gen" type="button">生成 YAML 片段</button>
+            <button id="wp-copy" type="button">复制</button>
+            <span id="wp-msg" class="muted"></span>
+          </div>
+          <textarea id="wp-yaml" class="wp-yaml" rows="5" spellcheck="false" placeholder="（备用手动流程）生成的 YAML 片段会出现在这里，可追加进 vla_navigation/config/waypoints.yaml"></textarea>
+          <div class="vla-timeline-head">
+            <span>已保存的航点 <span class="muted">(/vla/waypoints)</span></span>
+            <span id="wp-count" class="muted"></span>
+          </div>
+          <div id="wp-list" class="wp-list"></div>
+          <p class="hint"><strong>用法</strong>：先建好图并启动定位（<code>vla_bringup.launch.py</code> 含 Nav2 + map_server），地图会自动加载（也可点"加载地图"，服务默认 <code>/map_server/map</code>；SLAM 建图中则直接订阅 <code>/map</code> 实时刷新）。在地图上<strong>按下选位置、拖动定朝向</strong>（同 RViz 2D Goal Pose），或点"用当前位姿"取小车所在点；填名字点【保存到机器人】→ <code>vla_navigator</code> <strong>立即生效</strong>（说"去厨房"马上可用）并整表写入 <code>~/.ros/vla_waypoints.yaml</code> —— <strong>该文件重启/重编译后优先加载，下次无需重新设置</strong>。列表里【导航】直接发 <code>/goal_pose</code> 去该点（不经大模型），【删除】同步持久化。绿色箭头=小车实时位姿，蓝点=已存航点，黄色箭头=当前选点。需要重编译并重启 <code>vla_navigation</code> 后端一次以获得 <code>/vla/waypoints</code> 能力；地图原点带旋转的罕见情况暂不支持。</p>
         </section>
       </div>
     </div>

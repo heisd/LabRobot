@@ -54,11 +54,14 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 - **系统总览**：系统架构卡（底盘 / 机械臂两部分的模块总览 + 在线状态点 +
   点击跳转）、3D 视图（雷达 `/scan`）、实时遥测、电压 / cmd_vel 折线图
 - **Wheeltec 底盘**
-  - **组件状态**：下位机 STM32F407（示意图 + 串口在线检测 + 低压禁动 +
-    事件日志）、雷达（双雷达融合健康）、超声波、语音组件、相机预览、
-    `/rosout` 日志面板
-  - **底盘控制**：速度控制（遥控）、参数调节
-  - **功能模块**（含子页面）：巡线、KCF 跟踪、YOLO 检测、VLA 语音导航
+  - **组件状态**：**传感器在线状态指示灯墙 + 串口设备表**（sensor_watchdog：
+    车载相机/雷达1/雷达2/IMU/下位机 STM32/Lebai 机械臂/机械臂相机 绿红灯，
+    udev 别名→占用串口→USB 设备 ID）、下位机 STM32F407（示意图 +
+    串口在线检测 + 固件使能位 + 低压禁动 + 回充模式回读 + 事件日志）、
+    雷达（双雷达融合健康）、超声波、语音组件、相机预览、`/rosout` 日志面板
+  - **底盘控制**：速度控制（遥控 + 安全等级）、自动回充、RGB 灯带、参数调节
+  - **功能模块**（含子页面）：巡线、KCF 跟踪、YOLO 检测、骨架识别、
+    VLA 语音导航（含航点标定助手）
 - **Lebai 机械臂**
   - **监控与抓取**（含子页面）：监控与控制、HSV / YOLO / KCF / ArUco / VLM
     五种 grab_demo 抓取方案
@@ -90,17 +93,61 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 - **YOLO 检测**：本仓库未内置 YOLO 节点，提供通用查看器——可订阅任意
   `vision_msgs/msg/Detection2DArray` 检测话题（默认 `/yolo/detections`）并列出
   类别/置信度，图像话题可指向检测节点的标注输出。
+- **骨架识别 / 体感跟随**（`wheeltec_bodyreader`，Astra Body Tracking）：
+  骨架叠加画面 `/body/body_display`（MJPEG）；订阅 `/body_posture` 显示
+  锁定状态（无人/检测到/已锁定）、锁定 ID、目标距离与横向偏角、活跃姿态
+  （叉腰锁定/举手/平举/抬脚）与跌倒告警，`/bodylist` 显示视野人数；
+  按钮发布 `/mode`（1=姿态交互 2=跟随，切跟随需确认）与 `/recoveryid`
+  （找回锁定目标）；`/body_follower` 的 bodyfollow_x_p/x_d/z_p/z_d PID
+  可在线调。启动 `ros2 launch bodyreader bodyfollow.launch.py`。
+- **下发命令解析**：驱动把发给下位机的 11 字节控制帧回发到
+  `/robot_serial_tx`（需重编译），面板按通信协议表解析模式选择位
+  （0=速度控制 / 1、2=自动回充 / 3=红外对接速度 / 4=灯带 RGB）、目标速度
+  与 BCC 校验——STM32 卡"最近下发指令"实时刷新，命令类型变化写入
+  下位机事件栏。
+- **地图航点管理**（VLA 子页）：自动加载已建好的地图（`/map_server/map`
+  GetMap 服务 + `/map` 话题兜底，SLAM 建图中实时刷新），画布上叠加小车
+  实时位姿（绿箭头）、已存航点（蓝点）；**按下选点、拖动定朝向**（同 RViz
+  2D Goal Pose）或"用当前位姿"，填名字【保存到机器人】→ 后端
+  `vla_navigator` 经 `/vla/waypoint_cmd` **立即生效**并整表持久化到
+  `~/.ros/vla_waypoints.yaml`（重启优先加载，一次标定永久有效）；航点列表
+  （`/vla/waypoints` 广播）支持【导航】（直发 `/goal_pose`）与【删除】；
+  备用"生成 YAML 片段"手动流保留。
+- **导航仲裁**（`nav_arbiter`，vla_navigation 包）：面板遥控/WASD 的速度
+  同步发 `/cmd_vel_manual`，仲裁节点收到即取消 `navigate_to_pose` 全部
+  目标——**手动随时打断 Nav2 与 VLA**，手动期间自主目标插不进来，松手
+  约 2s 后自动恢复；状态显示在 VLA 卡（`/nav_arbiter/status`），接管/释放
+  写入 VLA 时间线。实体键盘节点 remap `cmd_vel:=cmd_vel_manual` 即可参与。
 
 - 实时遥测：`/PowerVoltage`、`/robot_charging_flag`、`/robot_charging_current`、
-  `/robot_red_flag`、`/self_check_data`、`/odom`、`/imu/data_raw`、`/Distance`
-- 速度控制：方向按键 + 线/角速度上限滑块 + 键盘 WASD/空格 (停)
+  `/robot_red_flag`（**回充红外信号**——固件回充帧 rx[3] 是收到充电桩红外的
+  对管个数，不是急停）、`/self_check_data`（新固件该字段恒 0）、`/odom`、
+  `/imu/data_raw`、`/Distance`、`/robot_enable_flag`（固件使能位 en_flag，
+  需重编译驱动）、`/robot_recharge_mode`（固件回充模式回读，需重编译驱动）
+- 速度控制：方向按键 + 线/角速度上限滑块 + 键盘 WASD/空格 (停)；
+  **安全等级**开关发布 `/chassis_security`（0=速度流中断自动停车 /
+  1=保持最后速度，随下一帧 cmd_vel 写入固件 SecurityLevel）
+- **自动回充**：发布 `/robot_recharge_flag`（1 开 / 0 关，发布后自动补发一帧
+  零速 cmd_vel 把标志位带给固件）；卡内显示固件确认的回充模式、回充红外、
+  充电状态与电流。回充中由充电桩 CAN 设备引导底盘，手动遥控可打断，
+  低压禁动豁免
+- **RGB 灯带**：颜色选择器调 `/set_rgb_color` 服务（robot_interfaces/SetRgb，
+  驱动转固件 `0x04` 串口帧）。固件优先级：充电指示 > 低电量 > 超声波警示 >
+  用户自定义
 - 参数调节：通过 `rcl_interfaces/GetParameters`/`SetParameters` 服务读写
   `/wheeltec_robot` 上的 `odom_x_scale`、`odom_y_scale`、
   `odom_z_scale_positive`、`odom_z_scale_negative`
 - 折线图：电压、cmd_vel (vx / wz)
-- **3D 视图（嵌入式 RViz 替代）**：基于 ros3djs，支持 Grid、TF、LaserScan
-  (`/scan`)、OccupancyGrid (`/map`)、Odometry 轨迹。Fixed frame 默认
-  `odom_combined`。URDF 加载在 ROS 2 + rosbridge 下为实验功能，建议留空。
+- **3D 视图（嵌入式 RViz 替代）**：原生 three.js + 浏览器端 TF（直接订阅
+  `/tf`+`/tf_static`），图层：Grid、LaserScan(`/scan`)、Odometry 轨迹、
+  **机器人模型（URDF）**、**SLAM 地图（/map）**。Fixed frame 默认
+  `odom_combined`。机器人模型经 rosbridge 取 `robot_state_publisher` 的
+  `robot_description`（xacro 已展开），浏览器自解析 link/visual
+  （box/cylinder/sphere/STL/DAE），网格由 web_server 新增的
+  `/pkg/<包名>/<路径>` 路由从 ament share 提供，每个 link 按实时 TF 摆放
+  （无需关节运动学）；多个 robot_state_publisher（底盘+机械臂）可逗号并列。
+  SLAM 地图复用 VLA 子页的 `/map` 数据铺为地面贴图，按 map→fixed TF 对齐，
+  未定位时自动隐藏。
 - **相机预览**：launch 同时拉起 `web_video_server`，dashboard 通过
   MJPEG 同时显示两路相机——默认车上 `/camera/color/image_raw` 与机械臂
   `/camera_arm/color/image_raw`，话题/画质/端口可编辑。深度流把 topic

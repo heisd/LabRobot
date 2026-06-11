@@ -27,6 +27,7 @@ setup(
     entry_points={
         'console_scripts': [
             'vla_navigator = vla_navigation.vla_navigator:main',
+            'nav_arbiter = vla_navigation.nav_arbiter:main',
         ],
     },
 )

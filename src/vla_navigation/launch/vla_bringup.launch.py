@@ -64,6 +64,7 @@ def generate_launch_description():
     start_nav = LaunchConfiguration('start_nav')
     start_camera = LaunchConfiguration('start_camera')
     start_voice = LaunchConfiguration('start_voice')
+    start_arbiter = LaunchConfiguration('start_arbiter')
     start_rviz = LaunchConfiguration('start_rviz')
     start_dashboard = LaunchConfiguration('start_dashboard')
     nav_map = LaunchConfiguration('map')
@@ -91,6 +92,8 @@ def generate_launch_description():
                               description='启动 Nav2 导航'),
         DeclareLaunchArgument('start_camera', default_value='true',
                               description='启动 Orbbec Gemini 摄像头'),
+        DeclareLaunchArgument('start_arbiter', default_value='true',
+                              description='是否启动导航仲裁(手动遥控打断 Nav2/VLA)'),
         DeclareLaunchArgument('start_voice', default_value='true',
                               description='启动麦克风/离线识别/TTS 语音链'),
         DeclareLaunchArgument('start_rviz', default_value='true',
@@ -186,6 +189,13 @@ def generate_launch_description():
         ],
     )
 
+    # ---------------- 导航仲裁(手动遥控随时打断 Nav2 / VLA) ----------------
+    nav_arbiter = Node(
+        package='vla_navigation', executable='nav_arbiter', name='nav_arbiter',
+        output='screen',
+        condition=IfCondition(start_arbiter),
+    )
+
     ld = LaunchDescription()
     for action in declare_args:
         ld.add_action(action)
@@ -199,5 +209,6 @@ def generate_launch_description():
     ld.add_action(TimerAction(period=4.0, actions=[nav, rviz, dashboard]))
     # t≈6s: 语音输入链 + TTS + VLA 大脑
     ld.add_action(TimerAction(period=6.0, actions=[
-        wheeltec_mic, voice_control, call_recognition, tts, vla_navigator]))
+        wheeltec_mic, voice_control, call_recognition, tts, vla_navigator,
+        nav_arbiter]))
     return ld

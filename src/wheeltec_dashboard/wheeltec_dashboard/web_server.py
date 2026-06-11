@@ -17,6 +17,7 @@ import os
 import threading
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import unquote, urlsplit
 
 import rclpy
 from ament_index_python.packages import get_package_share_directory
@@ -24,10 +25,32 @@ from rclpy.node import Node
 
 
 class _QuietHandler(SimpleHTTPRequestHandler):
-    """Suppress the default per-request stderr logging."""
+    """Suppress the default per-request stderr logging.
+
+    额外提供 ``/pkg/<package>/<相对路径>`` 路由: 把 ament share 目录里的文件
+    (URDF 引用的 STL/DAE 网格等)开放给浏览器 —— 前端 3D 视图把
+    ``package://rm_description/meshes/x.STL`` 映射成
+    ``/pkg/rm_description/meshes/x.STL`` 即可加载机器人模型。
+    """
 
     def log_message(self, format, *args):  # noqa: A002 - signature dictated by base
         return
+
+    def translate_path(self, path):
+        clean = unquote(urlsplit(path).path)
+        if clean.startswith('/pkg/'):
+            parts = clean[len('/pkg/'):].split('/', 1)
+            if len(parts) == 2 and parts[0] and parts[1]:
+                try:
+                    share = os.path.abspath(get_package_share_directory(parts[0]))
+                except Exception:  # noqa: BLE001  未知包名 -> 404
+                    return os.path.join(self.directory, '__pkg_not_found__')
+                target = os.path.normpath(os.path.join(share, parts[1]))
+                # 防目录穿越: 解析后必须仍在该包的 share 目录内
+                if target == share or target.startswith(share + os.sep):
+                    return target
+            return os.path.join(self.directory, '__forbidden__')
+        return super().translate_path(path)
 
 
 class DashboardWebServer(Node):

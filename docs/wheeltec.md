@@ -4,6 +4,10 @@
 [`src/`](../src) 目录下，与机械臂（[`docs/lebai.md`](lebai.md)）共用同一个 colcon 工作空间。
 
 > 配套常用指令速查见 [`wheeltec/ROS2-V3.5(humble)常用指令.txt`](wheeltec/ROS2-V3.5(humble)常用指令.txt)。
+>
+> 下位机硬件资料：主控板 **C63A 原理图** 见
+> [`firmware/C63A原理图_V2.0_2025-06-16.pdf`](../firmware/C63A原理图_V2.0_2025-06-16.pdf)，
+> 配套固件源码（Keil/STM32F407，FreeRTOS）见 [`firmware/KeilSingleChipProject`](../firmware/KeilSingleChipProject)。
 
 ---
 

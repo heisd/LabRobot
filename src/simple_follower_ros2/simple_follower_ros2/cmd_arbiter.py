@@ -2,11 +2,17 @@
 # coding=utf-8
 """速度指令仲裁器 (优先级 MUX) + 二维码路径动作.
 
-优先级:  键盘(最高)  >  {巡线 / KCF / YOLO}(三者平级, 谁更新鲜谁驱动)
+优先级:  键盘/手动(最高)  >  {巡线 / KCF / YOLO}(三者平级, 谁更新鲜谁驱动)
 
 输入:
   - ``cmd_vel_keyboard``    (geometry_msgs/Twist)   键盘遥控, 最高优先; 一旦有新指令
                             立即接管, 并在终端打印"键盘接管, 打断 X"
+  - ``cmd_vel_manual``      (geometry_msgs/Twist)   手动通道(dashboard 遥控双发于此),
+                            与键盘同级同处理
+
+与自主导航(Nav2/VLA)的协同: 无任何控制源时只发一帧零速后保持静默(不再 20Hz
+持续发零速抢 /cmd_vel); KCF/巡线/YOLO 活跃时由 vla_navigation 的 nav_arbiter
+负责取消 navigate_to_pose 目标 —— 总优先级: 手动 > 功能模块 > Nav2/VLA。
   - ``line_follow/cmd_vel`` (geometry_msgs/Twist)   巡线速度(叠加下面 QR 路径动作)
   - ``kcf/cmd_vel``         (geometry_msgs/Twist)   KCF 跟踪速度(直接透传)
   - ``yolo/cmd_vel``        (geometry_msgs/Twist)   YOLO 跟随速度(直接透传)
@@ -93,8 +99,9 @@ class CmdArbiter(Node):
         self.declare_parameter('use_odom_turn', True)       # 固定转角是否用里程计闭环
         self.declare_parameter('odom_topic', '/odom')       # 里程计话题
 
-        # 控制源仲裁: 键盘(最高) > {巡线 / KCF / YOLO 平级}
+        # 控制源仲裁: 键盘/手动(最高) > {巡线 / KCF / YOLO 平级}
         self.declare_parameter('keyboard_topic', 'cmd_vel_keyboard')  # 键盘遥控(最高优先)
+        self.declare_parameter('manual_topic', 'cmd_vel_manual')     # 手动通道(dashboard 遥控双发于此, 与键盘同级)
         self.declare_parameter('kcf_topic', 'kcf/cmd_vel')           # KCF 跟踪(透传)
         self.declare_parameter('yolo_topic', 'yolo/cmd_vel')         # YOLO 跟随(透传)
         self.declare_parameter('external_timeout', 0.5)              # 键盘/KCF/YOLO 新鲜判定(s, 与 detect_timeout 对齐)
@@ -140,6 +147,9 @@ class CmdArbiter(Node):
             Odometry, self.odom_topic, self.odom_callback, qos)
         self.keyboard_sub = self.create_subscription(
             Twist, self.keyboard_topic, self.keyboard_callback, qos)
+        # 手动通道与键盘同级: dashboard 遥控双发 cmd_vel_manual, 同样可打断功能模块
+        self.manual_sub = self.create_subscription(
+            Twist, g('manual_topic').value, self.keyboard_callback, qos)
         self.kcf_sub = self.create_subscription(
             Twist, self.kcf_topic, self.kcf_callback, qos)
         self.yolo_sub = self.create_subscription(
@@ -160,6 +170,7 @@ class CmdArbiter(Node):
         self.last_status = None           # 最近发布的控制源状态(给仪表盘)
         self.last_status_time = -1e9
 
+        self.idle_silent = False          # 无控制源时是否已发过停车帧(之后静默)
         self.qr_last_true = None          # 最近一次 detected=True 的时间(s)
         self.last_handled_data = ''       # 最近一次已处理的二维码内容
         self.last_handled_time = -1e9     # 最近一次处理完成的时间(用于冷却)
@@ -272,6 +283,7 @@ class CmdArbiter(Node):
     def publish(self, twist):
         self.cmd_pub.publish(twist)
         self.last_published = twist
+        self.idle_silent = False   # 任何主动下发都解除"空闲静默"
 
     # ----------------------------------------------------------- transitions
     def enter_decel(self):
@@ -373,7 +385,12 @@ class CmdArbiter(Node):
                 return
             if cur is None:
                 self._set_status('停车 (无控制源)')
-                self.publish(Twist())   # 没有任何控制源: 停车
+                # 失去全部控制源时只发一帧零速停车, 之后保持静默 ——
+                # 原先 20Hz 持续发零速会与 Nav2/VLA 的 /cmd_vel 打架,
+                # 导致仲裁器空闲时机器人无法自主导航(配合 nav_arbiter 协同)。
+                if not self.idle_silent:
+                    self.publish(Twist())
+                    self.idle_silent = True
                 return
             # cur == '巡线': 落到下面的状态机
         else:

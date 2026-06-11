@@ -6,6 +6,454 @@
 
 ---
 
+## 第 13 轮 — 3D 视图加载机器人模型（URDF）与 SLAM 地图
+
+### 背景
+
+第 3 轮因 ros3djs/THREE 版本冲突重写 3D 视图时，URDF 与 /map 两个图层被
+一并移除——此前面板**不能**显示机器人模型。本轮在纯 three.js 栈上重做，
+不再引入 ros3djs（只加同版本 three 的 STLLoader/ColladaLoader）。
+
+### 机器人模型（URDF）图层
+
+- **取模型**：经 rosbridge 调 `<URDF节点>/get_parameters` 读
+  `robot_description`（xacro 在 launch 时已展开成纯 URDF，浏览器零 xacro
+  依赖）；解决了 /robot_description 话题 transient_local 经 rosbridge
+  收不到的问题。
+- **解析**：浏览器 DOMParser 解析 link/visual：box/cylinder（URDF 沿 Z、
+  THREE 沿 Y，已转轴）/sphere/mesh，visual origin 的 rpy 按固定轴 XYZ
+  （THREE 'ZYX' 内旋序）转四元数；命名材质/内联 color 都支持。
+- **网格文件**：web_server 新增 `/pkg/<包名>/<相对路径>` 路由——把
+  `package://rm_description/meshes/x.STL` 映射到 ament share 实际文件
+  （含目录穿越防护，已离线单测）。STL 用 STLLoader、DAE 用 ColladaLoader。
+- **摆放**：不做关节运动学——robot_state_publisher 已把所有 link 发进
+  /tf，每 100ms 用既有 tfClient.lookup(link) 设置位姿，TF 缺失的 link
+  自动隐藏。底盘（rm_description s300_pro）与机械臂可在"URDF 节点"
+  输入框逗号并列各自的 robot_state_publisher。
+- 场景补了 Ambient + Directional 光源（受光材质需要）。
+
+### SLAM 地图（/map）图层
+
+- 复用 VLA 子页维护的全局地图数据（GetMap 服务 + /map 话题、预翻转位图），
+  以 CanvasTexture 铺成地面平面（半透明、垫底渲染），中心点经
+  map→fixed frame 的 TF 对齐——AMCL 修正、SLAM 建图实时更新都跟随；
+  未定位（无 map TF）时自动隐藏。建图时 fixed frame 填 `map` 观感最佳。
+- 工具栏新增"机器人模型 / SLAM 地图"开关（即时生效）与"URDF 节点"输入。
+
+### 文件改动汇总（第 13 轮）
+
+| 文件 | 变化 |
+| --- | --- |
+| `wheeltec_dashboard/web_server.py` | `/pkg/` ament share 路由（防穿越） |
+| `web/index.html` | STL/Collada 加载器、URDF/地图控件、hint |
+| `web/app.js` | makeUrdfLayer / makeViewerMapLayer / 光源 / rebuild 接线 |
+| `web/style.css` | `.vw-check` |
+| `README.md` | 3D 视图描述更新 |
+
+### 验证清单
+
+- [ ] 重编译 wheeltec_dashboard 并重启 dashboard launch 后：底盘驱动（含 robot_state_publisher）在跑时，3D 视图出现 S300 车体模型并随小车移动转向。
+- [ ] `curl http://<host>:8080/pkg/rm_description/meshes/rm_eco65_arm/Link1.STL -o /dev/null -w '%{http_code}'` 返回 200；`/pkg/rm_description/../etc/passwd` 返回 404。
+- [ ] 启动 Nav2（或 SLAM）后勾选"SLAM 地图"：地图铺在地面且与雷达点云对齐；fixed frame 改 `map` 后机器人在地图内正确位置。
+- [ ] 机械臂的 robot_state_publisher 节点名加入"URDF 节点"后，机械臂模型出现并随关节动（lebai TF 树需与 fixed frame 连通，否则该模型隐藏）。
+- [ ] 取消勾选两个开关：模型/地图即时消失，雷达层不受影响。
+
+---
+
+## 第 12 轮 — 传感器在线监控（连接/掉线日志 + 绿红灯墙 + 串口设备表）
+
+### 背景
+
+各厂商驱动对"设备打不开/拔线"的报错口径不一（有的只打一次、有的不打）。
+新增统一的**传感器看门狗**：连接时打 INFO、不在线打 ERROR"设备不在线"，
+并在面板上给每个传感器模块亮绿/红灯、显示已连接设备的 ID 与占用串口。
+
+### 新增 sensor_watchdog 节点（wheeltec_dashboard 包，随 dashboard launch 自动启动）
+
+- **判活口径**：订阅每个传感器的关键数据话题，"话题有数据 = 设备在线"
+  （与各状态卡同思路，落成 /rosout 日志）。默认监控 7 项：
+  车载相机(/camera/color/image_raw)、雷达1(/scan1)、雷达2(/scan2)、
+  IMU(/imu/data_raw)、**下位机STM32**(/PowerVoltage 串口遥测)、
+  **Lebai机械臂**(/robot_status，以太网)、机械臂相机(/camera_arm/...)；
+  `sensors` 参数可增删（`标签|话题|消息类型|超时秒`）。
+- **日志策略**：首次收到数据 INFO"已上线"；断流超时或启动宽限期
+  （10s）后仍无数据 → ERROR"设备不在线 —— 检查供电/USB·串口连线/驱动"，
+  持续离线每 30s 重复提醒；恢复 INFO"恢复在线"。
+- **串口设备表**：扫描 `/dev/wheeltec_*`、`/dev/lebai*` udev 别名
+  （realpath → 实际占用串口号）与 `/dev/serial/by-id/*`（文件名即
+  厂商_产品_序列号的 USB 设备 ID），5s 一扫——设备拔掉符号链接即消失，
+  表内容天然只含"当前已连接"的设备。
+- 状态以 JSON 发布到 `sensor_watchdog/status`（1Hz）：
+  `{sensors:[{label,topic,online,age}], devices:[{alias,port,usb_id}]}`。
+- 订阅细节：sensor-data QoS（BEST_EFFORT 兼容相机/雷达发布者）+
+  `raw=True`（不反序列化，监控大图像话题零开销）；消息类型加载失败
+  （如未装 lebai_interfaces）只跳过该项不影响其余。
+
+### Dashboard 新卡"传感器在线状态与串口设备"（组件状态页顶部）
+
+- **指示灯墙**：每个传感器一块灯牌——**绿灯=在线、红灯=不在线、
+  灰灯=启动宽限期内暂无数据**（悬停显示话题名）；watchdog 节点本身
+  断流 5s 灯回灰并提示。
+- **串口设备表**：udev 别名 · 占用串口号 · USB 设备 ID 三列，
+  随插拔实时增减。
+
+### 文件改动汇总（第 12 轮）
+
+| 文件 | 变化 |
+| --- | --- |
+| `wheeltec_dashboard/sensor_watchdog.py` | 新增看门狗节点 |
+| `setup.py` / `package.xml` / `launch/dashboard.launch.py` | 入口、依赖、enable_watchdog |
+| `web/index.html` | 传感器在线状态与串口设备卡 |
+| `web/app.js` | /sensor_watchdog/status 渲染 + 断流回灰 |
+| `web/style.css` | `.sw-*` 灯牌/设备表样式 |
+
+### 验证清单
+
+- [ ] 重编译 `colcon build --packages-select wheeltec_dashboard` 后启动 dashboard launch：组件状态页顶部出现灯墙；已启动的传感器绿灯，未启动的 10s 后红灯且 /rosout 出现 ERROR"设备不在线"（30s 重复）。
+- [ ] 拔掉雷达 USB：≤4s 红灯 + ERROR；插回后驱动恢复发布 → 绿灯 + INFO"恢复在线"；串口设备表中对应行消失/重现。
+- [ ] 设备表能看到 wheeltec_controller / wheeltec_laser / wheeltec_mic 等别名各自占用的 ttyUSB/ttyACM 端口与 USB 设备 ID。
+- [ ] 启动 lebai_driver 后"Lebai机械臂"绿灯；停掉 3s 后红灯。
+- [ ] 停掉 sensor_watchdog：5s 后灯全部回灰并提示节点断流。
+
+---
+
+## 第 11 轮 — KCF / 巡线 / YOLO 接入导航仲裁（手动 > 功能模块 > Nav2/VLA）
+
+### 背景
+
+第 9 轮的 `nav_arbiter` 只仲裁"手动 vs Nav2/VLA"。本轮把底盘三个功能模块
+（KCF 跟踪 / 巡线 / YOLO 跟随）也纳入，形成完整优先级：
+**手动 > 功能模块（三者平级谁新鲜谁算）> Nav2/VLA**。
+排查中发现并修复一个潜在冲突：`cmd_arbiter`（simple_follower_ros2）
+空闲时以 20Hz 持续发零速 `/cmd_vel`——只要它在跑，Nav2/VLA 就永远被
+零速流打架，无法自主导航。
+
+### nav_arbiter（vla_navigation，需重编译）
+
+- 新增**功能模块层**：订阅 `kcf/cmd_vel`、`yolo/cmd_vel`、
+  `line_follow/cmd_vel`（与 cmd_arbiter 输入同名，即各 `*_arbiter` launch
+  的 remap 约定，话题可参数化 `func_topics`/`func_timeout`）。任一话题
+  新鲜（1s 内）即视为功能模块在驱动 → 取消 navigate_to_pose 全部目标；
+  活跃期间 Nav2 再输出则限频重复取消。
+- **速度不在 nav_arbiter 转发**——转发与二维码路径动作仍由 cmd_arbiter
+  负责，职责不重叠：nav_arbiter 管"自主导航让位"，cmd_arbiter 管
+  "功能模块内部混控与下发"。
+- 状态升级为三态 `MANUAL|FUNC|AUTO`，离开手动层补一帧零速兜底（原行为）。
+
+### cmd_arbiter（simple_follower_ros2，需重编译）
+
+- **空闲静默修复**：失去全部控制源时只发一帧零速停车，之后保持静默——
+  修掉与 Nav2/VLA 的 20Hz 零速抢话题问题，两个仲裁器从此可常开共存
+  （巡线/KCF/YOLO launch 与导航 launch 同时跑不再互相干扰）。
+- 新增订阅 `cmd_vel_manual`（参数 `manual_topic`，与键盘同级同处理）：
+  dashboard 遥控（已双发该话题）现在也能打断 KCF/巡线/YOLO，
+  不再只有实体键盘（cmd_vel_keyboard）能打断。
+
+### 前端 dashboard
+
+- `renderNavArbiter` 识别三态：MANUAL/FUNC 显示橙色（自主导航已让位）、
+  AUTO 绿色；层级切换边沿写入 VLA 时间线（含具体功能模块名，如
+  "KCF 跟踪 控制中, 自主导航已让位"）。
+- VLA 卡 hint 更新为完整优先级说明。
+
+### 文件改动汇总（第 11 轮）
+
+| 文件 | 变化 |
+| --- | --- |
+| `../vla_navigation/vla_navigation/nav_arbiter.py` | 功能模块层、三态状态机 |
+| `../simple_follower_ros2/simple_follower_ros2/cmd_arbiter.py` | 空闲静默、cmd_vel_manual 输入 |
+| `../vla_navigation/README.md` | 仲裁章节重写 |
+| `web/app.js` / `web/index.html` | 三态渲染、hint |
+
+### 验证清单
+
+- [ ] 重编译 `colcon build --packages-select vla_navigation simple_follower_ros2` 后：单独跑巡线/KCF/YOLO 的 `*_arbiter` launch，功能正常（仲裁链 cmd_arbiter → /cmd_vel 不变）。
+- [ ] 跑 `vla_bringup` + `wheeltec_robot_kcf_arbiter`：框选目标 KCF 开始跟踪后，VLA 卡"导航仲裁"变橙"KCF 跟踪 控制中"；此时发"去厨房"，目标被立即取消、小车继续跟踪。
+- [ ] KCF 停止（目标丢失/节点关闭）1s 后仲裁回 AUTO（绿色），再发"去厨房"正常导航。
+- [ ] 巡线进行中按面板 W 键：手动立即接管（巡线和导航都让位）；松手 2s 后巡线恢复驱动。
+- [ ] 只跑 cmd_arbiter（无任何功能模块）+ Nav2：`ros2 topic hz /cmd_vel` 无 20Hz 零速流，导航不被干扰（空闲静默生效）。
+
+---
+
+## 第 10 轮 — 麦克风连接失败日志（上位机）+ 面板显著显示 + C63A 原理图入库
+
+### 麦克风连接日志（wheeltec_mic_ros2，需重编译）
+
+麦克风阵列物理接在**上位机 USB**（`/dev/wheeltec_mic`，CH343 串口），
+下位机 C63A 不经手——日志只能也只需加在上位机驱动：
+
+- **打开失败不再静默退节点**：原 `run()` 在初始化失败时打一条日志就
+  return（节点退出，再也不重试）。现在主循环常驻：每 10s 重试打开 +
+  打 ERROR（含串口名与排查提示：USB 线/供电/udev 规则），**开机没插
+  麦克风、运行中拔掉再插回都能自动恢复**。
+- **失败态广播**：打开失败与读写异常断开时发布 `/voice_flag = 0`
+  （之前只在成功时发 1，失败时面板永远是"—"）；重连成功发回 1。
+- 每次尝试的具体失败原因（原本被注释掉）改为 WARN 输出 `e.what()`；
+  断开/重连失败的日志全部中文化并带串口名。
+
+### Dashboard 语音组件卡
+
+- "麦克风 (/voice_flag)" 离线时显示"离线（串口未连接）"（红色）；
+  连接状态**边沿**在卡内提示行显示（带时间戳与排查指引）。
+- 新增【查看麦克风日志】按钮：一键把 `/rosout` 日志面板过滤词设为
+  `mic` 并滚动到日志卡——驱动的重试 ERROR 直达眼前。
+
+### C63A 原理图入库
+
+- `firmware/C63A原理图_V2.0_2025-06-16.pdf`（主控板 C63A V2.0 原理图）；
+  `docs/wheeltec.md` 与 STM32 卡 hint 增加指引。
+
+### 文件改动汇总（第 10 轮）
+
+| 文件 | 变化 |
+| --- | --- |
+| `../wheeltec_mic/wheeltec_mic_ros2/src/wheeltec_mic.cpp` | 失败发 voice_flag=0、run() 常驻重试、日志补全 |
+| `web/index.html` | 语音卡提示行 + 日志跳转按钮、hint、STM32 卡原理图指引 |
+| `web/app.js` | voice_flag 边沿提示、voice-log-btn 过滤跳转 |
+| `web/style.css` | `.voice-tip-row` / `.err-text` |
+| `../../firmware/C63A原理图_V2.0_2025-06-16.pdf` | 新增原理图 |
+| `../../docs/wheeltec.md` | 硬件资料指引 |
+
+### 验证清单
+
+- [ ] 重编译 `colcon build --packages-select wheeltec_mic_ros2` 后，不插麦克风启动语音 launch：每 10s 一条 ERROR（含 /dev/wheeltec_mic 与排查提示）；面板语音卡"麦克风"红色"离线（串口未连接）"，提示行有时间戳。
+- [ ] 点【查看麦克风日志】：日志面板过滤词变 mic、滚动到位、只剩 mic 节点日志。
+- [ ] 插上麦克风（不重启节点）：10s 内自动连上，voice_flag=1，卡片变绿"已初始化"。
+- [ ] 运行中拔线：voice_flag=0 秒级变红 + WARN/ERROR 进日志；插回自动恢复。
+
+---
+
+## 第 9 轮 — 地图选点航点管理（后端持久化）+ 导航仲裁（手动打断 Nav2/VLA）
+
+### 背景
+
+第 8 轮的"航点标定助手"只能生成 YAML 片段让人手工粘贴+重编译。本轮把
+VLA 后端补成**运行时可增删 + 文件持久化**，前端升级为**在已建地图上选点**，
+并新增**导航仲裁节点**让手动遥控随时打断 Nav2/VLA 自主导航。
+
+### 后端 vla_navigation（需重编译）
+
+- **运行时航点管理**：新订阅 `vla/waypoint_cmd`（String JSON，
+  add 同名覆盖 / remove），变更**立即生效**（下一条指令的模型提示词就含
+  新航点，原子换引用对推理线程安全）；新发布 `vla/waypoints`（列表 JSON，
+  变更即发 + 3s 周期重发，晚连的面板也能拿到）。
+- **文件持久化**：每次变更整表写入 `user_waypoints_file`
+  （默认 `~/.ros/vla_waypoints.yaml`，不被 colcon build 覆盖）；启动时该文件
+  存在则**优先于包内 config/waypoints.yaml 加载**——标定一次永久生效。
+  `waypoints.py` 增加 `to_dict/upsert/remove/to_dict_list/save`（含离线
+  roundtrip 自测通过）。
+- **新增 `nav_arbiter` 导航仲裁节点**（目标监督式，不改 Nav2 launch）：
+  订阅 `cmd_vel_manual`/`cmd_vel_keyboard`，收到手动速度立即向
+  `navigate_to_pose/_action/cancel_goal` 发零 UUID（=取消全部目标，
+  同时覆盖 RViz/dashboard 的 /goal_pose 目标与 VLA 目标）；手动滑动窗口
+  `manual_timeout`（2s）内若 `cmd_vel_nav` 又有输出则限频重复取消；
+  窗口结束发零速兜底并恢复 AUTO；状态发 `nav_arbiter/status`。
+  随 `vla_bringup.launch.py` 自动启动（`start_arbiter:=false` 可关）。
+
+### 前端 dashboard
+
+- **"航点标定助手"升级为"地图航点管理"**：
+  - 地图显示：`/map_server/map`（GetMap 服务，子页首次可见自动加载）+
+    `/map` 话题兜底（SLAM 建图中实时刷新；map_server 的 transient_local
+    帧 rosbridge 可能收不到，故以服务为主）；OccupancyGrid 渲染为位图
+    （空闲/占用/未知三色，y 轴预翻转），`data` 兼容数组与 base64 两种
+    rosbridge 编码。
+  - 叠加层：小车实时位姿（绿箭头，wpTf）、已存航点（蓝点+名字）、当前
+    选点（黄箭头）。
+  - 交互：**按下选位置、按住拖动定朝向**（同 RViz 2D Goal Pose，
+    setPointerCapture 触屏可用，拖 3 格以上才改 yaw 防手抖）。
+  - 【保存到机器人】发 `/vla/waypoint_cmd`，列表（`/vla/waypoints`）显示
+    全部航点与持久化文件路径，行内【导航】直发 `/goal_pose`（二次确认，
+    不经大模型）、【删除】同步持久化；备用"生成 YAML 片段"手动流保留
+    （优先用地图选点，其次当前位姿）。
+- **手动打断接入**：遥控 publishCmd 同步双发 `/cmd_vel_manual`（未跑仲裁
+  节点时无人订阅、零副作用）；VLA 卡新增"导航仲裁"指标
+  （`/nav_arbiter/status`，MANUAL 橙色），接管/释放边沿写入 VLA 时间线。
+
+### 文件改动汇总（第 9 轮）
+
+| 文件 | 变化 |
+| --- | --- |
+| `../vla_navigation/vla_navigation/waypoints.py` | to_dict/upsert/remove/save |
+| `../vla_navigation/vla_navigation/vla_navigator.py` | 用户航点文件优先加载、/vla/waypoints 广播、/vla/waypoint_cmd 处理 |
+| `../vla_navigation/vla_navigation/nav_arbiter.py` | 新增导航仲裁节点 |
+| `../vla_navigation/setup.py` / `launch/vla_bringup.launch.py` / `config/vla_params.yaml` / `README.md` | 入口、start_arbiter、参数与文档 |
+| `web/index.html` | 地图航点管理卡（画布/工具条/列表）、VLA 卡仲裁指标 |
+| `web/app.js` | OccupancyGrid 渲染与选点、/vla/waypoints //vla/waypoint_cmd //nav_arbiter/status、/cmd_vel_manual 双发 |
+| `web/style.css` | `.wp-map-*` / `.wp-row` / `.wp-list` |
+
+### 验证清单
+
+- [ ] 重编译 `colcon build --packages-select vla_navigation wheeltec_dashboard` 后启动 `vla_bringup.launch.py`：VLA 子页地图自动出现，绿箭头跟随小车移动。
+- [ ] 地图上按下拖动选点，填"测试点"保存：列表 1s 内出现该点，`cat ~/.ros/vla_waypoints.yaml` 包含它；对小车说/输入"去测试点"能导航。
+- [ ] 重启 vla_navigator（不重新标定）：启动日志显示"从用户航点文件加载"，列表还在——下次无需重新设置。
+- [ ] 列表【导航】到某点途中，按住面板 W 键：小车立即响应手动、Nav2 停止输出（`/nav_arbiter/status` 显示 MANUAL，VLA 时间线记录接管）；松手 2s 后恢复 AUTO，再发"去 X"正常。
+- [ ] 手动期间发"去厨房"：VLA 的目标被仲裁立即取消，小车不抢方向。
+- [ ] 【删除】航点后 `~/.ros/vla_waypoints.yaml` 同步少一条。
+
+---
+
+## 第 8 轮 — 下发命令按协议解析进事件栏 + 骨架识别子页 + VLA 航点标定助手
+
+### 下位机事件显示"已解析的命令"（对照通信协议表）
+
+用户提供了 S 系列通信协议表（C63A↔ROS 串口部分），按表实现：
+
+- **驱动**：`Cmd_Vel_Callback` / `Red_Vel_Callback` / `Set_LightRgb_Callback`
+  每次串口写帧成功后，把 11 字节控制帧原样回发到新话题
+  `/robot_serial_tx`（UInt8MultiArray）。析构时的停车/复位帧不回发
+  （节点正在关闭）。
+- **面板**：`parseStm32Tx()` 按协议解析——帧头 `0x7B`/帧尾 `0x7D` 校验、
+  BCC（前 9 字节异或 = 第 9 字节）、模式选择位
+  （0=速度控制 / 1、2=自动回充 / 3=红外对接速度 / 4=灯带 RGB）、
+  三轴目标速度（short, mm/s → m/s）、安全级（速度帧第 2 字节）。
+- **防刷屏**：STM32 卡新增"最近下发指令（已解析）"指标实时刷新（BCC 错
+  标红）；事件栏只在**命令签名变化**时追加一条（含解析文本 + 原始 hex），
+  连续速度帧数值变化不重复记录。
+
+### 新增"骨架识别 / 体感跟随"子页（功能模块，wheeltec_bodyreader）
+
+读包源码对齐接口（`main/bodydata_process/follower/interaction/display.py`）：
+
+- 骨架叠加画面 `/body/body_display`（display.py 发布，走 web_video_server
+  MJPEG，复用 fn-img 懒加载）。
+- 状态卡：`/body_posture` → 锁定状态（0 无人/1 检测到未锁定/2 已锁定）、
+  锁定 ID、目标距离（centerofmass_z mm→m）、横向偏角（atan2(x,z)）、
+  活跃姿态（叉腰锁定/举左右手/平举左右臂/抬左右脚）、跌倒告警；
+  `/bodylist` → 视野人数；3 秒无数据自动回 "—"。
+- 控制：发布 `/mode`（2=跟随【二次确认，会动真车】、1=姿态交互）、
+  `/recoveryid`（Int16，找回锁定目标）。
+- `/body_follower` 的 bodyfollow_x_p/x_d/z_p/z_d 接入既有 param-group
+  在线调参。
+- 架构卡与功能子导航加"骨架识别"入口。
+
+### VLA 子页新增"航点标定助手"
+
+回答"怎么建立 VLA 导航点"：航点是 `vla_navigation/config/waypoints.yaml`
+里 map 坐标系的静态位姿，节点启动时加载。助手卡把标定流程工具化：
+
+- 独立 `makeTfClient(ros, 'map')` 在浏览器端合成 map→base_footprint，
+  500ms 刷新当前实测位姿（x/y/yaw，rad+deg）；未定位时显示提示；
+  子页不可见时不刷新。
+- 填航点名/别名 →"用当前位姿生成 YAML"产出可直接追加进
+  `waypoints.yaml` 的片段 + 一键复制；hint 写明完整流程
+  （建图→定位→开到点→生成→追加→colcon build→重启 vla_navigator）。
+
+### 文件改动汇总（第 8 轮）
+
+| 文件 | 变化 |
+| --- | --- |
+| `web/index.html` | 骨架识别子页、航点标定助手卡、STM32"最近下发指令"指标、导航/架构卡入口 |
+| `web/app.js` | parseStm32Tx/ingestStm32Tx、bodyreader 订阅与控制、wpTf 航点助手、teardown 清理 |
+| `web/style.css` | `.stm32-lastcmd` / `.body-recover` / `.wp-form` / `.wp-yaml` |
+| `../turn_on_wheeltec_robot/...` | `/robot_serial_tx` 发布（hpp + cpp 三处写帧后回发） |
+| `README.md` | 功能清单与明细更新 |
+
+### 验证清单
+
+- [ ] 重编译驱动后遥控小车：STM32 卡"最近下发指令"实时显示"速度控制 Vx=… Vy=… Vz=…"；事件栏出现一条"↓ 下发: 速度控制 …
+ [7B 00 00 …]"，持续遥控不重复刷。
+- [ ] 面板设置灯带红色：事件栏出现"↓ 下发: 设置灯带颜色 R255 G0 B0 [7B 04 01 FF 00 00 00 00 00 81 7D]"（与协议表示例一致）。
+- [ ] 开始自动回充：事件栏出现"↓ 下发: 自动回充模式 …"。
+- [ ] `ros2 launch bodyreader bodyfollow.launch.py` 后：骨架子页有叠加画面，人进入视野"锁定状态/人数"变化，叉腰后显示"已锁定"+ID；切"姿态交互模式"抬脚/举手时"活跃姿态"跟随显示。
+- [ ] 启动 Nav2 定位后打开 VLA 子页：航点助手显示当前 x/y/yaw 并随小车移动刷新；填名字生成 YAML 片段、复制、追加到 waypoints.yaml、重编译重启后"去新航点"可导航。
+- [ ] 未启动 Nav2 时航点助手显示"未定位（map TF 不可用）"。
+
+---
+
+## 第 7 轮 — 对齐新固件 KeilSingleChipProject：回充红外语义修正 + 自动回充 / RGB 灯带 / 安全等级 / 固件使能位
+
+### 背景
+
+仓库新增了下位机 STM32F407 的完整 Keil 工程源码
+（`firmware/KeilSingleChipProject`，FreeRTOS）。逐文件比对固件协议
+（`data_task.c` 上行三包 / `SerialControl_task.c` 下行命令 /
+`RobotControl_task.c` 使能逻辑 / `AutoRecharge_task.c` 回充 /
+`RGBStripControl_task.c` 灯带）与驱动 `turn_on_wheeltec_robot` 后，
+把固件实际暴露但面板没接的能力补齐，并修正一处语义错误。
+
+### 语义修正：`/robot_red_flag` 不是急停
+
+固件回充帧 `autorechargerbuffer[3] = ChargeDev.RedNum` —— 是**收到充电桩
+红外信号的对管个数（0–4）**，驱动转成 Bool 发布。此前面板标成
+"急停 (red flag)"并按 err 渲染是错的。现统一改为"回充红外信号"，
+检测到=ok / 未检测=warn（总览遥测、STM32 卡、自动回充卡三处）。
+
+### 新增"自动回充"卡（底盘控制页）
+
+- 【开始自动回充】发布 `1` 到 `/robot_recharge_flag`（二次确认），
+  【退出回充】发布 `0`。**关键细节**：驱动只把该标志存进变量、随下一帧
+  cmd_vel 序列化进串口帧 frame[1]，所以发布后面板自动补发一帧零速
+  cmd_vel 把标志带下去（固件 `roscmdBuf[1]==1||2 → ChargeMode=1`）。
+- 卡内显示：回充模式（**固件回读**，见下）、回充红外、充电中、充电电流。
+- 固件行为已写进卡片提示：寻桩由充电桩 CAN 设备控制（Charger_CMD
+  优先级最低，手动遥控可打断）；无红外信号或已充电时寻桩速度为 0；
+  **回充模式中低压禁动豁免**（`robot_en_check`: `Vol<20 && ChargeMode==0`
+  才置 LowPower 错）；灯带转充电指示。
+
+### 新增"RGB 灯带"卡（底盘控制页）
+
+- 颜色选择器 + R/G/B 读数 +【设置颜色】/【关闭灯带】，调驱动服务
+  `/set_rgb_color`（robot_interfaces/SetRgb → 固件 `7B 04 en R G B … 7D`）。
+- 提示固件灯带优先级（充电指示 > 低电量 > 超声波警示 > 用户自定义），
+  自定义色在这些状态活跃时会被暂时覆盖。
+
+### 速度控制卡新增"安全等级"开关
+
+`/chassis_security`（Int8）→ 串口帧 frame[2] → 固件 SecurityLevel：
+0 = 速度流中断时固件主动停车（看门狗，默认）；1 = 保持最后速度。
+切到 1 需二次确认（断网不自停，明确标danger）；应用后补发一帧当前速度
+使其立即生效。
+
+### STM32F407 卡新增"固件使能位"与"回充模式回读"
+
+- 新指标 **固件使能 (en_flag)**：来自 24 字节帧 rx[1]（固件
+  `RobotControlParam.en_flag`），是固件真实的"允许移动"信号，涵盖
+  低压 / 急停开关 / 软件急停 / 驱动器离线或报错 全部失能条件 ——
+  比面板原来仅按电压推断的"底盘移动"更准确。失能/恢复边沿写事件日志
+  并列出固件 errCode 枚举的可能原因。
+- 新指标 **回充模式（固件确认）**：回充帧 rx[5] 的回读，区别于上位机
+  意图 `/robot_recharge_flag`；进入/退出边沿写事件日志。
+- "底盘移动"指标在 低压+回充中 时显示"允许（回充中低压豁免）"(warn)，
+  对齐固件逻辑。
+- 卡片提示更新：固件源码位置、20Hz 三包帧结构（24B 基础 `0x7B…0x7D` +
+  19B 超声波 `0xFA…0xFC` + 8B 回充 `0x7C…0x7F`）、新固件自检字段恒 0
+  （`/self_check_data` 显示 0x0 属正常）。
+
+### 配套驱动改动（turn_on_wheeltec_robot，需重编译）
+
+- **启用 `set_rgb_color` 服务**：回调原为 ROS1 风格签名且注册行被注释，
+  改为 rclcpp shared_ptr 签名并注册；修复串口异常后仍返回
+  "Set successfully" 的 bug（catch 分支 return）。
+- **新发布 `/robot_enable_flag`**（Bool，随 24 字节帧 ~20Hz）：rx[1]
+  此前已解析进 `Receive_Data.Flag_Stop` 但从未发布。
+- **新发布 `/robot_recharge_mode`**（Bool，随回充帧）：解析此前被忽略的
+  回充帧 rx[5]（固件 ChargeMode 回读）。
+- 面板对旧驱动向后兼容：两个新话题没有时对应指标保持 "—"，
+  RGB 服务不存在时按钮报"调用失败（驱动是否已重编译…）"。
+
+### 文件改动汇总（第 7 轮）
+
+| 文件 | 变化 |
+| --- | --- |
+| `web/index.html` | red flag 标签修正、STM32 卡 en_flag/回充模式指标 + hint 重写、自动回充卡、RGB 灯带卡、安全等级行 |
+| `web/app.js` | red flag/充电状态多处广播、/robot_enable_flag //robot_recharge_mode 订阅与边沿日志、回充/安全等级发布（补发 cmd_vel 推帧）、RGB 服务调用、低压回充豁免显示 |
+| `web/style.css` | `.sec-row` / `.rc-btns` / `.rgb-row` 样式 |
+| `../turn_on_wheeltec_robot/include/.../wheeltec_robot.hpp` | SetRgb 回调签名、新发布者/成员/函数声明 |
+| `../turn_on_wheeltec_robot/src/wheeltec_robot.cpp` | 启用 set_rgb_color 服务、Publish_EnableFlag / Publish_RechargeMode、回充帧 rx[5] 解析 |
+| `README.md` | 遥测/控制功能清单更新 |
+
+### 验证清单
+
+- [ ] 重编译 `colcon build --packages-select turn_on_wheeltec_robot` 后：`ros2 topic echo /robot_enable_flag` 有 ~20Hz 数据；按下急停开关 → false，STM32 卡"固件使能"变红并写事件日志。
+- [ ] `ros2 service call /set_rgb_color robot_interfaces/srv/SetRgb "{en: true, r: 255, g: 0, b: 0}"` 灯带变红；面板 RGB 卡选色"设置颜色"灯带跟随，"关闭灯带"熄灭。
+- [ ] 面板"开始自动回充"后：`/robot_recharge_flag` 收到 1、随后一帧零速 cmd_vel；下位机进入回充（卡内"回充模式（固件确认）"变"回充中"，事件日志记录）；遥控打断后再"退出回充"恢复。
+- [ ] 小车靠近充电桩：三处"回充红外"显示"检测到充电桩"（绿色，不再是"急停触发"红色）。
+- [ ] 安全等级切 1 时弹危险确认；`ros2 topic echo /chassis_security` 收到 1，且随后有一帧 cmd_vel。
+- [ ] 旧驱动（未重编译）下打开面板：新指标保持 "—"，无 JS 报错；RGB 按钮提示需重编译。
+
+---
+
 ## 第 6 轮 — arm_demo 能力接入 + 下位机 STM32F407 状态卡 + 低压禁动提醒
 
 ### arm_demo（FK/IK 运动学演示）接入机械臂页
