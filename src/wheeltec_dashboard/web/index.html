@@ -117,6 +117,8 @@
         <p class="hint">图层：Grid / 坐标轴 / LaserScan(<code>/scan</code>) / Odom 轨迹 / <strong>机器人模型(URDF)</strong> / <strong>SLAM 地图(/map)</strong>。TF 直接订阅 <code>/tf</code>+<code>/tf_static</code>，无需 tf2_web_republisher。<strong>机器人模型</strong>：经 rosbridge 调 URDF 节点的 <code>get_parameters</code> 取已展开的 <code>robot_description</code>，浏览器解析后按每个 link 的实时 TF 摆放；网格文件（STL/DAE）由面板 HTTP 服务的 <code>/pkg/&lt;包名&gt;/…</code> 路由提供（重编译 wheeltec_dashboard 生效）。机械臂模型若由独立的 robot_state_publisher 发布，在"URDF 节点"里用逗号补上其节点名即可。<strong>SLAM 地图</strong>：复用 VLA 子页的 <code>/map</code> 数据（map_server GetMap + SLAM 实时刷新），按 map→fixed frame 的 TF 铺在地面——建图时 fixed frame 填 <code>map</code> 看图最直观；未定位（无 map TF）时地图层自动隐藏。<strong>注意</strong>：<code>/odom</code> 只是<em>话题</em>名——底盘 TF 树的根是 EKF 发布的 <code>odom_combined</code>（<code>odom_combined→base_footprint→base_link→…</code>），所以 Fixed frame 要填 <code>odom_combined</code> 而不是 <code>odom</code>；填错或底盘（EKF）没启动时，下方状态栏会提示当前 TF 树根，且模型会临时以机器人自身根坐标系显示。</p>
       </section>
 
+      <!-- 底部一行用 flex 自适应铺满：任何屏宽都不留空白（窄屏自动换行） -->
+      <div class="ov-bottom">
       <section class="card">
         <h2>遥测</h2>
         <div class="grid">
@@ -191,6 +193,30 @@
         </div>
         <p class="hint">两路相机的原始画面（车上 <code>/camera/color/image_raw</code> · 机械臂 <code>/camera_arm/color/image_raw</code>），与"组件状态"页共用 web_video_server 端口/画质设置（默认 :8081）。</p>
       </section>
+
+      <section class="card card-ov-log">
+        <h2>系统日志 <span class="muted">(/rosout · 与"组件状态"页共用缓冲)</span></h2>
+        <div class="log-toolbar">
+          <label>等级
+            <select id="ov-log-level">
+              <option value="10">DEBUG</option>
+              <option value="20" selected>INFO</option>
+              <option value="30">WARN</option>
+              <option value="40">ERROR</option>
+              <option value="50">FATAL</option>
+            </select>
+          </label>
+          <label>节点过滤
+            <input id="ov-log-filter" type="text" placeholder="子串匹配, 留空=全部" />
+          </label>
+          <label class="log-check">
+            <input id="ov-log-autoscroll" type="checkbox" checked /> 自动滚动
+          </label>
+        </div>
+        <div id="ov-log-view" class="log-view"></div>
+        <p class="hint">组件出错会第一时间出现在这里：sensor_watchdog 把相机/雷达/IMU/下位机/机械臂的掉线以 ERROR 写入 <code>/rosout</code>（按 <code>sensor_watchdog</code> 过滤），各驱动的串口失败/重试日志同样可见。本卡与"组件状态"页日志面板共用同一份缓冲，这里只做独立的等级/节点过滤；暂停、缓冲行数、清空等完整控制在"组件状态"页。</p>
+      </section>
+      </div>
     </div>
 
     <!-- ============ 各组件状态 ============ -->

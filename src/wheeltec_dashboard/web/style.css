@@ -330,6 +330,29 @@ main {
 .card-wide { grid-column: 1 / -1; }
 .muted { color: var(--muted); font-weight: 400; font-size: 12px; }
 
+/* --------- 系统总览底部行（遥测 / 图表 / 相机原始流 / 系统日志） --------- */
+/* flex 自适应：任何屏宽都按比例铺满整行不留空白；放不下时自动换行，
+   换行后的卡片同样撑满所在行。系统日志卡 flex 权重最大，吃掉剩余宽度。 */
+.ov-bottom {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: stretch;
+}
+.ov-bottom > .card { flex: 1 1 300px; min-width: 0; }
+.ov-bottom > .card-ov-log {
+  flex: 2.5 1 480px;
+  display: flex;
+  flex-direction: column;
+}
+/* 日志区高度跟随卡片拉伸（与同行的相机卡等高），不再用固定 320px */
+.card-ov-log .log-view { flex: 1; height: auto; min-height: 320px; }
+/* 卡片变窄时相机栅格允许收缩到 240px，避免 360px 最小列宽把卡撑破 */
+.ov-bottom .cam-grid {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
 /* --------- Contact author --------- */
 .contact { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
 .contact-avatar {

@@ -3194,6 +3194,12 @@
   const logClearBtn = $('log-clear');
   const logCountEl = $('log-count');
   const logDroppedEl = $('log-dropped');
+  // 系统总览页的"系统日志"镜像视图：共用 logEntries 缓冲与暂停/清空，
+  // 只有等级/节点过滤、自动滚动是自己的。
+  const ovLogView = $('ov-log-view');
+  const ovLogLevel = $('ov-log-level');
+  const ovLogFilter = $('ov-log-filter');
+  const ovLogAutoscroll = $('ov-log-autoscroll');
 
   const LEVEL_NAME = { 10: 'DEBUG', 20: 'INFO', 30: 'WARN', 40: 'ERROR', 50: 'FATAL' };
   const LEVEL_CLASS = { 10: 'log-debug', 20: 'log-info', 30: 'log-warn', 40: 'log-error', 50: 'log-fatal' };
@@ -3234,10 +3240,25 @@
     return true;
   }
 
+  function matchesOvFilters(e) {
+    if (e.level < +((ovLogLevel && ovLogLevel.value) || 20)) return false;
+    const f = ((ovLogFilter && ovLogFilter.value) || '').trim().toLowerCase();
+    if (f && !e.name.toLowerCase().includes(f)) return false;
+    return true;
+  }
+
   function rerenderAll() {
     logView.innerHTML = logEntries.filter(matchesFilters).map(renderRow).join('');
     logCountEl.textContent = String(logEntries.length);
     if (logAutoscroll.checked) logView.scrollTop = logView.scrollHeight;
+  }
+
+  function rerenderOvLog() {
+    if (!ovLogView) return;
+    ovLogView.innerHTML = logEntries.filter(matchesOvFilters).map(renderRow).join('');
+    if (!ovLogAutoscroll || ovLogAutoscroll.checked) {
+      ovLogView.scrollTop = ovLogView.scrollHeight;
+    }
   }
 
   function pushEntry(e) {
@@ -3247,11 +3268,19 @@
       logEntries.splice(0, logEntries.length - cap);
     }
     logCountEl.textContent = String(logEntries.length);
-    if (!matchesFilters(e)) return;
-    // Cheap append: also trim rendered children to ~cap.
-    logView.insertAdjacentHTML('beforeend', renderRow(e));
-    while (logView.childElementCount > cap) logView.removeChild(logView.firstChild);
-    if (logAutoscroll.checked) logView.scrollTop = logView.scrollHeight;
+    if (matchesFilters(e)) {
+      // Cheap append: also trim rendered children to ~cap.
+      logView.insertAdjacentHTML('beforeend', renderRow(e));
+      while (logView.childElementCount > cap) logView.removeChild(logView.firstChild);
+      if (logAutoscroll.checked) logView.scrollTop = logView.scrollHeight;
+    }
+    if (ovLogView && matchesOvFilters(e)) {
+      ovLogView.insertAdjacentHTML('beforeend', renderRow(e));
+      while (ovLogView.childElementCount > cap) ovLogView.removeChild(ovLogView.firstChild);
+      if (!ovLogAutoscroll || ovLogAutoscroll.checked) {
+        ovLogView.scrollTop = ovLogView.scrollHeight;
+      }
+    }
   }
 
   function subscribeRosout() {
@@ -3280,7 +3309,17 @@
     const cap = Math.max(50, Math.min(5000, parseInt(logBuffer.value, 10) || 500));
     if (logEntries.length > cap) logEntries.splice(0, logEntries.length - cap);
     rerenderAll();
+    rerenderOvLog();
   });
+  if (ovLogLevel) ovLogLevel.addEventListener('change', rerenderOvLog);
+  if (ovLogFilter) ovLogFilter.addEventListener('input', rerenderOvLog);
+  if (ovLogAutoscroll) {
+    ovLogAutoscroll.addEventListener('change', () => {
+      if (ovLogAutoscroll.checked && ovLogView) {
+        ovLogView.scrollTop = ovLogView.scrollHeight;
+      }
+    });
+  }
   logPauseBtn.addEventListener('click', () => {
     logPaused = !logPaused;
     logPauseBtn.textContent = logPaused ? '继续' : '暂停';
@@ -3293,6 +3332,7 @@
     logDroppedEl.textContent = '0';
     logCountEl.textContent = '0';
     logView.innerHTML = '';
+    if (ovLogView) ovLogView.innerHTML = '';   // 共用缓冲，总览镜像一并清
   });
 
   // ---------- Navigation (top tabs + function sub-tabs) ----------

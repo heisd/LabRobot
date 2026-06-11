@@ -70,7 +70,9 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
 - **系统总览**：系统架构卡（底盘 / 机械臂两部分的模块总览 + 在线状态点 +
   点击跳转）、3D 视图（雷达 `/scan`）、实时遥测、电压 / cmd_vel 折线图、
   相机原始流卡（车上 `/camera/color/image_raw` + 机械臂
-  `/camera_arm/color/image_raw` 两路 MJPEG，端口/画质与"组件状态"页共用）
+  `/camera_arm/color/image_raw` 两路 MJPEG，端口/画质与"组件状态"页共用）、
+  系统日志卡（`/rosout` 镜像，独立等级/节点过滤；底部四卡 flex 自适应，
+  任何屏宽都铺满不留空白）
 - **Wheeltec 底盘**
   - **组件状态**：**传感器在线状态指示灯墙 + 串口设备表**（sensor_watchdog：
     车载相机/雷达1/雷达2/IMU/下位机 STM32/Lebai 机械臂/机械臂相机 绿红灯，
