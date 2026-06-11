@@ -241,6 +241,14 @@ ros2 launch wheeltec_path_follow follow_path.launch.py
 
 ### 8. Web 浏览器查看摄像头
 
+> **注意**：仪表盘 launch（`wheeltec_dashboard dashboard.launch.py` /
+> `labrobot_bringup.launch.py` / `vla_bringup.launch.py`）已经自带一个
+> `web_video_server`（端口 8081）。仪表盘在跑时**不要**再手动
+> `ros2 run web_video_server web_video_server`，否则会出现两个同名
+> `/web_video_server` 节点（`ros2 node list` 会告警 share an exact name）。
+
+仅在不使用仪表盘、单独看流时才手动启动：
+
 ```bash
 ros2 launch turn_on_wheeltec_robot wheeltec_camera.launch.py
 ros2 run web_video_server web_video_server

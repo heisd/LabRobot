@@ -6,6 +6,54 @@
 
 ---
 
+## 第 14 轮 — 首页双相机原始流卡、URDF TF 兜底显示、一键 bringup
+
+### 系统总览页新增"相机原始流"卡
+
+- 首页（系统总览）右下新增两路相机原始画面：车上
+  `/camera/color/image_raw` + 机械臂 `/camera_arm/color/image_raw`，
+  走既有 `fn-img` MJPEG 机制，端口/画质/Base URL 与"组件状态"页共用，
+  页面加载即拉流（首页默认可见）。
+
+### 机器人模型不显示（odom vs odom_combined）修复
+
+- **根因 1（坐标系名）**：`/odom` 只是**话题**名——底盘 TF 树的根是 EKF
+  发布的 `odom_combined`（`wheeltec_ekf.launch.py` 把 `/odometry/filtered`
+  remap 成 `odom_combined`，`ekf.yaml` `world_frame: odom_combined`；
+  串口驱动 `/odom` 消息的 `header.frame_id` 同样是 `odom_combined`）。
+  之前把 fixed frame 从 `odom_combined` 改成 `odom` 方向反了：TF 里根本
+  没有 `odom` 这个 frame。已把默认 fixed frame 改回 `odom_combined`。
+- **根因 2（底盘没启动）**：截图里 `ros2 node list` 只有
+  robot_state_publisher/rosbridge/watchdog/web_server——base_serial、EKF、
+  base_footprint→base_link 静态 TF 都没在跑，odom_combined 自然不存在，
+  按旧逻辑"TF 缺失的 link 自动隐藏"导致整车不可见。
+- **兜底显示**：URDF 图层在 fixed frame 与机器人 TF 树不连通时，不再整车
+  隐藏，改为以机器人自身树根（如 base_footprint）为原点显示模型，并在
+  状态栏说明原因 + 列出当前 TF 树根，提示把 Fixed frame 填成哪个。
+- **状态栏自愈**：「等待 frame」检测改为常驻——5s 后列出当前收到的全部
+  TF 树根帮助排查；之后底盘补启动、frame 出现时提示自动消失。
+
+### 重复 web_video_server 说明
+
+- `dashboard.launch.py` 已自带一个 `web_video_server`（:8081）；再手动
+  `ros2 run web_video_server web_video_server`（旧文档第 8 节的写法）会
+  出现两个同名 `/web_video_server` 节点（`ros2 node list` 告警 “share an
+  exact name”）。已在 `docs/wheeltec.md`、README 中注明：仪表盘在跑时
+  不要手动再起。
+
+### 新增 labrobot_bringup.launch.py（一键全系统 + 故障隔离）
+
+- `ros2 launch wheeltec_dashboard labrobot_bringup.launch.py` 错峰拉起：
+  t=0 底盘 → t=2 双雷达/车上相机/机械臂相机 → t=4 仪表盘 → t=6 语音
+  （+ 可选 lebai 机械臂，`start_arm` 默认 false，避免与 grab_demo 抓取
+  launch 自带的驱动重复）。
+- 故障隔离：include 在生成阶段预检（包缺失/launch 解析失败只打
+  `[labrobot_bringup] … 已跳过` 警告，不拖死其它组件）；运行期节点崩溃
+  ROS 2 launch 本就不连坐，报错持续打终端，sensor_watchdog 再把掉线写
+  `/rosout`。所有组件均有 `start_*` 开关。
+
+---
+
 ## 第 13 轮 — 3D 视图加载机器人模型（URDF）与 SLAM 地图
 
 ### 背景

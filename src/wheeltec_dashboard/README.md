@@ -26,12 +26,28 @@ source install/setup.bash
 
 ## 使用
 
+只启动仪表盘：
+
 ```bash
 ros2 launch wheeltec_dashboard dashboard.launch.py
 ```
 
+一键拉起整套系统（底盘 + 双雷达 + 双相机 + 语音 + 仪表盘，组件出错只报
+不连坐，详见文件头注释；各组件有 `start_*` 开关）：
+
+```bash
+ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
+```
+
 然后在浏览器打开 `http://<机器人IP>:8080/`，页面默认会连接到
 `ws://<同一host>:9090` (rosbridge)。
+
+> 仪表盘 launch 已自带一个 `web_video_server`（:8081），不要再手动
+> `ros2 run web_video_server web_video_server`，否则出现两个同名节点。
+>
+> 3D 视图的 Fixed frame 默认 `odom_combined`：底盘 TF 树的根由 EKF 发布为
+> `odom_combined→base_footprint→base_link→…`；`/odom` 只是里程计**话题**名，
+> TF 里并没有名为 `odom` 的 frame。
 
 启动参数：
 
@@ -52,7 +68,9 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 `#function`、`#arm`、`#contact` 锚点深链）：
 
 - **系统总览**：系统架构卡（底盘 / 机械臂两部分的模块总览 + 在线状态点 +
-  点击跳转）、3D 视图（雷达 `/scan`）、实时遥测、电压 / cmd_vel 折线图
+  点击跳转）、3D 视图（雷达 `/scan`）、实时遥测、电压 / cmd_vel 折线图、
+  相机原始流卡（车上 `/camera/color/image_raw` + 机械臂
+  `/camera_arm/color/image_raw` 两路 MJPEG，端口/画质与"组件状态"页共用）
 - **Wheeltec 底盘**
   - **组件状态**：**传感器在线状态指示灯墙 + 串口设备表**（sensor_watchdog：
     车载相机/雷达1/雷达2/IMU/下位机 STM32/Lebai 机械臂/机械臂相机 绿红灯，
