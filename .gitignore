@@ -11,3 +11,5 @@ __pycache__/
 *.pdf
 !docs/**/*.gv
 !docs/**/*.pdf
+github.md
+
