@@ -14,15 +14,14 @@
 ========================================================================= -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="lebai_lm3">
 
-  <!-- 世界根 -->
-  <link name="world"/>
-
   <!-- 复用已有机械臂宏。注意: lm3_macro.xacro 末尾已经自带
        <xacro:lebai_lm3 prefix="lebai_"/> 的实例化, 这里只 include, 不要再实例化,
        否则链接/关节重名报错。 -->
   <xacro:include filename="$(find lebai_lm3_support)/urdf/lm3_macro.xacro"/>
 
-  <!-- 底座固定到世界, 抬到桌面高度(与 world 文件里的桌子一致) -->
+  <!-- 底座固定到世界, 抬到桌面高度(与 world 文件里的桌子一致)
+       注: world 是 robot_state_publisher 自动创建的虚拟根链接,
+           URDF 中不需要显式定义 -->
   <joint name="world_to_base" type="fixed">
     <parent link="world"/>
     <child link="lebai_base_link"/>
