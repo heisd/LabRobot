@@ -83,6 +83,7 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
     雷达（双雷达融合健康）、超声波、语音组件、相机预览、`/rosout` 日志面板
   - **底盘控制**：速度控制（遥控 + 安全等级）、自动回充、RGB 灯带、参数调节
   - **功能模块**（含子页面）：巡线、KCF 跟踪、YOLO 检测、骨架识别、
+    路径跟随（wheeltec_path_follow 录制/回放可视化）、
     VLA 语音导航（含航点标定助手）
 - **Lebai 机械臂**
   - **监控与抓取**（含子页面）：监控与控制、HSV / YOLO / KCF / ArUco / VLM
@@ -126,6 +127,19 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
   按钮发布 `/mode`（1=姿态交互 2=跟随，切跟随需确认）与 `/recoveryid`
   （找回锁定目标）；`/body_follower` 的 bodyfollow_x_p/x_d/z_p/z_d PID
   可在线调。启动 `ros2 launch bodyreader bodyfollow.launch.py`。
+- **路径跟随**（`wheeltec_path_follow`）：订阅 `/followpath`（nav_msgs/Path，
+  map 系）把**录制/回放中的路径实时画在地图上**——地图位图与 VLA 航点子页
+  共用（/map 话题 + GetMap + 包内地图文件三级兜底），没有地图时按路径外包框
+  自适应显示；绿箭头=小车实时位姿、蓝线=话题实时路径（绿点起点/红点终点）、
+  黄虚线=文件预览。录制节点 `/save_path` 与回放节点 `/follow_path` 的在线
+  状态用 `ros.getNodes` 周期判活（路径话题两个节点同名分不开），上线自动
+  读取 `pathfilename` / `run_in_loop` 参数显示在面板，上线/退出边沿写入
+  事件时间线（save_path **Ctrl+C 退出时才写盘保存**）。"从包加载预览"经
+  `/pkg/` 路由直读包 share 里的路径文本（每行 `x y yaw`、`EOP` 结尾），
+  不启动任何节点也能查看已录路径；"导航到路径起点"直发 `/goal_pose`
+  （二次确认），方便回放前预摆位。回放经 Nav2 action 执行，面板遥控/WASD
+  （经 nav_arbiter）可随时打断；录制/回放节点仍用终端 launch 启动
+  （`save_path.launch.py` / `follow_path.launch.py`，见子页提示）。
 - **下发命令解析**：驱动把发给下位机的 11 字节控制帧回发到
   `/robot_serial_tx`（需重编译），面板按通信协议表解析模式选择位
   （0=速度控制 / 1、2=自动回充 / 3=红外对接速度 / 4=灯带 RGB）、目标速度

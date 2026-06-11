@@ -1397,6 +1397,10 @@ main {
   cursor: crosshair;
   touch-action: none;   /* 触屏拖动定朝向时不滚动页面 */
 }
+#pf-map {
+  display: block;
+  width: 100%;   /* 路径跟随子页：只看不取点，无需 crosshair */
+}
 .wp-list {
   display: flex;
   flex-direction: column;

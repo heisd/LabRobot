@@ -97,6 +97,13 @@ ros2 launch wheeltec_path_follow follow_path.launch.py \
     run_in_loop:=True
 ```
 
+## 仪表盘可视化
+
+`wheeltec_dashboard` 的 **功能模块 → 路径跟随** 子页可在浏览器中实时查看
+录制/回放路径（订阅 `/followpath` 叠加到地图）、`save_path` / `follow_path`
+节点在线状态与参数回读，支持包内路径文件预览与"导航到路径起点"
+（直发 `/goal_pose`）。详见 `src/wheeltec_dashboard/README.md`。
+
 ## 注意事项
 
 1. 默认参数路径写死为 `/home/wheeltec/wheeltec_ros2/...`,部署到其他用户家目录时务必通过参数重写。

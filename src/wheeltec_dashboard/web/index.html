@@ -63,6 +63,7 @@
               <button class="arch-link" data-tab="function" data-subtab="kcf">KCF 跟随</button>
               <button class="arch-link" data-tab="function" data-subtab="yolo">YOLO 检测</button>
               <button class="arch-link" data-tab="function" data-subtab="body">骨架识别</button>
+              <button class="arch-link" data-tab="function" data-subtab="path">路径跟随</button>
               <button class="arch-link" data-tab="function" data-subtab="vla">VLA 语音导航</button>
             </div>
           </div>
@@ -560,6 +561,7 @@
         <button class="subtab-btn" data-subtab="kcf">KCF 跟踪</button>
         <button class="subtab-btn" data-subtab="yolo">YOLO 检测</button>
         <button class="subtab-btn" data-subtab="body">骨架识别</button>
+        <button class="subtab-btn" data-subtab="path">路径跟随</button>
         <button class="subtab-btn" data-subtab="vla">VLA 语音导航</button>
       </nav>
 
@@ -829,6 +831,85 @@
             </div>
           </div>
           <p class="hint">启动：<code>ros2 launch bodyreader bodyfollow.launch.py</code>（Astra 深度相机骨骼识别 + 跟随 + 骨架叠加图）。<strong>叉腰</strong>锁定/切换跟随目标；锁定后跟随保持约 2m 距离（写死在 follower）。<strong>姿态交互模式</strong>下：抬右脚=前进、抬左脚=后退、举左手=右转、举右手=左转、平举左/右臂=横移（仅全向底盘）、跌倒=蜂鸣器告警（<code>/buzzer_flag</code>）。模式也可由人<strong>双手平举</strong>切换（需 <code>open_switch:=true</code>）。跟随会直接发 <code>/cmd_vel</code>——请保留"底盘控制"页的急停手段；PID 默认值保守，按场地调上方参数（即时生效）。</p>
+        </section>
+      </div>
+
+      <!-- 路径跟随 (wheeltec_path_follow) -->
+      <div class="subtab-panel" id="subpanel-path">
+        <section class="card card-wide">
+          <h2>路径录制 / 路径跟随 <span class="muted">(wheeltec_path_follow)</span></h2>
+          <div class="wp-map-toolbar">
+            <label>路径话题
+              <input id="pf-topic" type="text" value="/followpath" />
+            </label>
+            <button id="pf-apply" type="button">应用</button>
+            <label>包内路径文件（/pkg/ 路由）
+              <input id="pf-file" type="text" value="/pkg/wheeltec_path_follow/path/wheeltec_path" />
+            </label>
+            <button id="pf-file-load" type="button">从包加载预览</button>
+            <button id="pf-clear" type="button">清空显示</button>
+            <span id="pf-status" class="muted"></span>
+          </div>
+          <div class="wp-map-wrap">
+            <canvas id="pf-map"></canvas>
+          </div>
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">录制节点 (/save_path)</div>
+              <div id="pf-save-node" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">回放节点 (/follow_path)</div>
+              <div id="pf-follow-node" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">路径点数</div>
+              <div id="pf-points" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">路径长度</div>
+              <div id="pf-length" class="metric-value">— m</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">路径更新 (/followpath)</div>
+              <div id="pf-fresh" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">当前 /cmd_vel</div>
+              <div id="pf-cmd" class="metric-value">vx=0.00, wz=0.00</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">录制文件 (save_path 参数)</div>
+              <div id="pf-rec-file" class="metric-value">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">回放设置 (follow_path 参数)</div>
+              <div id="pf-follow-cfg" class="metric-value">—</div>
+            </div>
+          </div>
+          <div class="rc-btns">
+            <button id="pf-goto-start" type="button">导航到路径起点</button>
+            <span id="pf-msg" class="muted"></span>
+          </div>
+          <div class="vla-timeline-head">
+            <span>路径跟随事件</span>
+            <button id="pf-log-clear">清空</button>
+          </div>
+          <div id="pf-log" class="vla-timeline"></div>
+          <p class="hint"><strong>用法</strong>：① <strong>录制</strong>——先启动底盘并有 <code>map→base_link</code> TF（SLAM 建图或 Nav2 定位中），
+            <code>ros2 launch wheeltec_path_follow save_path.launch.py pathfilename:=$HOME/my_path.txt</code>，
+            再用键盘/本面板遥控小车走一遍期望路径——录到的轨迹经 <code>/followpath</code>（nav_msgs/Path）实时画在上图（蓝线）；
+            <strong>Ctrl+C 退出节点时才写盘保存</strong>（录制节点"已退出"事件即写盘时机）。
+            ② <strong>回放</strong>——确保 Nav2 已启动且定位正确，
+            <code>ros2 launch wheeltec_path_follow follow_path.launch.py pathfilename:=$HOME/my_path.txt run_in_loop:=True</code>：
+            先 NavigateToPose 去路径起点，再按 FollowPath 沿录制轨迹行驶，<code>run_in_loop:=True</code> 循环往复；
+            回放经 Nav2 action 执行，<strong>本面板遥控/WASD（经 nav_arbiter）可随时打断</strong>。
+            上图地图位图与"VLA 语音导航"子页的地图航点管理共用（/map 话题 + GetMap + 包内地图文件三级兜底）；没有地图时按路径外包框自适应显示。
+            绿箭头=小车实时位姿（map 系），蓝线=话题实时路径（绿点起点/红点终点），黄虚线=文件预览。
+            "从包加载预览"经面板 HTTP 的 <code>/pkg/</code> 路由直读 <code>wheeltec_path_follow</code> 包 share 里的路径文本（<strong>编译时安装的副本</strong>——新录的文件要么直接看话题实时路径，要么放进包内 <code>path/</code> 重编译）。
+            "导航到路径起点"直发 <code>/goal_pose</code>，方便回放前先把车摆到起点附近。
+            注意：两个 launch 的 <code>pathfilename</code> 默认值写死在 <code>/home/wheeltec/…</code>，部署到其他用户/机器时务必用参数覆盖；
+            录制依赖里程计与定位质量，打滑多的地面轨迹会变形。</p>
         </section>
       </div>
 
@@ -1402,7 +1483,7 @@
           <div class="contact-avatar">W</div>
           <div class="contact-body">
             <div class="contact-name">LabRobot Dashboard</div>
-            <p class="contact-desc">面向"Wheeltec S300 移动底盘 + Lebai LM3 机械臂"移动抓取平台的轻量级 Web 仪表盘。底盘部分：实时遥测、速度控制、参数调节、3D 视图、相机预览、日志，以及巡线 / KCF / YOLO / VLA 功能模块；机械臂部分：驱动状态、系统/夹爪/关节控制，以及 HSV / YOLO / KCF / ArUco / VLM 五种视觉抓取方案。全部通过 rosbridge 与 ROS 2 通信。</p>
+            <p class="contact-desc">面向"Wheeltec S300 移动底盘 + Lebai LM3 机械臂"移动抓取平台的轻量级 Web 仪表盘。底盘部分：实时遥测、速度控制、参数调节、3D 视图、相机预览、日志，以及巡线 / KCF / YOLO / 骨架识别 / 路径跟随 / VLA 功能模块；机械臂部分：驱动状态、系统/夹爪/关节控制，以及 HSV / YOLO / KCF / ArUco / VLM 五种视觉抓取方案。全部通过 rosbridge 与 ROS 2 通信。</p>
             <ul class="contact-list">
               <li><span class="ck">项目仓库</span><a href="https://github.com/heisd/LabRobot" target="_blank" rel="noopener">github.com/heisd/LabRobot</a></li>
               <li><span class="ck">维护者</span><span>heisd</span></li>

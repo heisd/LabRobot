@@ -124,6 +124,10 @@
       try { yoloDetSub.unsubscribe(); } catch (_) { /* ignore */ }
       yoloDetSub = null;
     }
+    if (pfSub) {
+      try { pfSub.unsubscribe(); } catch (_) { /* ignore */ }
+      pfSub = null;
+    }
     if (cmdVelPub) {
       try { cmdVelPub.unadvertise(); } catch (_) { /* ignore */ }
       cmdVelPub = null;
@@ -444,6 +448,7 @@
       const txt = `vx=${(+vx).toFixed(2)}, wz=${(+wz).toFixed(2)}`;
       const a = $('line-cmd'); if (a) a.textContent = txt;
       const b = $('kcf-cmd'); if (b) b.textContent = txt;
+      const c = $('pf-cmd'); if (c) c.textContent = txt;
     }, { throttle_rate: 100 });
 
     // QR line-following (line_follow_qr_fixed: qr_detector + cmd_arbiter).
@@ -511,6 +516,8 @@
     // Lidar health (fused + per-sensor) and optional YOLO detections.
     subscribeLidar();
     subscribeYolo();
+    // 路径跟随 (wheeltec_path_follow): /followpath 实时路径
+    subscribePathFollow();
 
     // Build viewer + log subscription as part of the connection lifecycle.
     rebuildViewer();
@@ -2745,6 +2752,330 @@
     } else {
       document.execCommand('copy');
     }
+  });
+
+  // ---------- 路径跟随 (wheeltec_path_follow) ----------
+  // save_path（录制）与 follow_path.py（回放）都把当前路径发布到 /followpath
+  // (nav_msgs/Path, map 系)：订阅后画在地图上。地图位图(wpMap)与 map 系 TF
+  // 客户端(wpTf)同"地图航点管理"卡共用；节点在线状态靠 ros.getNodes 周期
+  // 查 /save_path、/follow_path 是否存在（路径话题两个节点同名，分不开）。
+  let pfSub = null;        // /followpath 订阅（话题可改，独立管理便于重订）
+  let pfPath = [];         // 话题里的实时路径 [{x, y, yaw}]
+  let pfPathTime = 0;      // 最近一次路径消息到达时间
+  let pfFilePath = [];     // "从包加载预览"解析出的路径
+  const pfNodeState = { save: null, follow: null };   // null=未知（首查不写离线日志）
+
+  function addPfLog(text) { appendTimeline('pf-log', 200, text); }
+
+  function setPfStatus(text) {
+    const el = $('pf-status');
+    if (el) el.textContent = text || '';
+  }
+
+  function subscribePathFollow() {
+    if (pfSub) {
+      try { pfSub.unsubscribe(); } catch (_) { /* ignore */ }
+      pfSub = null;
+    }
+    if (!ros) return;
+    const topic = ((($('pf-topic') || {}).value) || '/followpath').trim();
+    pfSub = new ROSLIB.Topic({
+      ros, name: topic, messageType: 'nav_msgs/msg/Path',
+      throttle_rate: 500, queue_length: 1,
+    });
+    pfSub.subscribe((msg) => {
+      const poses = (msg && msg.poses) || [];
+      pfPath = poses.map((p) => {
+        const pos = (p.pose && p.pose.position) || {};
+        const q = (p.pose && p.pose.orientation) || { x: 0, y: 0, z: 0, w: 1 };
+        return { x: +pos.x || 0, y: +pos.y || 0, yaw: yawFromQuat(q) };
+      });
+      pfPathTime = Date.now();
+      updatePfMetrics();
+      pfRedraw();
+    });
+  }
+
+  // 当前显示的路径：话题有数据用话题（录制/回放进行中），否则用文件预览。
+  function pfActivePath() { return pfPath.length ? pfPath : pfFilePath; }
+
+  function pfLength(pts) {
+    let d = 0;
+    for (let i = 1; i < pts.length; i++) {
+      d += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    }
+    return d;
+  }
+
+  function updatePfMetrics() {
+    const pts = pfActivePath();
+    const src = pfPath.length ? '话题' : (pfFilePath.length ? '文件预览' : '');
+    const pEl = $('pf-points');
+    if (pEl) pEl.textContent = pts.length ? (pts.length + ' 点（' + src + '）') : '—';
+    const lEl = $('pf-length');
+    if (lEl) lEl.textContent = pts.length > 1 ? pfLength(pts).toFixed(2) + ' m' : '— m';
+  }
+
+  // 视图变换：有地图按地图（与航点卡同一公式），没有按路径外包框自适应。
+  function pfView(canvas) {
+    const wrap = canvas.parentElement;
+    const maxW = Math.max(240, Math.min((wrap && wrap.clientWidth) || 640, 900));
+    if (wpMap) {
+      const s = maxW / wpMap.w;
+      const h = Math.max(140, Math.round(wpMap.h * s));
+      return {
+        w: maxW, h, map: true,
+        toCanvas: (wx, wy) => ({
+          x: (wx - wpMap.ox) / wpMap.res * s,
+          y: h - (wy - wpMap.oy) / wpMap.res * s,
+        }),
+      };
+    }
+    const pts = pfPath.concat(pfFilePath);
+    const tf = wpTf ? wpTf.lookup('base_footprint') : null;
+    if (tf) pts.push({ x: tf.translation.x, y: tf.translation.y });
+    if (!pts.length) return null;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    pts.forEach((p) => {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    });
+    minX -= 0.5; maxX += 0.5; minY -= 0.5; maxY += 0.5;   // 0.5m 边距
+    const s = Math.min(maxW / (maxX - minX), 480 / (maxY - minY));
+    const w = Math.max(240, Math.round((maxX - minX) * s));
+    const h = Math.max(140, Math.round((maxY - minY) * s));
+    return {
+      w, h, map: false,
+      toCanvas: (wx, wy) => ({ x: (wx - minX) * s, y: h - (wy - minY) * s }),
+    };
+  }
+
+  function drawPfPolyline(ctx, view, pts, color, dashed) {
+    if (!pts.length) return;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.setLineDash(dashed ? [6, 4] : []);
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const c = view.toCanvas(p.x, p.y);
+      if (i === 0) ctx.moveTo(c.x, c.y);
+      else ctx.lineTo(c.x, c.y);
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // 起点绿点 / 终点红点
+    const s0 = view.toCanvas(pts[0].x, pts[0].y);
+    ctx.fillStyle = '#3fb950';
+    ctx.beginPath(); ctx.arc(s0.x, s0.y, 4, 0, Math.PI * 2); ctx.fill();
+    if (pts.length > 1) {
+      const s1 = view.toCanvas(pts[pts.length - 1].x, pts[pts.length - 1].y);
+      ctx.fillStyle = '#f85149';
+      ctx.beginPath(); ctx.arc(s1.x, s1.y, 4, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function pfRedraw() {
+    const canvas = $('pf-map');
+    if (!canvas || !canvas.offsetParent) return;   // 子页不可见时不画
+    const ctx = canvas.getContext('2d');
+    const view = pfView(canvas);
+    if (!view) {
+      // 既无地图也无路径：占位提示
+      const wrap = canvas.parentElement;
+      const w = Math.max(240, Math.min((wrap && wrap.clientWidth) || 640, 900));
+      if (canvas.width !== w || canvas.height !== 160) { canvas.width = w; canvas.height = 160; }
+      ctx.fillStyle = '#161b22';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '13px sans-serif';
+      ctx.fillText('等待路径数据…（订阅 ' + ((($('pf-topic') || {}).value) || '/followpath') +
+        '，或点"从包加载预览"）', 12, 84);
+      return;
+    }
+    if (canvas.width !== view.w || canvas.height !== view.h) {
+      canvas.width = view.w;
+      canvas.height = view.h;
+    }
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, view.w, view.h);
+    if (view.map) {
+      ctx.drawImage(wpMap.bmp, 0, 0, view.w, view.h);
+    } else {
+      ctx.fillStyle = '#161b22';
+      ctx.fillRect(0, 0, view.w, view.h);
+    }
+    drawPfPolyline(ctx, view, pfFilePath, '#d29922', true);   // 文件预览：黄虚线
+    drawPfPolyline(ctx, view, pfPath, '#58a6ff', false);      // 实时话题：蓝实线
+    // 小车实时位姿（绿色箭头，map 系 TF 与航点卡共用）
+    const tf = wpTf ? wpTf.lookup('base_footprint') : null;
+    if (tf) {
+      drawWpArrow(ctx, view.toCanvas(tf.translation.x, tf.translation.y),
+        yawFromQuat(tf.rotation), '#3fb950', 9);
+    }
+  }
+
+  // 节点上线即读其参数显示在面板上（录制/回放各自的 pathfilename 等）。
+  function pfReadNodeParams(kind) {
+    const node = kind === 'save' ? '/save_path' : '/follow_path';
+    const names = kind === 'save' ? ['pathfilename'] : ['pathfilename', 'run_in_loop'];
+    paramService(node, 'get_parameters').callService(
+      new ROSLIB.ServiceRequest({ names }), (res) => {
+        const vals = (res && res.values) || [];
+        const file = (vals[0] && vals[0].type === PT_STRING) ? vals[0].string_value : '';
+        if (!file) return;
+        if (kind === 'save') {
+          const el = $('pf-rec-file');
+          if (el) el.textContent = file;
+        } else {
+          const loop = (vals[1] && vals[1].type === PT_BOOL) ? vals[1].bool_value : null;
+          const el = $('pf-follow-cfg');
+          if (el) el.textContent = file + (loop === null ? '' : (loop ? ' · 循环' : ' · 单次'));
+        }
+      }, () => { /* 节点刚退出等竞态，忽略 */ });
+  }
+
+  function setPfNodeMetric(id, on) {
+    const el = $(id);
+    if (!el) return;
+    el.textContent = on === null ? '—' : (on ? '在线' : '离线');
+    el.classList.remove('ok', 'warn', 'err');
+    if (on) el.classList.add('ok');
+  }
+
+  // 节点在线轮询（仅子页可见时）：边沿写事件日志 + 上线时读参数。
+  setInterval(() => {
+    const panel = $('subpanel-path');
+    if (!panel || !panel.offsetParent) return;
+    if (!ros) {
+      pfNodeState.save = null;
+      pfNodeState.follow = null;
+      setPfNodeMetric('pf-save-node', null);
+      setPfNodeMetric('pf-follow-node', null);
+      return;
+    }
+    ros.getNodes((nodes) => {
+      const list = nodes || [];
+      const now = {
+        save: list.indexOf('/save_path') !== -1,
+        follow: list.indexOf('/follow_path') !== -1,
+      };
+      ['save', 'follow'].forEach((k) => {
+        if (pfNodeState[k] !== now[k]) {
+          // 首查 null→离线 不写日志，避免每次连接都刷一条"离线"
+          if (pfNodeState[k] !== null || now[k]) {
+            const label = k === 'save' ? '录制节点 save_path' : '回放节点 follow_path';
+            addPfLog(label + (now[k] ? ' 已上线'
+              : (' 已退出' + (k === 'save' ? '（save_path 退出时才写盘保存路径文件）' : ''))));
+          }
+          if (now[k]) pfReadNodeParams(k);
+          pfNodeState[k] = now[k];
+        }
+        setPfNodeMetric(k === 'save' ? 'pf-save-node' : 'pf-follow-node', now[k]);
+      });
+    }, () => { /* getNodes 偶发失败忽略，下个周期重试 */ });
+  }, 3000);
+
+  // 周期刷新（仅子页可见时）：路径数据新鲜度 + 重绘（小车箭头在动）。
+  setInterval(() => {
+    const canvas = $('pf-map');
+    if (!canvas || !canvas.offsetParent) return;
+    const fEl = $('pf-fresh');
+    if (fEl) {
+      if (!pfPathTime) {
+        fEl.textContent = ros ? '—（无数据，录制/回放节点未发布）' : '未连接';
+        fEl.classList.remove('ok');
+      } else {
+        const age = (Date.now() - pfPathTime) / 1000;
+        fEl.classList.toggle('ok', age < 3);
+        fEl.textContent = age < 3 ? '实时更新中' : Math.round(age) + ' 秒前';
+      }
+    }
+    pfRedraw();
+  }, 1000);
+
+  // 包内路径文件预览：经 /pkg/ 路由直读 share 里的路径文本（每行 "x y yaw"，
+  // EOP 结尾），浏览器解析后画黄虚线 —— 不启动任何节点也能看已录路径。
+  function pfLoadFile() {
+    const path = ((($('pf-file') || {}).value) || '').trim();
+    if (!path) { setPfStatus('未填路径文件'); return; }
+    setPfStatus('加载路径文件…');
+    fetch(path).then((resp) => {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status + '：' + path);
+      return resp.text();
+    }).then((text) => {
+      const pts = [];
+      for (const line of text.split(/\r?\n/)) {
+        if (line.trim() === 'EOP') break;
+        const tok = line.trim().split(/\s+/);
+        if (tok.length !== 3) continue;
+        const x = parseFloat(tok[0]);
+        const y = parseFloat(tok[1]);
+        if (Number.isNaN(x) || Number.isNaN(y)) continue;
+        pts.push({ x, y, yaw: parseFloat(tok[2]) || 0 });
+      }
+      if (!pts.length) throw new Error('文件里没有有效路径点（每行应为 "x y yaw"）');
+      pfFilePath = pts;
+      setPfStatus('文件预览 ' + pts.length + ' 点 · ' + pfLength(pts).toFixed(2) + ' m');
+      addPfLog('已加载包内路径文件预览（' + pts.length + ' 点）');
+      updatePfMetrics();
+      pfRedraw();
+    }).catch((err) => {
+      setPfStatus('加载失败：' + ((err && err.message) || err) +
+        '（wheeltec_dashboard 重编译启用 /pkg/ 路由了吗？文件在包 share 的 path/ 里吗？）');
+    });
+  }
+
+  const pfApply = $('pf-apply');
+  if (pfApply) pfApply.addEventListener('click', () => {
+    if (!ros) { setPfStatus('未连接 rosbridge'); return; }
+    pfPath = [];
+    pfPathTime = 0;
+    subscribePathFollow();
+    updatePfMetrics();
+    pfRedraw();
+    setPfStatus('已重新订阅 ' + ((($('pf-topic') || {}).value) || '/followpath'));
+  });
+  const pfFileLoad = $('pf-file-load');
+  if (pfFileLoad) pfFileLoad.addEventListener('click', pfLoadFile);
+  const pfClear = $('pf-clear');
+  if (pfClear) pfClear.addEventListener('click', () => {
+    pfPath = [];
+    pfFilePath = [];
+    pfPathTime = 0;
+    updatePfMetrics();
+    pfRedraw();
+    setPfStatus('');
+  });
+
+  // 回放前的辅助：把车先 Nav2 到路径起点（follow_path.py 自己也会先去起点，
+  // 这里只是手动预摆位/单独导航用），直发 /goal_pose，有二次确认。
+  const pfGotoStart = $('pf-goto-start');
+  if (pfGotoStart) pfGotoStart.addEventListener('click', () => {
+    const pts = pfActivePath();
+    if (!pts.length) { setCardMsg('pf-msg', '当前没有路径（先收到 /followpath 或加载文件预览）'); return; }
+    if (!goalPosePub) { setCardMsg('pf-msg', '未连接 rosbridge'); return; }
+    const p0 = pts[0];
+    if (!window.confirm('导航到路径起点 (x=' + p0.x.toFixed(2) + ', y=' + p0.y.toFixed(2) +
+        ')？小车将开始移动（需 Nav2 已启动并定位）。')) return;
+    const yaw = +(p0.yaw || 0);
+    goalPosePub.publish(new ROSLIB.Message({
+      header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
+      pose: {
+        position: { x: p0.x, y: p0.y, z: 0 },
+        orientation: { x: 0, y: 0, z: Math.sin(yaw / 2), w: Math.cos(yaw / 2) },
+      },
+    }));
+    setCardMsg('pf-msg', '已发布 /goal_pose → 路径起点');
+    addPfLog('> 导航到路径起点 x=' + p0.x.toFixed(2) + ' y=' + p0.y.toFixed(2));
+  });
+  const pfLogClear = $('pf-log-clear');
+  if (pfLogClear) pfLogClear.addEventListener('click', () => {
+    const v = $('pf-log');
+    if (v) v.innerHTML = '';
   });
 
   // ---------- 机械臂 (Lebai LM3: lebai_driver + grab_demo) ----------
