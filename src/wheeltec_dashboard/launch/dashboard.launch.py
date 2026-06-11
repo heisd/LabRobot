@@ -30,6 +30,9 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             'enable_video', default_value='true',
             description='Start web_video_server alongside the dashboard'),
+        DeclareLaunchArgument(
+            'enable_watchdog', default_value='true',
+            description='Start sensor_watchdog (相机/雷达/IMU/下位机 在线监控 + 串口设备表)'),
 
         Node(
             package='rosbridge_server',
@@ -58,5 +61,14 @@ def generate_launch_description() -> LaunchDescription:
                 'port': video_port,
                 'address': address,
             }],
+        ),
+        # 传感器在线监控: 上/掉线日志进 /rosout, 在线状态+串口设备表发
+        # sensor_watchdog/status 供面板"传感器与串口设备"卡渲染。
+        Node(
+            package='wheeltec_dashboard',
+            executable='sensor_watchdog',
+            name='sensor_watchdog',
+            output='screen',
+            condition=IfCondition(LaunchConfiguration('enable_watchdog')),
         ),
     ])

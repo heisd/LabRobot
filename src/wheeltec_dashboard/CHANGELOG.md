@@ -6,6 +6,63 @@
 
 ---
 
+## 第 12 轮 — 传感器在线监控（连接/掉线日志 + 绿红灯墙 + 串口设备表）
+
+### 背景
+
+各厂商驱动对"设备打不开/拔线"的报错口径不一（有的只打一次、有的不打）。
+新增统一的**传感器看门狗**：连接时打 INFO、不在线打 ERROR"设备不在线"，
+并在面板上给每个传感器模块亮绿/红灯、显示已连接设备的 ID 与占用串口。
+
+### 新增 sensor_watchdog 节点（wheeltec_dashboard 包，随 dashboard launch 自动启动）
+
+- **判活口径**：订阅每个传感器的关键数据话题，"话题有数据 = 设备在线"
+  （与各状态卡同思路，落成 /rosout 日志）。默认监控 7 项：
+  车载相机(/camera/color/image_raw)、雷达1(/scan1)、雷达2(/scan2)、
+  IMU(/imu/data_raw)、**下位机STM32**(/PowerVoltage 串口遥测)、
+  **Lebai机械臂**(/robot_status，以太网)、机械臂相机(/camera_arm/...)；
+  `sensors` 参数可增删（`标签|话题|消息类型|超时秒`）。
+- **日志策略**：首次收到数据 INFO"已上线"；断流超时或启动宽限期
+  （10s）后仍无数据 → ERROR"设备不在线 —— 检查供电/USB·串口连线/驱动"，
+  持续离线每 30s 重复提醒；恢复 INFO"恢复在线"。
+- **串口设备表**：扫描 `/dev/wheeltec_*`、`/dev/lebai*` udev 别名
+  （realpath → 实际占用串口号）与 `/dev/serial/by-id/*`（文件名即
+  厂商_产品_序列号的 USB 设备 ID），5s 一扫——设备拔掉符号链接即消失，
+  表内容天然只含"当前已连接"的设备。
+- 状态以 JSON 发布到 `sensor_watchdog/status`（1Hz）：
+  `{sensors:[{label,topic,online,age}], devices:[{alias,port,usb_id}]}`。
+- 订阅细节：sensor-data QoS（BEST_EFFORT 兼容相机/雷达发布者）+
+  `raw=True`（不反序列化，监控大图像话题零开销）；消息类型加载失败
+  （如未装 lebai_interfaces）只跳过该项不影响其余。
+
+### Dashboard 新卡"传感器在线状态与串口设备"（组件状态页顶部）
+
+- **指示灯墙**：每个传感器一块灯牌——**绿灯=在线、红灯=不在线、
+  灰灯=启动宽限期内暂无数据**（悬停显示话题名）；watchdog 节点本身
+  断流 5s 灯回灰并提示。
+- **串口设备表**：udev 别名 · 占用串口号 · USB 设备 ID 三列，
+  随插拔实时增减。
+
+### 文件改动汇总（第 12 轮）
+
+| 文件 | 变化 |
+| --- | --- |
+| `wheeltec_dashboard/sensor_watchdog.py` | 新增看门狗节点 |
+| `setup.py` / `package.xml` / `launch/dashboard.launch.py` | 入口、依赖、enable_watchdog |
+| `web/index.html` | 传感器在线状态与串口设备卡 |
+| `web/app.js` | /sensor_watchdog/status 渲染 + 断流回灰 |
+| `web/style.css` | `.sw-*` 灯牌/设备表样式 |
+
+### 验证清单
+
+- [ ] 重编译 `colcon build --packages-select wheeltec_dashboard` 后启动 dashboard launch：组件状态页顶部出现灯墙；已启动的传感器绿灯，未启动的 10s 后红灯且 /rosout 出现 ERROR"设备不在线"（30s 重复）。
+- [ ] 拔掉雷达 USB：≤4s 红灯 + ERROR；插回后驱动恢复发布 → 绿灯 + INFO"恢复在线"；串口设备表中对应行消失/重现。
+- [ ] 设备表能看到 wheeltec_controller / wheeltec_laser / wheeltec_mic 等别名各自占用的 ttyUSB/ttyACM 端口与 USB 设备 ID。
+- [ ] 启动 lebai_driver 后"Lebai机械臂"绿灯；停掉 3s 后红灯。
+- [ ] 停掉 sensor_watchdog：5s 后灯全部回灰并提示节点断流。
+
+---
+
 ## 第 11 轮 — KCF / 巡线 / YOLO 接入导航仲裁（手动 > 功能模块 > Nav2/VLA）
 
 ### 背景

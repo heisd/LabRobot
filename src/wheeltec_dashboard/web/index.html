@@ -158,6 +158,19 @@
 
     <!-- ============ 各组件状态 ============ -->
     <div class="tab-panel" id="panel-components">
+      <section class="card card-wide">
+        <h2>传感器在线状态与串口设备 <span class="muted">(sensor_watchdog)</span></h2>
+        <div id="sw-sensors" class="sw-grid">
+          <span class="muted">等待 sensor_watchdog 数据…（随 dashboard launch 启动，需重编译 wheeltec_dashboard）</span>
+        </div>
+        <div class="vla-timeline-head">
+          <span>已连接的串口设备（udev 别名 · 占用串口 · USB 设备 ID）</span>
+          <span id="sw-dev-count" class="muted"></span>
+        </div>
+        <div id="sw-devices" class="sw-devices"></div>
+        <p class="hint">由 <code>sensor_watchdog</code> 节点（随 dashboard launch 自动启动）以"话题有数据 = 设备在线"统一判活：<strong>绿灯=在线、红灯=不在线、灰灯=启动宽限期内暂无数据</strong>。上线/掉线/持续离线都会向 <code>/rosout</code> 打日志（INFO"已上线" / ERROR"设备不在线"，离线每 30s 重复提醒）——日志面板按 <code>sensor_watchdog</code> 过滤即可看到。默认监控：车载相机 / 雷达1 / 雷达2 / IMU / <strong>下位机 STM32</strong>（串口遥测 /PowerVoltage）/ <strong>Lebai 机械臂</strong>（/robot_status，走以太网不占串口）/ 机械臂相机。串口设备表来自 <code>/dev/wheeltec_*</code> udev 别名与 <code>/dev/serial/by-id</code>（含厂商/产品/序列号的 USB 设备 ID），<strong>拔掉即从表中消失</strong>，只显示当前连接的设备。监控项可用 <code>sensors</code> 参数增删（格式 <code>标签|话题|消息类型|超时秒</code>）。</p>
+      </section>
+
       <section class="card">
         <h2>雷达 <span class="muted">(double_lidar_fusion)</span></h2>
         <div class="lidar-cfg">

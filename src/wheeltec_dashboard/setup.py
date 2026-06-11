@@ -27,6 +27,7 @@ setup(
     entry_points={
         'console_scripts': [
             'web_server = wheeltec_dashboard.web_server:main',
+            'sensor_watchdog = wheeltec_dashboard.sensor_watchdog:main',
         ],
     },
 )

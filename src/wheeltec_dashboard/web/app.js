@@ -238,6 +238,14 @@
     sub('/self_check_data', 'std_msgs/msg/UInt32', (msg) => {
       $('m-selfcheck').textContent = '0x' + msg.data.toString(16).toUpperCase();
     });
+    // 传感器在线监控（sensor_watchdog）：各传感器绿/红灯 + 串口设备表。
+    sub('/sensor_watchdog/status', 'std_msgs/msg/String', (msg) => {
+      let obj = null;
+      try { obj = JSON.parse(msg.data || '{}'); } catch (_) { return; }
+      swTime = Date.now();
+      renderSensorWatchdog(obj);
+    }, { throttle_rate: 500 });
+
     // 下位机使能位（24字节帧 rx[1]）：固件真实的"允许移动"信号。
     // 需重编译 turn_on_wheeltec_robot 才有此话题，没有时指标保持 "—"。
     sub('/robot_enable_flag', 'std_msgs/msg/Bool', (msg) => {
@@ -1618,6 +1626,53 @@
     const v = $('vla-timeline');
     if (v) v.innerHTML = '';
   });
+
+  // ---------- 传感器在线监控 (sensor_watchdog) ----------
+  // 各传感器模块"绿灯=在线 / 红灯=不在线 / 灰灯=暂无数据"，外加上位机
+  // 当前连接的串口设备表（udev 别名 · 占用串口 · USB 设备 ID）。
+  let swTime = 0;   // 最近一次 /sensor_watchdog/status 到达时间
+
+  function renderSensorWatchdog(obj) {
+    const view = $('sw-sensors');
+    if (view) {
+      const sensors = (obj && obj.sensors) || [];
+      view.innerHTML = sensors.map((s) => {
+        const cls = s.online === true ? 'on' : (s.online === false ? 'off' : '');
+        const state = s.online === true ? '在线' : (s.online === false ? '不在线' : '暂无数据');
+        return `<div class="sw-tile" title="${escapeHTML(s.topic || '')}">` +
+          `<span class="sw-dot ${cls}"></span>` +
+          `<span class="sw-label">${escapeHTML(s.label || '?')}</span>` +
+          `<span class="sw-state ${cls}">${state}</span></div>`;
+      }).join('') || '<span class="muted">（watchdog 未配置任何监控项）</span>';
+    }
+    const dev = $('sw-devices');
+    if (dev) {
+      const devices = (obj && obj.devices) || [];
+      const cnt = $('sw-dev-count');
+      if (cnt) cnt.textContent = devices.length + ' 个';
+      dev.innerHTML = devices.map((d) =>
+        `<div class="sw-row">` +
+        `<span class="sw-alias">${escapeHTML(d.alias || '（无别名）')}</span>` +
+        `<span class="sw-port">${escapeHTML(d.port || '—')}</span>` +
+        `<span class="sw-usbid" title="${escapeHTML(d.usb_id || '')}">${escapeHTML(d.usb_id || '—')}</span></div>`
+      ).join('') || '<div class="muted">（未发现串口设备）</div>';
+    }
+  }
+
+  // watchdog 节点本身断流（未启动/未重编译）时灯全部回灰并提示。
+  setInterval(() => {
+    if (!swTime || Date.now() - swTime < 5000) return;
+    swTime = 0;
+    const view = $('sw-sensors');
+    if (view) {
+      view.querySelectorAll('.sw-dot, .sw-state').forEach((el) => {
+        el.classList.remove('on', 'off');
+      });
+      view.querySelectorAll('.sw-state').forEach((el) => { el.textContent = '未知'; });
+      view.insertAdjacentHTML('beforeend',
+        '<span class="muted">（sensor_watchdog 数据中断——节点是否在跑？）</span>');
+    }
+  }, 2000);
 
   // ---------- 下位机 STM32F407 (turn_on_wheeltec_robot · serial) ----------
   // /odom、/PowerVoltage 等话题只有串口帧校验通过才发布（wheeltec_robot.cpp

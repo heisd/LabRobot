@@ -1392,3 +1392,70 @@ main {
 }
 .voice-tip-row button:hover { border-color: var(--accent); color: var(--accent); }
 .err-text { color: var(--err); }
+
+/* 传感器在线监控: 绿/红/灰指示灯墙 + 串口设备表 */
+.sw-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.sw-tile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 12px;
+}
+.sw-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+  box-shadow: 0 0 0 0 transparent;
+}
+.sw-dot.on {
+  background: var(--ok);
+  box-shadow: 0 0 6px rgba(63, 185, 80, 0.8);
+}
+.sw-dot.off {
+  background: var(--err);
+  box-shadow: 0 0 6px rgba(248, 81, 73, 0.8);
+}
+.sw-label { font-weight: 600; font-size: 13px; }
+.sw-state { font-size: 12px; color: var(--muted); }
+.sw-state.on { color: var(--ok); }
+.sw-state.off { color: var(--err); }
+.sw-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.sw-row {
+  display: grid;
+  grid-template-columns: 180px 150px 1fr;
+  gap: 10px;
+  align-items: center;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.sw-alias { font-weight: 600; }
+.sw-port { font-variant-numeric: tabular-nums; color: var(--accent); }
+.sw-usbid {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (max-width: 640px) {
+  .sw-row { grid-template-columns: 1fr; gap: 2px; }
+}
