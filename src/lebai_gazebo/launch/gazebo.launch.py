@@ -6,16 +6,19 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
-
+from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     pkg = get_package_share_directory('lebai_gazebo')
     xacro_file = os.path.join(pkg, 'urdf', 'lm3_gazebo.xacro')
     world = os.path.join(pkg, 'worlds', 'grab_world.world')
-
+    
     # 用 xacro 实时展开机器人描述
-    robot_description = {'robot_description': Command(['xacro ', xacro_file])}
-
+    robot_description = {
+    'robot_description': ParameterValue(
+        Command(['xacro ', xacro_file]),
+        value_type=str
+    )
     # 启动 Gazebo Classic(含 GUI) + 我们的世界
     gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
