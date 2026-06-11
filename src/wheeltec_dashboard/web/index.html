@@ -96,7 +96,7 @@
         <h2>3D 视图 <span class="muted">(three.js · 雷达 · 机器人模型 · SLAM 地图)</span></h2>
         <div class="viewer-controls">
           <label>Fixed frame
-            <input id="vw-fixed" type="text" value="odom" />
+            <input id="vw-fixed" type="text" value="odom_combined" />
           </label>
           <label>/scan
             <input id="vw-scan" type="text" value="/scan" />
@@ -114,7 +114,7 @@
         </div>
         <div id="viewer" class="viewer"></div>
         <div id="viewer-status" class="viewer-status"></div>
-        <p class="hint">图层：Grid / 坐标轴 / LaserScan(<code>/scan</code>) / Odom 轨迹 / <strong>机器人模型(URDF)</strong> / <strong>SLAM 地图(/map)</strong>。TF 直接订阅 <code>/tf</code>+<code>/tf_static</code>，无需 tf2_web_republisher。<strong>机器人模型</strong>：经 rosbridge 调 URDF 节点的 <code>get_parameters</code> 取已展开的 <code>robot_description</code>，浏览器解析后按每个 link 的实时 TF 摆放；网格文件（STL/DAE）由面板 HTTP 服务的 <code>/pkg/&lt;包名&gt;/…</code> 路由提供（重编译 wheeltec_dashboard 生效）。机械臂模型若由独立的 robot_state_publisher 发布，在"URDF 节点"里用逗号补上其节点名即可。<strong>SLAM 地图</strong>：复用 VLA 子页的 <code>/map</code> 数据（map_server GetMap + SLAM 实时刷新），按 map→fixed frame 的 TF 铺在地面——建图时 fixed frame 填 <code>map</code> 看图最直观；未定位（无 map TF）时地图层自动隐藏。</p>
+        <p class="hint">图层：Grid / 坐标轴 / LaserScan(<code>/scan</code>) / Odom 轨迹 / <strong>机器人模型(URDF)</strong> / <strong>SLAM 地图(/map)</strong>。TF 直接订阅 <code>/tf</code>+<code>/tf_static</code>，无需 tf2_web_republisher。<strong>机器人模型</strong>：经 rosbridge 调 URDF 节点的 <code>get_parameters</code> 取已展开的 <code>robot_description</code>，浏览器解析后按每个 link 的实时 TF 摆放；网格文件（STL/DAE）由面板 HTTP 服务的 <code>/pkg/&lt;包名&gt;/…</code> 路由提供（重编译 wheeltec_dashboard 生效）。机械臂模型若由独立的 robot_state_publisher 发布，在"URDF 节点"里用逗号补上其节点名即可。<strong>SLAM 地图</strong>：复用 VLA 子页的 <code>/map</code> 数据（map_server GetMap + SLAM 实时刷新），按 map→fixed frame 的 TF 铺在地面——建图时 fixed frame 填 <code>map</code> 看图最直观；未定位（无 map TF）时地图层自动隐藏。<strong>注意</strong>：<code>/odom</code> 只是<em>话题</em>名——底盘 TF 树的根是 EKF 发布的 <code>odom_combined</code>（<code>odom_combined→base_footprint→base_link→…</code>），所以 Fixed frame 要填 <code>odom_combined</code> 而不是 <code>odom</code>；填错或底盘（EKF）没启动时，下方状态栏会提示当前 TF 树根，且模型会临时以机器人自身根坐标系显示。</p>
       </section>
 
       <section class="card">
@@ -161,6 +161,35 @@
           <div class="chart-wrap"><canvas id="chart-voltage"></canvas></div>
           <div class="chart-wrap"><canvas id="chart-cmdvel"></canvas></div>
         </div>
+      </section>
+
+      <section class="card">
+        <h2>相机原始流 <span class="muted">(web_video_server MJPEG)</span></h2>
+        <div class="cam-grid">
+          <div class="cam-tile">
+            <div class="cam-head">
+              <span>车上相机</span>
+              <input class="fn-topic" data-img="ov-cam-car" type="text" value="/camera/color/image_raw" />
+              <button class="fn-reload" data-img="ov-cam-car">刷新</button>
+            </div>
+            <div class="cam-frame">
+              <img id="ov-cam-car" class="cam-img fn-img" data-topic="/camera/color/image_raw" src="placeholder.svg" alt="car camera raw" />
+              <div class="cam-err" hidden>无法加载流</div>
+            </div>
+          </div>
+          <div class="cam-tile">
+            <div class="cam-head">
+              <span>机械臂相机</span>
+              <input class="fn-topic" data-img="ov-cam-arm" type="text" value="/camera_arm/color/image_raw" />
+              <button class="fn-reload" data-img="ov-cam-arm">刷新</button>
+            </div>
+            <div class="cam-frame">
+              <img id="ov-cam-arm" class="cam-img fn-img" data-topic="/camera_arm/color/image_raw" src="placeholder.svg" alt="arm camera raw" />
+              <div class="cam-err" hidden>无法加载流</div>
+            </div>
+          </div>
+        </div>
+        <p class="hint">两路相机的原始画面（车上 <code>/camera/color/image_raw</code> · 机械臂 <code>/camera_arm/color/image_raw</code>），与"组件状态"页共用 web_video_server 端口/画质设置（默认 :8081）。</p>
       </section>
     </div>
 

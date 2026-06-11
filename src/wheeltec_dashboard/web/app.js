@@ -1052,6 +1052,27 @@
         if (a.root !== b.root) return null;
         return tfCompose(tfInverse(b.pose), a.pose);
       },
+      // frame 在它自己所属 TF 树根下的位姿（fixed frame 与机器人树不连通时
+      // 的兜底显示用）。frame 自己就是树根（只当过 parent）时返回原点位姿；
+      // 完全不在 /tf 里时返回 null。
+      lookupInOwnRoot(frame) {
+        const f = norm(frame);
+        if (edges[f]) {
+          const a = toRoot(f);
+          return { root: a.root, pose: a.pose };
+        }
+        for (const k in edges) {
+          if (edges[k].parent === f) return { root: f, pose: TF_IDENTITY };
+        }
+        return null;
+      },
+      // 当前收到的所有 TF 树根（odom_combined / map / 未连底盘时的
+      // base_footprint 等），用于状态栏提示用户该填什么 fixed frame。
+      roots() {
+        const set = new Set();
+        for (const k in edges) set.add(toRoot(k).root);
+        return Array.from(set).sort();
+      },
       dispose() {
         subsList.forEach((t) => { try { t.unsubscribe(); } catch (_) { /* ignore */ } });
         subsList.length = 0;
@@ -1242,16 +1263,39 @@
     }, (err) => setViewerStatus('URDF 获取失败 (' + nodeName + '): ' + err +
       '（robot_state_publisher 是否在跑？）'));
 
-    // 每 100ms 按 TF 摆放各 link（robot_state_publisher 已发布全部 link 的 TF）
+    // 每 100ms 按 TF 摆放各 link（robot_state_publisher 已发布全部 link 的 TF）。
+    // fixed frame 与机器人 TF 树不连通（fixed frame 填错 / 底盘 EKF 没启动）时
+    // 不再整车隐藏：兜底以机器人自身树根为原点显示，并在状态栏说明原因。
+    let fellBack = false;
     const timer = setInterval(() => {
       if (!tfClient) return;
+      let connected = false;
+      let fallbackRoot = '';
       linkGroups.forEach((grp, name) => {
-        const tf = tfClient.lookup(name);
+        let tf = tfClient.lookup(name);
+        if (tf) {
+          connected = true;
+        } else {
+          const own = tfClient.lookupInOwnRoot(name);
+          if (own) { tf = own.pose; fallbackRoot = own.root; }
+        }
         if (!tf) { grp.visible = false; return; }
         grp.visible = true;
         grp.position.set(tf.translation.x, tf.translation.y, tf.translation.z);
         grp.quaternion.set(tf.rotation.x, tf.rotation.y, tf.rotation.z, tf.rotation.w);
       });
+      if (!connected && fallbackRoot) {
+        if (!fellBack) {
+          fellBack = true;
+          setViewerStatus('URDF(' + nodeName + '): fixed frame "' + tfClient.fixedFrame +
+            '" 与机器人 TF 树不连通（机器人树根: ' + fallbackRoot + '）——模型暂以 ' +
+            fallbackRoot + ' 为原点显示。当前 TF 根: ' + tfClient.roots().join(', ') +
+            '；底盘正常时应把 Fixed frame 填为 odom_combined（EKF 发布），并确认底盘 launch 已启动');
+        }
+      } else if (fellBack && connected) {
+        fellBack = false;
+        setViewerStatus('');
+      }
     }, 100);
 
     return {
@@ -1410,7 +1454,7 @@
     buildViewer();
     disposeLayers();
 
-    const fixedFrame = $('vw-fixed').value.trim() || 'odom';
+    const fixedFrame = $('vw-fixed').value.trim() || 'odom_combined';
     const scanTopic = $('vw-scan').value.trim();
     const odomTopic = $('vw-odom').value.trim();
 
@@ -1418,17 +1462,24 @@
     tfClient = makeTfClient(ros, fixedFrame);
 
     // Warn if the chosen fixed frame never shows up in /tf — without it the
-    // scan / odom layers can't be placed and the view stays empty.
+    // scan / odom layers can't be placed and the view stays empty. 常驻检测：
+    // 后启动底盘（EKF）时提示自动消失；提示里列出当前 TF 树根，便于发现
+    // odom / odom_combined 这类填错的 fixed frame。URDF 层的兜底提示更具体，
+    // 不覆盖它。
     setViewerStatus(`等待 frame "${fixedFrame}" …`);
     let waited = 0;
     const statusTimer = setInterval(() => {
       waited += 500;
+      const cur = (($('viewer-status') || {}).textContent) || '';
+      const mine = !cur || cur.indexOf('等待 frame') === 0 || cur.indexOf('未收到 frame') === 0;
       if (tfClient && tfClient.knows(fixedFrame)) {
-        setViewerStatus('');
-        clearInterval(statusTimer);
-      } else if (waited >= 5000) {
-        setViewerStatus(`未收到 frame "${fixedFrame}" 的 TF — 检查 robot_state_publisher / EKF 是否启动`);
-        clearInterval(statusTimer);
+        if (mine && cur) setViewerStatus('');
+      } else if (waited >= 5000 && mine) {
+        const roots = tfClient ? tfClient.roots() : [];
+        setViewerStatus(`未收到 frame "${fixedFrame}" 的 TF` +
+          (roots.length
+            ? `——当前 TF 树根: ${roots.join(', ')}（Fixed frame 填其中之一即可；底盘的根是 EKF 发布的 odom_combined）`
+            : ' — 检查底盘 launch（EKF）/ robot_state_publisher 是否启动'));
       }
     }, 500);
     viewerLayers.push({ dispose() { clearInterval(statusTimer); } });
@@ -1638,6 +1689,8 @@
   if (camBase) camBase.addEventListener('change', applyAllFnStreams);
   // Kick the default-visible sub-page's stream(s) now; others start on switch.
   document.querySelectorAll('#subpanel-line .fn-img').forEach(applyFnStream);
+  // 首页（系统总览）默认可见，其"相机原始流"卡片也立即拉流。
+  kickVisibleFnStreams($('panel-overview'));
 
   // ---------- Lidar status (double_lidar_fusion) ----------
   const LIDAR_SRC = [
