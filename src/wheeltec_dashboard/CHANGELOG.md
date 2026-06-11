@@ -6,6 +6,60 @@
 
 ---
 
+## 第 13 轮 — 3D 视图加载机器人模型（URDF）与 SLAM 地图
+
+### 背景
+
+第 3 轮因 ros3djs/THREE 版本冲突重写 3D 视图时，URDF 与 /map 两个图层被
+一并移除——此前面板**不能**显示机器人模型。本轮在纯 three.js 栈上重做，
+不再引入 ros3djs（只加同版本 three 的 STLLoader/ColladaLoader）。
+
+### 机器人模型（URDF）图层
+
+- **取模型**：经 rosbridge 调 `<URDF节点>/get_parameters` 读
+  `robot_description`（xacro 在 launch 时已展开成纯 URDF，浏览器零 xacro
+  依赖）；解决了 /robot_description 话题 transient_local 经 rosbridge
+  收不到的问题。
+- **解析**：浏览器 DOMParser 解析 link/visual：box/cylinder（URDF 沿 Z、
+  THREE 沿 Y，已转轴）/sphere/mesh，visual origin 的 rpy 按固定轴 XYZ
+  （THREE 'ZYX' 内旋序）转四元数；命名材质/内联 color 都支持。
+- **网格文件**：web_server 新增 `/pkg/<包名>/<相对路径>` 路由——把
+  `package://rm_description/meshes/x.STL` 映射到 ament share 实际文件
+  （含目录穿越防护，已离线单测）。STL 用 STLLoader、DAE 用 ColladaLoader。
+- **摆放**：不做关节运动学——robot_state_publisher 已把所有 link 发进
+  /tf，每 100ms 用既有 tfClient.lookup(link) 设置位姿，TF 缺失的 link
+  自动隐藏。底盘（rm_description s300_pro）与机械臂可在"URDF 节点"
+  输入框逗号并列各自的 robot_state_publisher。
+- 场景补了 Ambient + Directional 光源（受光材质需要）。
+
+### SLAM 地图（/map）图层
+
+- 复用 VLA 子页维护的全局地图数据（GetMap 服务 + /map 话题、预翻转位图），
+  以 CanvasTexture 铺成地面平面（半透明、垫底渲染），中心点经
+  map→fixed frame 的 TF 对齐——AMCL 修正、SLAM 建图实时更新都跟随；
+  未定位（无 map TF）时自动隐藏。建图时 fixed frame 填 `map` 观感最佳。
+- 工具栏新增"机器人模型 / SLAM 地图"开关（即时生效）与"URDF 节点"输入。
+
+### 文件改动汇总（第 13 轮）
+
+| 文件 | 变化 |
+| --- | --- |
+| `wheeltec_dashboard/web_server.py` | `/pkg/` ament share 路由（防穿越） |
+| `web/index.html` | STL/Collada 加载器、URDF/地图控件、hint |
+| `web/app.js` | makeUrdfLayer / makeViewerMapLayer / 光源 / rebuild 接线 |
+| `web/style.css` | `.vw-check` |
+| `README.md` | 3D 视图描述更新 |
+
+### 验证清单
+
+- [ ] 重编译 wheeltec_dashboard 并重启 dashboard launch 后：底盘驱动（含 robot_state_publisher）在跑时，3D 视图出现 S300 车体模型并随小车移动转向。
+- [ ] `curl http://<host>:8080/pkg/rm_description/meshes/rm_eco65_arm/Link1.STL -o /dev/null -w '%{http_code}'` 返回 200；`/pkg/rm_description/../etc/passwd` 返回 404。
+- [ ] 启动 Nav2（或 SLAM）后勾选"SLAM 地图"：地图铺在地面且与雷达点云对齐；fixed frame 改 `map` 后机器人在地图内正确位置。
+- [ ] 机械臂的 robot_state_publisher 节点名加入"URDF 节点"后，机械臂模型出现并随关节动（lebai TF 树需与 fixed frame 连通，否则该模型隐藏）。
+- [ ] 取消勾选两个开关：模型/地图即时消失，雷达层不受影响。
+
+---
+
 ## 第 12 轮 — 传感器在线监控（连接/掉线日志 + 绿红灯墙 + 串口设备表）
 
 ### 背景

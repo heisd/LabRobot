@@ -10,6 +10,9 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.118.3/build/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.118.3/examples/js/controls/OrbitControls.js"></script>
+  <!-- URDF 机器人模型的网格加载器（与 three 同版本，避免再踩 ros3djs 的版本冲突） -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.118.3/examples/js/loaders/STLLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.118.3/examples/js/loaders/ColladaLoader.js"></script>
 </head>
 <body>
   <div class="topbar">
@@ -90,7 +93,7 @@
       </section>
 
       <section class="card card-wide">
-        <h2>3D 视图 <span class="muted">(three.js · 雷达)</span></h2>
+        <h2>3D 视图 <span class="muted">(three.js · 雷达 · 机器人模型 · SLAM 地图)</span></h2>
         <div class="viewer-controls">
           <label>Fixed frame
             <input id="vw-fixed" type="text" value="odom_combined" />
@@ -101,12 +104,17 @@
           <label>/odom
             <input id="vw-odom" type="text" value="/odom" />
           </label>
+          <label>URDF 节点（可逗号分隔多个）
+            <input id="vw-urdf" type="text" value="/robot_state_publisher" />
+          </label>
+          <label class="vw-check"><input id="vw-show-urdf" type="checkbox" checked /> 机器人模型</label>
+          <label class="vw-check"><input id="vw-show-map" type="checkbox" checked /> SLAM 地图</label>
           <button id="vw-apply">应用</button>
           <button id="vw-clear-path">清空轨迹</button>
         </div>
         <div id="viewer" class="viewer"></div>
         <div id="viewer-status" class="viewer-status"></div>
-        <p class="hint">图层：Grid / 坐标轴 / LaserScan(<code>/scan</code>) / Odom 轨迹。TF 直接订阅 <code>/tf</code>+<code>/tf_static</code>，无需 tf2_web_republisher。融合输出 <code>/scan</code> 来自 double_lidar_fusion；单台故障时可把 <code>/scan</code> 改成 <code>/scan1</code> 或 <code>/scan2</code> 看单雷达。</p>
+        <p class="hint">图层：Grid / 坐标轴 / LaserScan(<code>/scan</code>) / Odom 轨迹 / <strong>机器人模型(URDF)</strong> / <strong>SLAM 地图(/map)</strong>。TF 直接订阅 <code>/tf</code>+<code>/tf_static</code>，无需 tf2_web_republisher。<strong>机器人模型</strong>：经 rosbridge 调 URDF 节点的 <code>get_parameters</code> 取已展开的 <code>robot_description</code>，浏览器解析后按每个 link 的实时 TF 摆放；网格文件（STL/DAE）由面板 HTTP 服务的 <code>/pkg/&lt;包名&gt;/…</code> 路由提供（重编译 wheeltec_dashboard 生效）。机械臂模型若由独立的 robot_state_publisher 发布，在"URDF 节点"里用逗号补上其节点名即可。<strong>SLAM 地图</strong>：复用 VLA 子页的 <code>/map</code> 数据（map_server GetMap + SLAM 实时刷新），按 map→fixed frame 的 TF 铺在地面——建图时 fixed frame 填 <code>map</code> 看图最直观；未定位（无 map TF）时地图层自动隐藏。</p>
       </section>
 
       <section class="card">

@@ -1459,3 +1459,14 @@ main {
 @media (max-width: 640px) {
   .sw-row { grid-template-columns: 1fr; gap: 2px; }
 }
+
+/* 3D 视图: 机器人模型 / SLAM 地图 开关 */
+.viewer-controls .vw-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-end;
+  padding-bottom: 6px;
+  white-space: nowrap;
+}
+.viewer-controls .vw-check input { width: auto; padding: 0; }

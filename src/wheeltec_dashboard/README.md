@@ -138,9 +138,16 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
   `/wheeltec_robot` 上的 `odom_x_scale`、`odom_y_scale`、
   `odom_z_scale_positive`、`odom_z_scale_negative`
 - 折线图：电压、cmd_vel (vx / wz)
-- **3D 视图（嵌入式 RViz 替代）**：基于 ros3djs，支持 Grid、TF、LaserScan
-  (`/scan`)、OccupancyGrid (`/map`)、Odometry 轨迹。Fixed frame 默认
-  `odom_combined`。URDF 加载在 ROS 2 + rosbridge 下为实验功能，建议留空。
+- **3D 视图（嵌入式 RViz 替代）**：原生 three.js + 浏览器端 TF（直接订阅
+  `/tf`+`/tf_static`），图层：Grid、LaserScan(`/scan`)、Odometry 轨迹、
+  **机器人模型（URDF）**、**SLAM 地图（/map）**。Fixed frame 默认
+  `odom_combined`。机器人模型经 rosbridge 取 `robot_state_publisher` 的
+  `robot_description`（xacro 已展开），浏览器自解析 link/visual
+  （box/cylinder/sphere/STL/DAE），网格由 web_server 新增的
+  `/pkg/<包名>/<路径>` 路由从 ament share 提供，每个 link 按实时 TF 摆放
+  （无需关节运动学）；多个 robot_state_publisher（底盘+机械臂）可逗号并列。
+  SLAM 地图复用 VLA 子页的 `/map` 数据铺为地面贴图，按 map→fixed TF 对齐，
+  未定位时自动隐藏。
 - **相机预览**：launch 同时拉起 `web_video_server`，dashboard 通过
   MJPEG 同时显示两路相机——默认车上 `/camera/color/image_raw` 与机械臂
   `/camera_arm/color/image_raw`，话题/画质/端口可编辑。深度流把 topic

@@ -1106,6 +1106,215 @@
     };
   }
 
+  // ---- 机器人模型 (URDF) 图层 ----
+  // 经 rosbridge 调 <node>/get_parameters 取已展开的 robot_description（xacro
+  // 在 launch 时已处理），浏览器 DOMParser 解析 link/visual。每个 link 的位姿
+  // 不做关节运动学——robot_state_publisher 已把所有 link 发进 /tf，直接用
+  // 既有的 tfClient.lookup(link) 摆放。网格经 web_server 的 /pkg/ 路由加载。
+  function urdfRpyToQuat(rpyStr) {
+    const p = String(rpyStr || '0 0 0').trim().split(/\s+/).map(Number);
+    // URDF rpy 是固定轴 XYZ（R = Rz·Ry·Rx），对应 THREE 内旋序 'ZYX'
+    return new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(p[0] || 0, p[1] || 0, p[2] || 0, 'ZYX'));
+  }
+  function urdfVec(str, def) {
+    const p = String(str || '').trim().split(/\s+/).map(Number);
+    return [p[0] || def, p[1] || def, p[2] || def];
+  }
+  function meshUrlFromPackageUri(uri) {
+    const m = /^package:\/\/([^/]+)\/(.+)$/.exec((uri || '').trim());
+    return m ? '/pkg/' + m[1] + '/' + m[2] : null;
+  }
+
+  function makeUrdfLayer(nodeName) {
+    let disposed = false;
+    const linkGroups = new Map();   // link 名 -> THREE.Group
+    const disposables = [];         // geometry/material 待释放
+
+    function materialFor(colorArr) {
+      const c = colorArr || [0.55, 0.6, 0.66, 1];
+      const mat = new THREE.MeshLambertMaterial({
+        color: new THREE.Color(c[0], c[1], c[2]),
+        transparent: c[3] < 0.99,
+        opacity: c[3],
+      });
+      disposables.push(mat);
+      return mat;
+    }
+
+    function buildFromXml(xml) {
+      if (disposed || !viewer) return;
+      const doc = new DOMParser().parseFromString(xml, 'text/xml');
+      const robot = doc.querySelector('robot');
+      if (!robot) { setViewerStatus('URDF 解析失败: ' + nodeName); return; }
+      // robot 级命名材质表（visual 里可只写名字引用）
+      const namedColors = {};
+      Array.from(robot.children).filter((n) => n.tagName === 'material').forEach((m) => {
+        const c = m.querySelector('color');
+        if (m.getAttribute('name') && c) {
+          namedColors[m.getAttribute('name')] =
+            String(c.getAttribute('rgba') || '').trim().split(/\s+/).map(Number);
+        }
+      });
+
+      let linkCount = 0;
+      Array.from(robot.children).filter((n) => n.tagName === 'link').forEach((link) => {
+        const visuals = Array.from(link.children).filter((n) => n.tagName === 'visual');
+        if (!visuals.length) return;
+        const grp = new THREE.Group();
+        grp.visible = false;   // 等 TF 就位再显示
+        visuals.forEach((vis) => {
+          const holder = new THREE.Group();
+          const origin = Array.from(vis.children).find((n) => n.tagName === 'origin');
+          if (origin) {
+            const xyz = urdfVec(origin.getAttribute('xyz'), 0);
+            holder.position.set(xyz[0], xyz[1], xyz[2]);
+            holder.quaternion.copy(urdfRpyToQuat(origin.getAttribute('rpy')));
+          }
+          // 颜色：visual 内联 color > 命名材质 > 默认灰
+          let colorArr = null;
+          const matEl = vis.querySelector('material');
+          if (matEl) {
+            const c = matEl.querySelector('color');
+            if (c) colorArr = String(c.getAttribute('rgba') || '').trim().split(/\s+/).map(Number);
+            else if (matEl.getAttribute('name')) colorArr = namedColors[matEl.getAttribute('name')] || null;
+          }
+          const geomEl = vis.querySelector('geometry');
+          const meshEl = geomEl && geomEl.querySelector('mesh');
+          const boxEl = geomEl && geomEl.querySelector('box');
+          const cylEl = geomEl && geomEl.querySelector('cylinder');
+          const sphEl = geomEl && geomEl.querySelector('sphere');
+          if (meshEl) {
+            const url = meshUrlFromPackageUri(meshEl.getAttribute('filename'));
+            const scale = urdfVec(meshEl.getAttribute('scale'), 1);
+            if (url && /\.stl$/i.test(url) && THREE.STLLoader) {
+              new THREE.STLLoader().load(url, (geom) => {
+                if (disposed) { geom.dispose(); return; }
+                disposables.push(geom);
+                const mesh = new THREE.Mesh(geom, materialFor(colorArr));
+                mesh.scale.set(scale[0], scale[1], scale[2]);
+                holder.add(mesh);
+              }, undefined, () => setViewerStatus('URDF 网格加载失败: ' + url +
+                '（web_server 是否已重编译启用 /pkg/ 路由？）'));
+            } else if (url && /\.dae$/i.test(url) && THREE.ColladaLoader) {
+              new THREE.ColladaLoader().load(url, (dae) => {
+                if (disposed || !dae || !dae.scene) return;
+                dae.scene.scale.set(scale[0], scale[1], scale[2]);
+                holder.add(dae.scene);
+              }, undefined, () => setViewerStatus('URDF 网格加载失败: ' + url));
+            }
+          } else if (boxEl) {
+            const s = urdfVec(boxEl.getAttribute('size'), 0.1);
+            const geom = new THREE.BoxGeometry(s[0], s[1], s[2]);
+            disposables.push(geom);
+            holder.add(new THREE.Mesh(geom, materialFor(colorArr)));
+          } else if (cylEl) {
+            const r = parseFloat(cylEl.getAttribute('radius')) || 0.05;
+            const l = parseFloat(cylEl.getAttribute('length')) || 0.1;
+            const geom = new THREE.CylinderGeometry(r, r, l, 24);
+            disposables.push(geom);
+            const mesh = new THREE.Mesh(geom, materialFor(colorArr));
+            mesh.rotation.x = Math.PI / 2;   // URDF 圆柱沿 Z，THREE 沿 Y
+            holder.add(mesh);
+          } else if (sphEl) {
+            const r = parseFloat(sphEl.getAttribute('radius')) || 0.05;
+            const geom = new THREE.SphereGeometry(r, 20, 14);
+            disposables.push(geom);
+            holder.add(new THREE.Mesh(geom, materialFor(colorArr)));
+          }
+          grp.add(holder);
+        });
+        viewer.scene.add(grp);
+        linkGroups.set(link.getAttribute('name'), grp);
+        linkCount++;
+      });
+      setViewerStatus('');
+      console.info('URDF 模型已加载: %s（%d 个可视 link）', nodeName, linkCount);
+    }
+
+    // 取 robot_description 参数（xacro 已在 launch 时展开为纯 URDF）
+    const req = new ROSLIB.ServiceRequest({ names: ['robot_description'] });
+    paramService(nodeName, 'get_parameters').callService(req, (res) => {
+      const val = res && res.values && res.values[0];
+      const xml = (val && val.type === PT_STRING) ? val.string_value : '';
+      if (!xml) { setViewerStatus('URDF: ' + nodeName + ' 没有 robot_description 参数'); return; }
+      buildFromXml(xml);
+    }, (err) => setViewerStatus('URDF 获取失败 (' + nodeName + '): ' + err +
+      '（robot_state_publisher 是否在跑？）'));
+
+    // 每 100ms 按 TF 摆放各 link（robot_state_publisher 已发布全部 link 的 TF）
+    const timer = setInterval(() => {
+      if (!tfClient) return;
+      linkGroups.forEach((grp, name) => {
+        const tf = tfClient.lookup(name);
+        if (!tf) { grp.visible = false; return; }
+        grp.visible = true;
+        grp.position.set(tf.translation.x, tf.translation.y, tf.translation.z);
+        grp.quaternion.set(tf.rotation.x, tf.rotation.y, tf.rotation.z, tf.rotation.w);
+      });
+    }, 100);
+
+    return {
+      dispose() {
+        disposed = true;
+        clearInterval(timer);
+        linkGroups.forEach((grp) => { try { viewer.scene.remove(grp); } catch (_) { /* ignore */ } });
+        linkGroups.clear();
+        disposables.forEach((d) => { try { d.dispose(); } catch (_) { /* ignore */ } });
+        disposables.length = 0;
+      },
+    };
+  }
+
+  // ---- SLAM 地图 (/map) 图层 ----
+  // 复用 VLA 航点卡维护的全局 wpMap（GetMap 服务 + /map 话题，含预翻转位图），
+  // 以 CanvasTexture 平面铺在地面，位姿 = map 帧原点经 TF 变换到 fixed frame。
+  function makeViewerMapLayer() {
+    let mesh = null;
+    let lastBmp = null;
+    function destroyMesh() {
+      if (!mesh) return;
+      try {
+        if (viewer) viewer.scene.remove(mesh);
+        mesh.geometry.dispose();
+        if (mesh.material.map) mesh.material.map.dispose();
+        mesh.material.dispose();
+      } catch (_) { /* ignore */ }
+      mesh = null;
+    }
+    const timer = setInterval(() => {
+      if (!viewer) return;
+      if (!wpMap) { if (mesh) mesh.visible = false; return; }
+      if (wpMap.bmp !== lastBmp) {   // 首次或 SLAM 更新了地图 -> 重建贴图平面
+        destroyMesh();
+        lastBmp = wpMap.bmp;
+        const tex = new THREE.CanvasTexture(wpMap.bmp);
+        tex.minFilter = THREE.LinearFilter;   // NPOT 画布禁 mipmap
+        tex.generateMipmaps = false;
+        const geo = new THREE.PlaneGeometry(wpMap.w * wpMap.res, wpMap.h * wpMap.res);
+        const mat = new THREE.MeshBasicMaterial({
+          map: tex, transparent: true, opacity: 0.85, depthWrite: false,
+        });
+        mesh = new THREE.Mesh(geo, mat);
+        mesh.renderOrder = -1;   // 垫底，雷达点/模型画在其上
+        viewer.scene.add(mesh);
+      }
+      // 地图平面中心在 map 帧的坐标 -> 经 TF 转到 fixed frame
+      const tf = tfClient ? tfClient.lookup('map') : null;
+      if (!tf) { mesh.visible = false; return; }
+      const cx = wpMap.ox + wpMap.w * wpMap.res / 2;
+      const cy = wpMap.oy + wpMap.h * wpMap.res / 2;
+      const p = quatRotateVec(tf.rotation, { x: cx, y: cy, z: 0 });
+      mesh.position.set(p.x + tf.translation.x, p.y + tf.translation.y,
+        p.z + tf.translation.z - 0.01);   // 略低于地面防 Z-fighting
+      mesh.quaternion.set(tf.rotation.x, tf.rotation.y, tf.rotation.z, tf.rotation.w);
+      mesh.visible = true;
+    }, 500);
+    return {
+      dispose() { clearInterval(timer); destroyMesh(); },
+    };
+  }
+
   function buildViewer() {
     if (viewer) return;
     const host = $('viewer');
@@ -1138,6 +1347,12 @@
     grid.rotation.x = Math.PI / 2;
     scene.add(grid);
     scene.add(new THREE.AxesHelper(0.5));
+
+    // URDF 网格用受光材质，需要光源（点云/线条材质不受影响）。
+    scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    dirLight.position.set(3, -2, 6);
+    scene.add(dirLight);
 
     viewer = { scene, camera, renderer, controls, host };
 
@@ -1222,10 +1437,20 @@
       viewerLayers.push(makeScanLayer(scanTopic));
     }
 
-    // NOTE: the /map (OccupancyGrid) and URDF layers used ros3djs, which is
-    // incompatible with the three.js version loaded here, so they are not
-    // rendered. Scan + odom trajectory cover the common case. The /map and
-    // URDF input fields are currently inert.
+    // SLAM 地图层（复用 wpMap 全局地图数据；没有时尝试 GetMap 拉一次）
+    const showMap = $('vw-show-map');
+    if (!showMap || showMap.checked) {
+      viewerLayers.push(makeViewerMapLayer());
+      if (!wpMap && ros) fetchWpMap();
+    }
+
+    // 机器人模型层：每个 robot_state_publisher 节点一层（底盘/机械臂可并列）
+    const showUrdf = $('vw-show-urdf');
+    if (!showUrdf || showUrdf.checked) {
+      const nodes = (($('vw-urdf') || {}).value || '/robot_state_publisher')
+        .split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+      nodes.forEach((n) => viewerLayers.push(makeUrdfLayer(n)));
+    }
 
     if (odomTopic) {
       const lineMat = new THREE.LineBasicMaterial({ color: 0x58a6ff });
@@ -1254,6 +1479,11 @@
   }
 
   $('vw-apply').addEventListener('click', rebuildViewer);
+  // 勾选机器人模型 / SLAM 地图开关即时生效（与"应用"等价，重建图层）
+  ['vw-show-urdf', 'vw-show-map'].forEach((id) => {
+    const el = $(id);
+    if (el) el.addEventListener('change', rebuildViewer);
+  });
   $('vw-clear-path').addEventListener('click', () => {
     odomPoints.length = 0;
     if (odomPath) {
