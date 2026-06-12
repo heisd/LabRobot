@@ -74,7 +74,8 @@ def generate_launch_description():
                         'nav(Gazebo 导航世界 + Nav2)'),
         DeclareLaunchArgument(
             'chassis_world', default_value='wheeltec_slam_nav',
-            description='sim:=chassis 时的底盘世界(wheeltec_slam_nav/rrt_explore/line_follow/target_follow/vla_nav/nav)'),
+            description='sim:=chassis 时的底盘世界(wheeltec_slam_nav / wheeltec_rrt_explore / '
+                        'wheeltec_line_follow / wheeltec_target_follow / wheeltec_vla_nav / wheeltec_nav)'),
         DeclareLaunchArgument(
             'arm_world', default_value='grab_world',
             description='sim:=arm 时的抓取世界(grab_world/grab_hsv_color/grab_yolo/grab_kcf/grab_aruco/grab_vlm)'),
