@@ -28,6 +28,18 @@
   const statusEl = $('ws-status');
   const connectBtn = $('ws-connect');
   urlInput.value = defaultUrl;
+  // 记住用户改过的 rosbridge 地址（端口转发/异机调试不用每次重填）；
+  // 没改过就一直跟随默认值。回车 = 立即连接。
+  try {
+    const savedUrl = localStorage.getItem('ws_url');
+    if (savedUrl) urlInput.value = savedUrl;
+  } catch (_) { /* localStorage 不可用就算了 */ }
+  urlInput.addEventListener('change', () => {
+    try { localStorage.setItem('ws_url', urlInput.value.trim()); } catch (_) { /* ignore */ }
+  });
+  urlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); connect(); }
+  });
 
   let ros = null;
   const subs = [];   // active subscriptions
@@ -69,7 +81,32 @@
     connectBtn.textContent = connected ? '断开' : '连接';
   }
 
-  function connect() {
+  // ---- 断线自动重连 ----
+  // 只对"建立过的连接意外掉线"和"自动尝试失败"重试（指数退避 2s→30s
+  // 封顶，状态栏显示倒计时）；用户手动点"连接"失败（多半是地址填错）
+  // 不重试，手动"断开"取消一切重试。页面加载时的首次连接也按自动流程
+  // 算——rosbridge 常比面板后起，开着页面等它上线即可。
+  let reconnectTimer = null;
+  let reconnectDelay = 0;   // 0 = 当前不在重连流程
+  const RECONNECT_MAX_MS = 30000;
+
+  function cancelReconnect() {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    reconnectDelay = 0;
+  }
+  function scheduleReconnect() {
+    if (reconnectTimer) return;
+    reconnectDelay = reconnectDelay ? Math.min(reconnectDelay * 2, RECONNECT_MAX_MS) : 2000;
+    setStatus('conn', `已断开，${Math.round(reconnectDelay / 1000)}s 后自动重连…`);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect(true);
+    }, reconnectDelay);
+  }
+
+  function connect(isAuto) {
+    if (!isAuto) cancelReconnect();
+    else if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     if (ros) {
       try { ros.close(); } catch (_) { /* ignore */ }
     }
@@ -78,9 +115,12 @@
     setStatus('conn', '连接中…');
     const r = new ROSLIB.Ros({ url: urlInput.value });
     ros = r;
+    let established = false;  // 本次尝试握手成功过——决定掉线后是否自动重连
 
     r.on('connection', () => {
       if (ros !== r) return;
+      established = true;
+      reconnectDelay = 0;     // 连上了，退避归零
       setStatus('on', '已连接');
       toast('rosbridge 已连接', 'ok');
       setupTopics();
@@ -91,7 +131,7 @@
       setStatus('off', '已断开');
       // 主动断开走 disconnect()（那时 ros 已置 null，进不到这里），
       // 能走到这的都是意外掉线，必须显眼提示。
-      toast('rosbridge 连接断开', 'err');
+      if (established) toast('rosbridge 连接断开，自动重连中…', 'err');
       teardownTopics();
       setButtonForState(false);
       // Keep intent in sync with the visible label: after an unexpected
@@ -99,12 +139,15 @@
       // connect path — otherwise users have to click twice to reconnect.
       userWantsConnected = false;
       ros = null;
+      if (established || isAuto) scheduleReconnect();
     });
     r.on('error', (err) => {
       if (ros !== r) return;
       console.error('rosbridge error', err);
       setStatus('off', '连接错误');
-      toast('rosbridge 连接错误，请检查 ws 地址与 rosbridge 是否在跑', 'err');
+      // 自动重连的失败尝试不刷 toast——退避倒计时在状态栏可见
+      if (established) toast('rosbridge 连接断开，自动重连中…', 'err');
+      else if (!isAuto) toast('rosbridge 连接错误，请检查 ws 地址与 rosbridge 是否在跑', 'err');
       // WebSocket usually fires 'close' right after 'error', but not
       // always (e.g. immediate handshake failure on some browsers).
       // Reset the same state here so the button label and intent stay
@@ -114,10 +157,12 @@
       setButtonForState(false);
       userWantsConnected = false;
       ros = null;
+      if (established || isAuto) scheduleReconnect();
     });
   }
 
   function disconnect() {
+    cancelReconnect();
     userWantsConnected = false;
     if (ros) {
       try { ros.close(); } catch (_) { /* ignore */ }
@@ -670,17 +715,43 @@
   const holdMode = $('hold-mode');
   const cmdReadout = $('cmd-current');
 
-  linMax.addEventListener('input', () => { linVal.textContent = (+linMax.value).toFixed(2); });
-  angMax.addEventListener('input', () => { angVal.textContent = (+angMax.value).toFixed(2); });
+  // 速度上限本地持久化——刷新页面不用重新拉滑块（越界的存量值丢弃）
+  try {
+    const sl = localStorage.getItem('teleop_lin_max');
+    const sa = localStorage.getItem('teleop_ang_max');
+    if (sl !== null && +sl >= +linMax.min && +sl <= +linMax.max) linMax.value = sl;
+    if (sa !== null && +sa >= +angMax.min && +sa <= +angMax.max) angMax.value = sa;
+  } catch (_) { /* ignore */ }
+  linVal.textContent = (+linMax.value).toFixed(2);
+  angVal.textContent = (+angMax.value).toFixed(2);
+
+  linMax.addEventListener('input', () => {
+    linVal.textContent = (+linMax.value).toFixed(2);
+    try { localStorage.setItem('teleop_lin_max', linMax.value); } catch (_) { /* ignore */ }
+  });
+  angMax.addEventListener('input', () => {
+    angVal.textContent = (+angMax.value).toFixed(2);
+    try { localStorage.setItem('teleop_ang_max', angMax.value); } catch (_) { /* ignore */ }
+  });
 
   let curVx = 0, curWz = 0;
   let activeBtn = null;
   let repeatTimer = null;
+  let noConnWarnAt = 0;   // 未连接时按遥控的提示节流
 
   function publishCmd(vx, wz) {
     curVx = vx; curWz = wz;
     cmdReadout.textContent = `vx=${vx.toFixed(2)}, wz=${wz.toFixed(2)}`;
-    if (!cmdVelPub) return;
+    if (!cmdVelPub) {
+      // 没连上时遥控不能静默吞掉——按住连发只提示一次（5s 节流），
+      // 松开归零的 (0,0) 不提示
+      const now = Date.now();
+      if ((vx || wz) && now - noConnWarnAt > 5000) {
+        noConnWarnAt = now;
+        toast('未连接 rosbridge，速度指令没有发出', 'warn');
+      }
+      return;
+    }
     const msg = new ROSLIB.Message({
       linear: { x: vx, y: 0, z: 0 },
       angular: { x: 0, y: 0, z: wz },
@@ -1960,6 +2031,30 @@
       odomPath.geometry.setDrawRange(0, 0);
     }
   });
+
+  // ---------- 点击放大查看（lightbox）----------
+  // 所有 MJPEG 流画面（.cam-img）点一下铺满全屏看细节——直接复用同一个
+  // 流 URL（多开一路 web_video_server 客户端而已）。KCF 框选画面
+  // （.bbox-select 容器内）按下是框选语义，不抢；占位图没内容不放大。
+  const lightbox = $('lightbox');
+  const lightboxImg = $('lightbox-img');
+  if (lightbox && lightboxImg) {
+    const closeLightbox = () => {
+      lightbox.hidden = true;
+      lightboxImg.removeAttribute('src');   // 断开放大那路流，省带宽
+    };
+    document.addEventListener('click', (e) => {
+      const img = e.target.closest ? e.target.closest('img.cam-img') : null;
+      if (!img || img.closest('.bbox-select')) return;
+      if ((img.src || '').indexOf('placeholder') !== -1) return;
+      lightboxImg.src = img.src;
+      lightbox.hidden = false;
+    });
+    lightbox.addEventListener('click', closeLightbox);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !lightbox.hidden) closeLightbox();
+    });
+  }
 
   // ---------- Cameras (web_video_server) ----------
   const camPort = $('cam-port');
@@ -5184,6 +5279,7 @@
   (function initNav() {
     function initTabGroup(opts) {
       const btns = Array.from(document.querySelectorAll(opts.btnSel));
+      const storeKey = 'ui_tab_' + opts.key;
       function activate(val) {
         if (!btns.some((b) => b.dataset[opts.key] === val)) return;
         btns.forEach((b) => b.classList.toggle('active', b.dataset[opts.key] === val));
@@ -5193,6 +5289,8 @@
         // which reads as 0×0 while the panel is display:none. Nudging a resize
         // once the panel is visible makes them re-measure and fill the space.
         window.dispatchEvent(new Event('resize'));
+        // 记住停留位置，刷新后原地恢复
+        try { localStorage.setItem(storeKey, val); } catch (_) { /* ignore */ }
         if (opts.onActivate) opts.onActivate(val);
       }
       btns.forEach((b) => b.addEventListener('click', () => {
@@ -5201,6 +5299,12 @@
           try { history.replaceState(null, '', '#' + b.dataset[opts.key]); } catch (_) { /* ignore */ }
         }
       }));
+      // 刷新后回到上次停留的页签（顶层 tab 的 #hash 深链在调用方随后
+      // 覆盖，优先级更高；存量值无效时 activate 自己会拒绝）
+      try {
+        const saved = localStorage.getItem(storeKey);
+        if (saved) activate(saved);
+      } catch (_) { /* ignore */ }
       return activate;
     }
 
@@ -5254,6 +5358,6 @@
     });
   })();
 
-  // Auto-connect on load.
-  connect();
+  // Auto-connect on load（按自动流程：rosbridge 还没起来就退避重试）.
+  connect(true);
 })();

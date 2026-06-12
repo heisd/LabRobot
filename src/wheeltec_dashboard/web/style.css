@@ -1562,6 +1562,29 @@ main {
   .log-row .ln { display: none; }
 }
 
+/* --------- 点击放大查看（相机/调试流） --------- */
+img.cam-img { cursor: zoom-in; }
+.bbox-select img.cam-img { cursor: inherit; }  /* KCF 框选画面：拖拽框选优先 */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 999;   /* toast(1000) 之下，放大时通知仍可见 */
+  background: rgba(0, 0, 0, 0.88);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: zoom-out;
+}
+.lightbox[hidden] { display: none; }
+.lightbox img {
+  max-width: 96vw;
+  max-height: 90vh;
+  border-radius: 4px;
+}
+.lightbox-hint { color: var(--muted); font-size: 12px; }
+
 /* --------- 全局 Toast 通知 --------- */
 .toast-stack {
   position: fixed;
