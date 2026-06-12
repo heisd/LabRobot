@@ -245,7 +245,10 @@ ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=nav
 - **地图航点管理**（VLA 子页）：自动加载已建好的地图（`/map_server/map`
   GetMap 服务 + `/map` 话题兜底，SLAM 建图中实时刷新），画布上叠加小车
   实时位姿（绿箭头）、已存航点（蓝点）；**按下选点、拖动定朝向**（同 RViz
-  2D Goal Pose）或"用当前位姿"，填名字【保存到机器人】→ 后端
+  2D Goal Pose）或"用当前位姿"；画布支持**滚轮/触屏双指捏合缩放**（以光
+  标为锚，1~12 倍）与**中键/右键拖动平移**（平移钳制在地图范围内），
+  工具栏显示当前倍数、"视图复位"一键回整图——大地图精确选点不再费眼。
+  填名字【保存到机器人】→ 后端
   `vla_navigator` 经 `/vla/waypoint_cmd` **立即生效**并整表持久化到
   `~/.ros/vla_waypoints.yaml`（重启优先加载，一次标定永久有效）；航点列表
   （`/vla/waypoints` 广播）支持【导航】（直发 `/goal_pose`）与【删除】；

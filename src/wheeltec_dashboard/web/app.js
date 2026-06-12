@@ -2898,6 +2898,9 @@
   let wpMapTried = false;   // 本次连接是否已自动尝试 GetMap
   let vlaWaypoints = [];    // 后端广播的航点列表
   let wpFile = '';          // 后端持久化文件路径（显示用）
+  let wpZoom = 1;           // 画布缩放（相对"整图适配宽度"的倍数，1=整图）
+  let wpPanX = 0;           // 画布像素平移（wpRedraw 里钳制，1 倍时锁回 0）
+  let wpPanY = 0;
 
   function setWpMapStatus(text) {
     const el = $('wp-map-status');
@@ -3077,18 +3080,29 @@
   const wpMapFileLoad = $('wp-map-file-load');
   if (wpMapFileLoad) wpMapFileLoad.addEventListener('click', fetchWpMapFromFile);
 
-  // map 世界坐标 ↔ 显示画布坐标（位图已预翻转，y 轴只需一次镜像换算）
+  // map 世界坐标 ↔ 显示画布坐标（位图已预翻转，y 轴只需一次镜像换算；
+  // view.s 已含缩放倍数，tx/ty 是平移）
   function wpWorldToCanvas(wx, wy, view) {
     return {
-      x: (wx - wpMap.ox) / wpMap.res * view.s,
-      y: view.h - (wy - wpMap.oy) / wpMap.res * view.s,
+      x: (wx - wpMap.ox) / wpMap.res * view.s + view.tx,
+      y: view.h - (wy - wpMap.oy) / wpMap.res * view.s + view.ty,
     };
   }
   function wpCanvasToWorld(cx, cy, view) {
     return {
-      x: cx / view.s * wpMap.res + wpMap.ox,
-      y: (view.h - cy) / view.s * wpMap.res + wpMap.oy,
+      x: (cx - view.tx) / view.s * wpMap.res + wpMap.ox,
+      y: (view.h + view.ty - cy) / view.s * wpMap.res + wpMap.oy,
     };
+  }
+
+  // 平移钳制：画布始终被地图盖住不留空边（140px 最小高度下地图比画布
+  // 矮的罕见情况取反向区间，效果是允许贴边）。1 倍缩放时区间收敛为 0。
+  function wpClampPan(view) {
+    const mapW = wpMap.w * view.s, mapH = wpMap.h * view.s;
+    wpPanX = Math.max(Math.min(0, view.w - mapW), Math.min(Math.max(0, view.w - mapW), wpPanX));
+    wpPanY = Math.max(Math.min(0, mapH - view.h), Math.min(Math.max(0, mapH - view.h), wpPanY));
+    view.tx = wpPanX;
+    view.ty = wpPanY;
   }
 
   function drawWpArrow(ctx, p, worldYaw, color, r) {
@@ -3116,12 +3130,16 @@
       canvas.width = dispW;
       canvas.height = dispH;
     }
-    const view = { s, w: dispW, h: dispH };
+    const view = { s: s * wpZoom, w: dispW, h: dispH, tx: 0, ty: 0 };
+    wpClampPan(view);
     canvas._view = view;   // pointer 事件换算用
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, dispW, dispH);
-    ctx.drawImage(wpMap.bmp, 0, 0, dispW, dispH);
+    // 位图左上角 = map 帧 (ox, oy + h·res)，按 view 变换摆放——与
+    // wpWorldToCanvas 同一套公式，标记和底图永远对得上
+    ctx.drawImage(wpMap.bmp, view.tx, view.h - wpMap.h * view.s + view.ty,
+      wpMap.w * view.s, wpMap.h * view.s);
     // 已保存航点（蓝点 + 名字）
     ctx.font = '11px sans-serif';
     vlaWaypoints.forEach((wp) => {
@@ -3151,22 +3169,91 @@
     el.textContent = `x=${wpSel.x.toFixed(3)}  y=${wpSel.y.toFixed(3)}  yaw=${wpSel.yaw.toFixed(3)} rad (${(wpSel.yaw * 180 / Math.PI).toFixed(1)}°)`;
   }
 
-  // 地图取点交互：按下定位置，按住拖动定朝向（同 RViz 2D Goal Pose），触屏可用。
+  // 地图取点 + 视图操控：
+  //   左键/单指     按下定位置、按住拖动定朝向（同 RViz 2D Goal Pose）
+  //   滚轮/双指捏合  以光标（两指中点）为锚缩放，1~12 倍
+  //   中键/右键拖动  平移（画布上的右键菜单已屏蔽）
+  //   视图复位按钮   回到整图
   (function initWpMapPick() {
     const canvas = $('wp-map');
     if (!canvas) return;
     let downWorld = null;
+    let panLast = null;          // 中/右键平移：上一点画布坐标
+    const touches = new Map();   // 活动触点 id -> 画布坐标（双指捏合用）
+    let pinchPrev = null;        // 上一帧 { dist, mx, my }
+
+    function evCanvas(e) {
+      const r = canvas.getBoundingClientRect();
+      if (!r.width || !r.height) return null;
+      return {
+        x: (e.clientX - r.left) * (canvas.width / r.width),
+        y: (e.clientY - r.top) * (canvas.height / r.height),
+      };
+    }
     function evWorld(e) {
       const view = canvas._view;
       if (!view || !wpMap) return null;
-      const r = canvas.getBoundingClientRect();
-      if (!r.width || !r.height) return null;
-      const cx = (e.clientX - r.left) * (canvas.width / r.width);
-      const cy = (e.clientY - r.top) * (canvas.height / r.height);
-      return wpCanvasToWorld(cx, cy, view);
+      const c = evCanvas(e);
+      return c ? wpCanvasToWorld(c.x, c.y, view) : null;
     }
+
+    const ZOOM_MIN = 1, ZOOM_MAX = 12;
+    function wpZoomLabel() {
+      const el = $('wp-zoom');
+      if (el) el.textContent = wpZoom > 1.001 ? '×' + wpZoom.toFixed(1) : '';
+    }
+    // 以画布点 (cx,cy) 为锚缩放：锚点对应的世界坐标在缩放前后不动——
+    // 先记锚点世界坐标，换缩放后反解平移（wpRedraw 里再钳制）。
+    function zoomAt(cx, cy, factor) {
+      const view = canvas._view;
+      if (!view || !wpMap) return;
+      const z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, wpZoom * factor));
+      const w = wpCanvasToWorld(cx, cy, view);
+      const s1 = (view.s / wpZoom) * z;
+      wpZoom = z;
+      wpPanX = cx - (w.x - wpMap.ox) / wpMap.res * s1;
+      wpPanY = cy - view.h + (w.y - wpMap.oy) / wpMap.res * s1;
+      wpRedraw();
+      wpZoomLabel();
+    }
+
+    canvas.addEventListener('wheel', (e) => {
+      if (!wpMap || !canvas._view) return;
+      e.preventDefault();
+      const c = evCanvas(e);
+      if (c) zoomAt(c.x, c.y, Math.pow(1.0015, -e.deltaY));
+    }, { passive: false });
+
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    const wpViewReset = $('wp-view-reset');
+    if (wpViewReset) wpViewReset.addEventListener('click', () => {
+      wpZoom = 1; wpPanX = 0; wpPanY = 0;
+      wpRedraw();
+      wpZoomLabel();
+    });
+
     canvas.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && (e.button === 1 || e.button === 2)) {
+        panLast = evCanvas(e);
+        try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+        e.preventDefault();
+        return;
+      }
       if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (e.pointerType === 'touch') {
+        const c = evCanvas(e);
+        if (c) touches.set(e.pointerId, c);
+        if (touches.size === 2) {
+          // 第二指落下 → 切捏合模式，放弃进行中的选点（位置已选上，
+          // 不再跟着拖朝向）
+          downWorld = null;
+          pinchPrev = null;
+          try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+          e.preventDefault();
+          return;
+        }
+      }
       const w = evWorld(e);
       if (!w) return;
       downWorld = w;
@@ -3177,6 +3264,33 @@
       e.preventDefault();
     });
     canvas.addEventListener('pointermove', (e) => {
+      if (panLast) {
+        const c = evCanvas(e);
+        if (!c) return;
+        wpPanX += c.x - panLast.x;
+        wpPanY += c.y - panLast.y;
+        panLast = c;
+        wpRedraw();
+        return;
+      }
+      if (e.pointerType === 'touch' && touches.size === 2) {
+        const c = evCanvas(e);
+        if (!c || !touches.has(e.pointerId)) return;
+        touches.set(e.pointerId, c);
+        const pts = Array.from(touches.values());
+        const cur = {
+          dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
+          mx: (pts[0].x + pts[1].x) / 2,
+          my: (pts[0].y + pts[1].y) / 2,
+        };
+        if (pinchPrev && pinchPrev.dist > 0) {
+          wpPanX += cur.mx - pinchPrev.mx;
+          wpPanY += cur.my - pinchPrev.my;
+          zoomAt(cur.mx, cur.my, cur.dist / pinchPrev.dist);   // 内部钳制+重绘
+        }
+        pinchPrev = cur;
+        return;
+      }
       if (!downWorld) return;
       const w = evWorld(e);
       if (!w) return;
@@ -3186,7 +3300,14 @@
       updateWpSelText();
       wpRedraw();
     });
-    const finish = () => { downWorld = null; };
+    const finish = (e) => {
+      downWorld = null;
+      panLast = null;
+      if (e && e.pointerType === 'touch') {
+        touches.delete(e.pointerId);
+        if (touches.size < 2) pinchPrev = null;
+      }
+    };
     canvas.addEventListener('pointerup', finish);
     canvas.addEventListener('pointercancel', finish);
   })();

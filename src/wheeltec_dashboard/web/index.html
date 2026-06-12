@@ -1019,6 +1019,8 @@
               <input id="wp-map-file" type="text" value="/pkg/wheeltec_nav2/map/WHEELTEC.yaml" />
             </label>
             <button id="wp-map-file-load" type="button">从包加载</button>
+            <button id="wp-view-reset" type="button" title="恢复整图视野（滚轮/双指缩放，中键或右键拖动平移）">视图复位</button>
+            <span id="wp-zoom" class="muted"></span>
             <span id="wp-map-status" class="muted"></span>
           </div>
           <div class="wp-map-wrap">
@@ -1054,7 +1056,7 @@
             <span id="wp-count" class="muted"></span>
           </div>
           <div id="wp-list" class="wp-list"></div>
-          <p class="hint"><strong>用法</strong>：先建好图并启动定位（<code>vla_bringup.launch.py</code> 含 Nav2 + map_server），地图会自动加载（也可点"加载地图"，服务默认 <code>/map_server/map</code>；SLAM 建图中则直接订阅 <code>/map</code> 实时刷新）。在地图上<strong>按下选位置、拖动定朝向</strong>（同 RViz 2D Goal Pose），或点"用当前位姿"取小车所在点；填名字点【保存到机器人】→ <code>vla_navigator</code> <strong>立即生效</strong>（说"去厨房"马上可用）并整表写入 <code>~/.ros/vla_waypoints.yaml</code> —— <strong>该文件重启/重编译后优先加载，下次无需重新设置</strong>。列表里【导航】直接发 <code>/goal_pose</code> 去该点（不经大模型），【删除】同步持久化。绿色箭头=小车实时位姿，蓝点=已存航点，黄色箭头=当前选点。需要重编译并重启 <code>vla_navigation</code> 后端一次以获得 <code>/vla/waypoints</code> 能力；地图原点带旋转的罕见情况暂不支持。</p>
+          <p class="hint"><strong>用法</strong>：先建好图并启动定位（<code>vla_bringup.launch.py</code> 含 Nav2 + map_server），地图会自动加载（也可点"加载地图"，服务默认 <code>/map_server/map</code>；SLAM 建图中则直接订阅 <code>/map</code> 实时刷新）。在地图上<strong>按下选位置、拖动定朝向</strong>（同 RViz 2D Goal Pose），或点"用当前位姿"取小车所在点；<strong>滚轮（触屏双指捏合）以光标为锚缩放，中键或右键拖动平移</strong>，大地图上精确选点不再费眼，"视图复位"回到整图。填名字点【保存到机器人】→ <code>vla_navigator</code> <strong>立即生效</strong>（说"去厨房"马上可用）并整表写入 <code>~/.ros/vla_waypoints.yaml</code> —— <strong>该文件重启/重编译后优先加载，下次无需重新设置</strong>。列表里【导航】直接发 <code>/goal_pose</code> 去该点（不经大模型），【删除】同步持久化。绿色箭头=小车实时位姿，蓝点=已存航点，黄色箭头=当前选点。需要重编译并重启 <code>vla_navigation</code> 后端一次以获得 <code>/vla/waypoints</code> 能力；地图原点带旋转的罕见情况暂不支持。</p>
         </section>
       </div>
 
