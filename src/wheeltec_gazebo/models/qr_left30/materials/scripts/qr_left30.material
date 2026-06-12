@@ -1,0 +1,15 @@
+material QR/Left30
+{
+  technique
+  {
+    pass
+    {
+      texture_unit
+      {
+        texture qr_left30.png
+        filtering anisotropic
+        max_anisotropy 8
+      }
+    }
+  }
+}

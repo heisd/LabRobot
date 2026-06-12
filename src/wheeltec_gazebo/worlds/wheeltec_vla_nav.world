@@ -1,0 +1,128 @@
+<?xml version="1.0" ?>
+<!-- =========================================================================
+  wheeltec_vla_nav.world — Wheeltec 底盘"VLA 语音导航 / 路径跟随"世界(Gazebo Classic 11)。
+
+  功能定位: VLA 语音导航(vla_navigation) / 航点导航 / 路径跟随。
+  一间 grey_wall 围成的房间, 用一道隔断分成两个区, 摆了几处"可命名地标":
+  书架区 / 餐桌区 / 柜子区 / 回充(垃圾桶)区 / 访客(行人), 让自然语言指令
+  ("去书架""到餐桌那边""回充电桩")有明确的目的地可去。
+
+  所有模型来自本机 ~/.gazebo/models(与 grab_world.world 同款绝对路径 URI)。
+  home 不是 /home/user 时, 批量替换 /home/user/ 即可。
+  俯视场景相机发布 /sim_scene/chassis/image_raw, 经 web_video_server 在 Dashboard 查看。
+========================================================================= -->
+<sdf version="1.6">
+  <world name="wheeltec_vla_nav">
+
+    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
+    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
+
+    <!-- ===================== 外圈墙 ===================== -->
+    <include>
+      <name>wall_north</name>
+      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>0 3.75 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>wall_south</name>
+      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>0 -3.75 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>wall_east</name>
+      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>3.75 0 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <name>wall_west</name>
+      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>-3.75 0 0 0 0 1.5708</pose>
+    </include>
+
+    <!-- 中间隔断(留一个门洞分两个区) -->
+    <include>
+      <name>partition</name>
+      <uri>model:///home/user/.gazebo/models/nist_maze_wall_240</uri>
+      <pose>0.0 1.4 0 0 0 0</pose>
+    </include>
+
+    <!-- ===================== 可命名地标(VLA 目的地) ===================== -->
+    <!-- 书架区(东北) -->
+    <include>
+      <name>bookshelf</name>
+      <uri>model:///home/user/.gazebo/models/bookshelf</uri>
+      <pose>3.0 2.8 0 0 0 0</pose>
+    </include>
+    <!-- 柜子区(西北) -->
+    <include>
+      <name>cabinet</name>
+      <uri>model:///home/user/.gazebo/models/cabinet</uri>
+      <pose>-3.0 2.8 0 0 0 1.5708</pose>
+    </include>
+    <!-- 餐桌区(东南, 桌上放可乐罐) -->
+    <include>
+      <name>cafe_table</name>
+      <uri>model:///home/user/.gazebo/models/cafe_table</uri>
+      <pose>2.5 -2.2 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>coke_can</name>
+      <uri>model:///home/user/.gazebo/models/coke_can</uri>
+      <pose>2.5 -2.2 0.78 0 0 0</pose>
+    </include>
+    <!-- 回充 / 垃圾区(西南) -->
+    <include>
+      <name>dumpster</name>
+      <uri>model:///home/user/.gazebo/models/dumpster</uri>
+      <pose>-2.8 -2.6 0 0 0 1.5708</pose>
+    </include>
+    <!-- 访客(行人) -->
+    <include>
+      <name>person_standing</name>
+      <uri>model:///home/user/.gazebo/models/person_standing</uri>
+      <pose>0.0 -2.6 0 0 0 1.5708</pose>
+    </include>
+
+    <!-- ===================== 俯视场景相机(转发到 Web) ===================== -->
+    <model name="scene_camera">
+      <static>true</static>
+      <pose>6.5 -6.5 6.0 0 0.578 2.356</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.05 0.05 0.05</size></box></geometry>
+        </visual>
+        <sensor type="camera" name="scene_cam">
+          <always_on>true</always_on>
+          <update_rate>15</update_rate>
+          <camera name="scene">
+            <horizontal_fov>1.05</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.1</near><far>100</far></clip>
+          </camera>
+          <plugin name="scene_cam_controller" filename="libgazebo_ros_camera.so">
+            <ros>
+              <namespace>/sim_scene/chassis</namespace>
+              <remapping>scene/image_raw:=image_raw</remapping>
+              <remapping>scene/camera_info:=camera_info</remapping>
+            </ros>
+            <camera_name>scene</camera_name>
+            <frame_name>scene_camera</frame_name>
+          </plugin>
+        </sensor>
+      </link>
+    </model>
+
+    <physics name="default_physics" default="0" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <gui fullscreen="0">
+      <camera name="user_camera">
+        <pose>7.0 -7.0 6.5 0 0.5 2.356</pose>
+      </camera>
+    </gui>
+
+  </world>
+</sdf>

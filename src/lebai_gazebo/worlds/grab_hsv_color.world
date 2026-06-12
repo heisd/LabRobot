@@ -1,0 +1,80 @@
+<?xml version="1.0" ?>
+<!-- =========================================================================
+  grab_hsv_color.world — 机械臂"HSV 颜色抓取"世界(Gazebo Classic 11)。
+
+  功能定位: grab_demo 的 color_grab(color_node, 按 HSV 阈值找最大色块抓取)。
+  桌上摆了红/绿两种纯色块 + 红色可乐罐: color_node 默认红色阈值(hue 0–10)正好抓
+  红色块/可乐罐; 在 Dashboard"HSV 颜色抓取"页把阈值改到绿色即可改抓绿块, 便于验证调参。
+
+  模型取自本机 ~/.gazebo/models(与 grab_world.world 同款绝对路径 URI)。
+  场景相机发布 /sim_scene/arm/image_raw, 经 web_video_server 在 Dashboard"机械臂仿真"页查看。
+========================================================================= -->
+<sdf version="1.6">
+  <world name="grab_hsv_color">
+
+    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
+    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
+
+    <include>
+      <name>table</name>
+      <uri>model:///home/user/.gazebo/models/table</uri>
+      <pose>0.55 0 0 0 0 0</pose>
+    </include>
+
+    <!-- 红色目标(HSV 默认) -->
+    <include>
+      <name>red_block</name>
+      <uri>model:///home/user/.gazebo/models/box_target_red</uri>
+      <pose>0.45 0.12 1.015 0 0 0</pose>
+    </include>
+    <include>
+      <name>coke_can</name>
+      <uri>model:///home/user/.gazebo/models/coke_can</uri>
+      <pose>0.60 0.0 1.015 0 0 0</pose>
+    </include>
+    <!-- 绿色目标(改 HSV 阈值即可抓) -->
+    <include>
+      <name>green_block</name>
+      <uri>model:///home/user/.gazebo/models/box_target_green</uri>
+      <pose>0.45 -0.12 1.015 0 0 0</pose>
+    </include>
+
+    <!-- ===================== 场景相机(转发到 Web /sim_scene/arm/image_raw) ===================== -->
+    <model name="scene_camera">
+      <static>true</static>
+      <pose>1.8 -1.3 1.7 0 0.35 2.4</pose>
+      <link name="link">
+        <visual name="vis"><geometry><box><size>0.04 0.04 0.04</size></box></geometry></visual>
+        <sensor type="camera" name="scene_cam">
+          <always_on>true</always_on>
+          <update_rate>15</update_rate>
+          <camera name="scene">
+            <horizontal_fov>1.2</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.05</near><far>50</far></clip>
+          </camera>
+          <plugin name="scene_cam_controller" filename="libgazebo_ros_camera.so">
+            <ros>
+              <namespace>/sim_scene/arm</namespace>
+              <remapping>scene/image_raw:=image_raw</remapping>
+              <remapping>scene/camera_info:=camera_info</remapping>
+            </ros>
+            <camera_name>scene</camera_name>
+            <frame_name>scene_camera</frame_name>
+          </plugin>
+        </sensor>
+      </link>
+    </model>
+
+    <physics name="default_physics" default="0" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <gui fullscreen="0">
+      <camera name="user_camera"><pose>1.8 -1.3 1.7 0 0.35 2.4</pose></camera>
+    </gui>
+
+  </world>
+</sdf>

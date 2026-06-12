@@ -1,0 +1,118 @@
+<?xml version="1.0" ?>
+<!-- =========================================================================
+  wheeltec_nav.world — Wheeltec 底盘"Nav2 导航"世界(Gazebo Classic 11)。
+
+  功能定位: Nav2 自主导航(全局/局部路径规划 + 避障)。一间 grey_wall 围成的房间,
+  中间用一道隔断墙分成两区(留过道), 两区各摆家具/障碍, 让 Nav2 必须绕障碍、
+  穿过道才能到目标点 —— 比单一空房更能体现路径规划与代价地图避障。
+
+  用法: 先用 SLAM 给本世界建图并保存(或用已存地图), 再起 Nav2 定位+导航;
+  在 Dashboard"功能模块→导航 (Nav2)"页设初始位姿、发目标点。
+  模型取自本机 ~/.gazebo/models(同 grab_world.world 绝对路径约定)。
+  俯视场景相机发布 /sim_scene/chassis/image_raw, 经 web_video_server 在面板查看。
+========================================================================= -->
+<sdf version="1.6">
+  <world name="wheeltec_nav">
+
+    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
+    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
+
+    <!-- 外圈墙 -->
+    <include>
+      <name>wall_north</name><uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>0 3.75 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>wall_south</name><uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>0 -3.75 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>wall_east</name><uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>3.75 0 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <name>wall_west</name><uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>-3.75 0 0 0 0 1.5708</pose>
+    </include>
+
+    <!-- 中间隔断(两段 + 一个过道缺口在东侧) -->
+    <include>
+      <name>partition_1</name><uri>model:///home/user/.gazebo/models/nist_maze_wall_240</uri>
+      <pose>-2.3 0 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>partition_2</name><uri>model:///home/user/.gazebo/models/nist_maze_wall_120</uri>
+      <pose>0.0 0 0 0 0 0</pose>
+    </include>
+
+    <!-- 南区家具/障碍 -->
+    <include>
+      <name>cafe_table</name><uri>model:///home/user/.gazebo/models/cafe_table</uri>
+      <pose>-2.5 -2.4 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>bookshelf</name><uri>model:///home/user/.gazebo/models/bookshelf</uri>
+      <pose>2.6 -2.6 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <name>barrel_s</name><uri>model:///home/user/.gazebo/models/construction_barrel</uri>
+      <pose>0.6 -2.3 0 0 0 0</pose>
+    </include>
+
+    <!-- 北区家具/障碍 -->
+    <include>
+      <name>cabinet</name><uri>model:///home/user/.gazebo/models/cabinet</uri>
+      <pose>-2.6 2.6 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <name>barrel_n</name><uri>model:///home/user/.gazebo/models/construction_barrel</uri>
+      <pose>1.5 2.2 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>cone_n</name><uri>model:///home/user/.gazebo/models/construction_cone</uri>
+      <pose>2.6 1.0 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>person_standing</name><uri>model:///home/user/.gazebo/models/person_standing</uri>
+      <pose>0.3 1.6 0 0 0 -1.0</pose>
+    </include>
+
+    <!-- ===================== 俯视场景相机(转发到 Web) ===================== -->
+    <model name="scene_camera">
+      <static>true</static>
+      <pose>6.5 -6.5 6.0 0 0.578 2.356</pose>
+      <link name="link">
+        <visual name="vis"><geometry><box><size>0.05 0.05 0.05</size></box></geometry></visual>
+        <sensor type="camera" name="scene_cam">
+          <always_on>true</always_on>
+          <update_rate>15</update_rate>
+          <camera name="scene">
+            <horizontal_fov>1.05</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.1</near><far>100</far></clip>
+          </camera>
+          <plugin name="scene_cam_controller" filename="libgazebo_ros_camera.so">
+            <ros>
+              <namespace>/sim_scene/chassis</namespace>
+              <remapping>scene/image_raw:=image_raw</remapping>
+              <remapping>scene/camera_info:=camera_info</remapping>
+            </ros>
+            <camera_name>scene</camera_name>
+            <frame_name>scene_camera</frame_name>
+          </plugin>
+        </sensor>
+      </link>
+    </model>
+
+    <physics name="default_physics" default="0" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <gui fullscreen="0">
+      <camera name="user_camera"><pose>7.0 -7.0 6.5 0 0.5 2.356</pose></camera>
+    </gui>
+
+  </world>
+</sdf>

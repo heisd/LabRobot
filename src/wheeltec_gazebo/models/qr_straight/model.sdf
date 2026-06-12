@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<!-- qr_straight — 把 QR 码 PNG 贴到一个小立方体的各面, 立在巡线路口供车载相机识别。
+     纯视觉(无碰撞), 不挡车; 立方体四个侧面都贴同一张码, 任意朝向都能被看到。
+     内容: path:straight 直行。 -->
+<sdf version="1.6">
+  <model name="qr_straight">
+    <static>true</static>
+    <link name="link">
+      <visual name="qr">
+        <pose>0 0 0.12 0 0 0</pose>
+        <geometry><box><size>0.18 0.18 0.18</size></box></geometry>
+        <material>
+          <script>
+            <uri>model://qr_straight/materials/scripts</uri>
+            <uri>model://qr_straight/materials/textures</uri>
+            <name>QR/Straight</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

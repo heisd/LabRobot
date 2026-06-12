@@ -1,0 +1,145 @@
+<?xml version="1.0" ?>
+<!-- =========================================================================
+  wheeltec_line_follow.world — Wheeltec 底盘"巡线(QR 固定转角)"世界(Gazebo Classic 11)。
+
+  功能定位: 我们接入的 **不带随机分叉的 QR 巡线**(simple_follower_ros2 的
+  line_follow_qr_fixed = line_follow_plain 纯巡线 + qr_detector + cmd_arbiter)。
+  纯巡线只跟着线走、不做任何分叉决策; 到了"路口"由地上的 **QR 码** 决定定角转向,
+  所以本世界特意把线画成 **带多个路口的回路**, 每个路口摆一张对应的 QR 码:
+
+    起点(-3,0) →+x→ 路口A(-1.5,0) [QR: path:left]  →+y→
+    左上(-1.5,2) [QR: path:right] →+x→ 右上(1.5,2) [QR: path:right] →-y→
+    路口B(1.5,0) [QR: path:left]  →+x→ 终点(3,0) [QR: path:stop]
+
+  每个转向都由 QR 唯一确定(无随机分叉)。QR 码是把 simple_follower_ros2/qr_codes 里
+  我们自己的 PNG 贴成 Gazebo 模型(见 models/qr_*), 车载相机看到即识别。
+
+  线与 QR 都是纯视觉(无碰撞), 不挡车。red 线色匹配巡线默认红色阈值。
+  建议出生点: world:=wheeltec_line_follow x:=-3.0 y:=0.0 yaw:=0.0
+  俯视场景相机发布 /sim_scene/chassis/image_raw, 经 web_video_server 在 Dashboard 查看。
+========================================================================= -->
+<sdf version="1.6">
+  <world name="wheeltec_line_follow">
+
+    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
+    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
+
+    <!-- ===================== 红色巡线(带路口的回路, 仅视觉) ===================== -->
+    <model name="track_line">
+      <static>true</static>
+      <pose>0 0 0 0 0 0</pose>
+      <link name="link">
+        <!-- 主干横线 y=0, x:-3→3 -->
+        <visual name="seg_main">
+          <pose>0 0 0.006 0 0 0</pose>
+          <geometry><box><size>6.06 0.06 0.012</size></box></geometry>
+          <material><ambient>0.9 0.05 0.05 1</ambient><diffuse>0.9 0.05 0.05 1</diffuse></material>
+        </visual>
+        <!-- 左竖线 x=-1.5, y:0→2 -->
+        <visual name="seg_left">
+          <pose>-1.5 1.0 0.006 0 0 0</pose>
+          <geometry><box><size>0.06 2.06 0.012</size></box></geometry>
+          <material><ambient>0.9 0.05 0.05 1</ambient><diffuse>0.9 0.05 0.05 1</diffuse></material>
+        </visual>
+        <!-- 右竖线 x=1.5, y:0→2 -->
+        <visual name="seg_right">
+          <pose>1.5 1.0 0.006 0 0 0</pose>
+          <geometry><box><size>0.06 2.06 0.012</size></box></geometry>
+          <material><ambient>0.9 0.05 0.05 1</ambient><diffuse>0.9 0.05 0.05 1</diffuse></material>
+        </visual>
+        <!-- 顶部横线 y=2, x:-1.5→1.5 -->
+        <visual name="seg_top">
+          <pose>0 2.0 0.006 0 0 0</pose>
+          <geometry><box><size>3.06 0.06 0.012</size></box></geometry>
+          <material><ambient>0.9 0.05 0.05 1</ambient><diffuse>0.9 0.05 0.05 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===================== 路口 QR 码(我们的 PNG → Gazebo 模型) ===================== -->
+    <!-- 路口A(-1.5,0): 左转上左竖线 -->
+    <include>
+      <name>qr_A_left</name>
+      <uri>model://qr_left</uri>
+      <pose>-1.5 0.32 0 0 0 0</pose>
+    </include>
+    <!-- 左上角(-1.5,2): 右转进顶部横线 -->
+    <include>
+      <name>qr_TL_right</name>
+      <uri>model://qr_right</uri>
+      <pose>-1.2 2.0 0 0 0 0</pose>
+    </include>
+    <!-- 右上角(1.5,2): 右转下右竖线 -->
+    <include>
+      <name>qr_TR_right</name>
+      <uri>model://qr_right</uri>
+      <pose>1.5 2.3 0 0 0 0</pose>
+    </include>
+    <!-- 路口B(1.5,0): 左转回主干 -->
+    <include>
+      <name>qr_B_left</name>
+      <uri>model://qr_left</uri>
+      <pose>1.5 0.32 0 0 0 0</pose>
+    </include>
+    <!-- 终点(3,0): 停车 -->
+    <include>
+      <name>qr_end_stop</name>
+      <uri>model://qr_stop</uri>
+      <pose>2.85 0.30 0 0 0 0</pose>
+    </include>
+
+    <!-- 起点两个锥桶(标记出生点) -->
+    <include>
+      <name>start_cone_l</name>
+      <uri>model:///home/user/.gazebo/models/construction_cone</uri>
+      <pose>-3.2 0.35 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>start_cone_r</name>
+      <uri>model:///home/user/.gazebo/models/construction_cone</uri>
+      <pose>-3.2 -0.35 0 0 0 0</pose>
+    </include>
+
+    <!-- ===================== 俯视场景相机(转发到 Web) ===================== -->
+    <model name="scene_camera">
+      <static>true</static>
+      <pose>5.0 -4.5 4.8 0 0.6 2.5</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.05 0.05 0.05</size></box></geometry>
+        </visual>
+        <sensor type="camera" name="scene_cam">
+          <always_on>true</always_on>
+          <update_rate>15</update_rate>
+          <camera name="scene">
+            <horizontal_fov>1.1</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.1</near><far>100</far></clip>
+          </camera>
+          <plugin name="scene_cam_controller" filename="libgazebo_ros_camera.so">
+            <ros>
+              <namespace>/sim_scene/chassis</namespace>
+              <remapping>scene/image_raw:=image_raw</remapping>
+              <remapping>scene/camera_info:=camera_info</remapping>
+            </ros>
+            <camera_name>scene</camera_name>
+            <frame_name>scene_camera</frame_name>
+          </plugin>
+        </sensor>
+      </link>
+    </model>
+
+    <physics name="default_physics" default="0" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <gui fullscreen="0">
+      <camera name="user_camera">
+        <pose>5.5 -5.0 5.2 0 0.55 2.5</pose>
+      </camera>
+    </gui>
+
+  </world>
+</sdf>

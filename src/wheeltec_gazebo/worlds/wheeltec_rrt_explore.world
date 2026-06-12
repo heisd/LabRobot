@@ -1,0 +1,120 @@
+<?xml version="1.0" ?>
+<!-- =========================================================================
+  wheeltec_rrt_explore.world — Wheeltec 底盘"RRT 自主探索 / 迷宫"世界(Gazebo Classic 11)。
+
+  功能定位: RRT 自主探索 / 复杂避障 / SLAM 建图。
+  grey_wall 围成外圈 7.5×7.5m, 内部用 NIST 标准迷宫墙(nist_maze_wall_120/240)
+  隔出几条走廊与未知区域, 适合 wheeltec_robot_rrt 自主探索、Nav2 避障、各类 SLAM。
+
+  所有模型来自本机 ~/.gazebo/models(与 grab_world.world 同款绝对路径 URI)。
+  home 不是 /home/user 时, 批量替换 /home/user/ 即可。
+  俯视场景相机发布 /sim_scene/chassis/image_raw, 经 web_video_server 在 Dashboard 查看。
+========================================================================= -->
+<sdf version="1.6">
+  <world name="wheeltec_rrt_explore">
+
+    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
+    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
+
+    <!-- ===================== 外圈墙 ===================== -->
+    <include>
+      <name>wall_north</name>
+      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>0 3.75 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>wall_south</name>
+      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>0 -3.75 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>wall_east</name>
+      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>3.75 0 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <name>wall_west</name>
+      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>-3.75 0 0 0 0 1.5708</pose>
+    </include>
+
+    <!-- ===================== 内部迷宫墙(NIST 标准段, 不必严丝合缝, 留缝即走廊) ===================== -->
+    <include>
+      <name>maze_a</name>
+      <uri>model:///home/user/.gazebo/models/nist_maze_wall_240</uri>
+      <pose>1.0 2.0 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>maze_b</name>
+      <uri>model:///home/user/.gazebo/models/nist_maze_wall_240</uri>
+      <pose>-1.5 1.0 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <name>maze_c</name>
+      <uri>model:///home/user/.gazebo/models/nist_maze_wall_240</uri>
+      <pose>-1.0 -0.5 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>maze_d</name>
+      <uri>model:///home/user/.gazebo/models/nist_maze_wall_240</uri>
+      <pose>1.5 -1.0 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <name>maze_e</name>
+      <uri>model:///home/user/.gazebo/models/nist_maze_wall_120</uri>
+      <pose>2.5 -2.2 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>maze_f</name>
+      <uri>model:///home/user/.gazebo/models/nist_maze_wall_120</uri>
+      <pose>-2.2 -2.0 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <name>maze_g</name>
+      <uri>model:///home/user/.gazebo/models/nist_maze_wall_120</uri>
+      <pose>0.0 -2.6 0 0 0 0</pose>
+    </include>
+
+    <!-- ===================== 俯视场景相机(转发到 Web) ===================== -->
+    <model name="scene_camera">
+      <static>true</static>
+      <pose>6.5 -6.5 6.0 0 0.578 2.356</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.05 0.05 0.05</size></box></geometry>
+        </visual>
+        <sensor type="camera" name="scene_cam">
+          <always_on>true</always_on>
+          <update_rate>15</update_rate>
+          <camera name="scene">
+            <horizontal_fov>1.05</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.1</near><far>100</far></clip>
+          </camera>
+          <plugin name="scene_cam_controller" filename="libgazebo_ros_camera.so">
+            <ros>
+              <namespace>/sim_scene/chassis</namespace>
+              <remapping>scene/image_raw:=image_raw</remapping>
+              <remapping>scene/camera_info:=camera_info</remapping>
+            </ros>
+            <camera_name>scene</camera_name>
+            <frame_name>scene_camera</frame_name>
+          </plugin>
+        </sensor>
+      </link>
+    </model>
+
+    <physics name="default_physics" default="0" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <gui fullscreen="0">
+      <camera name="user_camera">
+        <pose>7.0 -7.0 6.5 0 0.5 2.356</pose>
+      </camera>
+    </gui>
+
+  </world>
+</sdf>

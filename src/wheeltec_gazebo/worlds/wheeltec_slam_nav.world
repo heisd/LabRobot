@@ -1,0 +1,148 @@
+<?xml version="1.0" ?>
+<!-- =========================================================================
+  wheeltec_slam_nav.world — Wheeltec 底盘"建图 / 导航 / 避障"世界(Gazebo Classic 11)。
+
+  功能定位: SLAM 建图(GMapping/Cartographer/Toolbox/ORB) / Nav2 导航 / 雷达·超声避障。
+  地面 + 阳光 + 一间用 grey_wall 围成的房间, 房间里摆了书架/柜子/桌子/垃圾桶/施工桶/
+  锥桶/行人等障碍物, 给 Wheeltec 移动底盘做建图、导航、避障测试用。
+  Wheeltec 底盘本身由 launch 用 xacro 生成
+  (urdf/wheeltec_gazebo.xacro), 不写死在世界里, 方便换车型/换传感器。
+
+  所有障碍物都来自本机 ~/.gazebo/models 下的标准模型, 用与 grab_world.world 相同的
+  绝对路径 URI(model:///home/user/.gazebo/models/XXX), 无需联网下载。若你的 home 不是
+  /home/user(如 /home/li), 把下面所有 /home/user/ 批量替换成你的实际家目录即可
+  (grab_world.world 同此约定)。
+
+  另含一个俯视"场景相机"(libgazebo_ros_camera.so), 把整个仿真画面发布成 ROS 图像
+  话题 /sim_scene/chassis/image_raw, 再经 web_video_server 转成 MJPEG, 在 Dashboard
+  的"机器人底盘仿真"页查看 —— 机器人没有显示器也能在网页里看 Gazebo 场景。
+========================================================================= -->
+<sdf version="1.6">
+  <world name="wheeltec_slam_nav">
+
+    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
+    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
+
+    <!-- ===================== 房间四面墙(grey_wall ≈ 7.5×0.2×2.8m) ===================== -->
+    <include>
+      <name>wall_north</name>
+      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>0 3.75 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>wall_south</name>
+      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>0 -3.75 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>wall_east</name>
+      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>3.75 0 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <name>wall_west</name>
+      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>-3.75 0 0 0 0 1.5708</pose>
+    </include>
+
+    <!-- ===================== 房间内障碍物(均来自 ~/.gazebo/models) ===================== -->
+    <include>
+      <name>bookshelf</name>
+      <uri>model:///home/user/.gazebo/models/bookshelf</uri>
+      <pose>3.0 2.5 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>cabinet</name>
+      <uri>model:///home/user/.gazebo/models/cabinet</uri>
+      <pose>-3.0 2.5 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <name>cafe_table</name>
+      <uri>model:///home/user/.gazebo/models/cafe_table</uri>
+      <pose>1.5 -1.0 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>dumpster</name>
+      <uri>model:///home/user/.gazebo/models/dumpster</uri>
+      <pose>3.0 -2.8 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <name>barrel_1</name>
+      <uri>model:///home/user/.gazebo/models/construction_barrel</uri>
+      <pose>-1.5 -2.0 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>barrel_2</name>
+      <uri>model:///home/user/.gazebo/models/construction_barrel</uri>
+      <pose>0.0 2.2 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>cone_1</name>
+      <uri>model:///home/user/.gazebo/models/construction_cone</uri>
+      <pose>-2.2 -1.0 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>cone_2</name>
+      <uri>model:///home/user/.gazebo/models/construction_cone</uri>
+      <pose>1.0 1.6 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>person_standing</name>
+      <uri>model:///home/user/.gazebo/models/person_standing</uri>
+      <pose>-2.6 0.6 0 0 0 -1.2</pose>
+    </include>
+
+    <!-- ===================== 俯视场景相机(转发到 Web) ===================== -->
+    <!-- 高处斜俯视整间房间, 把画面发布成 /sim_scene/chassis/image_raw,
+         web_video_server 转 MJPEG 供 Dashboard"机器人底盘仿真"页显示。 -->
+    <model name="scene_camera">
+      <static>true</static>
+      <pose>6.5 -6.5 6.0 0 0.578 2.356</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.05 0.05 0.05</size></box></geometry>
+        </visual>
+        <sensor type="camera" name="scene_cam">
+          <always_on>true</always_on>
+          <update_rate>15</update_rate>
+          <camera name="scene">
+            <horizontal_fov>1.05</horizontal_fov>
+            <image>
+              <width>960</width>
+              <height>540</height>
+              <format>R8G8B8</format>
+            </image>
+            <clip>
+              <near>0.1</near>
+              <far>100</far>
+            </clip>
+          </camera>
+          <plugin name="scene_cam_controller" filename="libgazebo_ros_camera.so">
+            <ros>
+              <namespace>/sim_scene/chassis</namespace>
+              <remapping>scene/image_raw:=image_raw</remapping>
+              <remapping>scene/camera_info:=camera_info</remapping>
+            </ros>
+            <camera_name>scene</camera_name>
+            <frame_name>scene_camera</frame_name>
+          </plugin>
+        </sensor>
+      </link>
+    </model>
+
+    <!-- 物理 -->
+    <physics name="default_physics" default="0" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <!-- GUI 默认视角 -->
+    <gui fullscreen="0">
+      <camera name="user_camera">
+        <pose>7.0 -7.0 6.5 0 0.5 2.356</pose>
+      </camera>
+    </gui>
+
+  </world>
+</sdf>

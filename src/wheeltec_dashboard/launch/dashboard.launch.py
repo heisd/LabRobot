@@ -33,6 +33,9 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             'enable_watchdog', default_value='true',
             description='Start sensor_watchdog (相机/雷达/IMU/下位机 在线监控 + 串口设备表)'),
+        DeclareLaunchArgument(
+            'enable_sim_launcher', default_value='true',
+            description='Start sim_launcher (网页一键启停 Gazebo 仿真; false=只读不启停)'),
 
         Node(
             package='rosbridge_server',
@@ -70,5 +73,14 @@ def generate_launch_description() -> LaunchDescription:
             name='sensor_watchdog',
             output='screen',
             condition=IfCondition(LaunchConfiguration('enable_watchdog')),
+        ),
+        # 网页一键启停 Gazebo 仿真: 收 /sim_launch/cmd, 发 /sim_launch/status。
+        # 只允许白名单内的 key/world, 拼出固定的 ros2 launch 命令(防任意命令执行)。
+        Node(
+            package='wheeltec_dashboard',
+            executable='sim_launcher',
+            name='sim_launcher',
+            output='screen',
+            condition=IfCondition(LaunchConfiguration('enable_sim_launcher')),
         ),
     ])

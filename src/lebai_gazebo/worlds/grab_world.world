@@ -36,6 +36,37 @@
       <pose>0.60 0.0 1.015 0 0 0</pose>
     </include>
 
+    <!-- ===================== 场景相机(转发到 Web) ===================== -->
+    <!-- 斜俯视桌面与机械臂, 把画面发布成 /sim_scene/arm/image_raw,
+         web_video_server 转 MJPEG 供 Dashboard"机械臂仿真"页显示整个抓取仿真场景。 -->
+    <model name="scene_camera">
+      <static>true</static>
+      <pose>1.8 -1.3 1.7 0 0.35 2.4</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.04 0.04 0.04</size></box></geometry>
+        </visual>
+        <sensor type="camera" name="scene_cam">
+          <always_on>true</always_on>
+          <update_rate>15</update_rate>
+          <camera name="scene">
+            <horizontal_fov>1.2</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.05</near><far>50</far></clip>
+          </camera>
+          <plugin name="scene_cam_controller" filename="libgazebo_ros_camera.so">
+            <ros>
+              <namespace>/sim_scene/arm</namespace>
+              <remapping>scene/image_raw:=image_raw</remapping>
+              <remapping>scene/camera_info:=camera_info</remapping>
+            </ros>
+            <camera_name>scene</camera_name>
+            <frame_name>scene_camera</frame_name>
+          </plugin>
+        </sensor>
+      </link>
+    </model>
+
     <!-- 物理 -->
     <physics name="default_physics" default="0" type="ode">
       <max_step_size>0.001</max_step_size>

@@ -7,7 +7,7 @@ telemetry from `turn_on_wheeltec_robot`, drives the chassis through
 ## 组成
 
 - `rosbridge_websocket` — 浏览器 ↔ ROS 2 桥接 (默认 `ws://<host>:9090`)
-- 一个 Python 节点 `web_server` — 用 `http.server` 静态托管前端 (默认 `http://<host>:8080`)
+- 一个 Python 节点 `web_server` — 用 `http.server` 静态托管前端 (默认 `http://<host>:8000`)
 - 前端：原生 HTML/CSS/JS + [`roslibjs`](https://github.com/RobotWebTools/roslibjs) + [`Chart.js`](https://www.chartjs.org/) + [`ros3djs`](https://github.com/RobotWebTools/ros3djs) / [`three.js`](https://threejs.org/) (走 CDN)
 
 ## 依赖
@@ -39,7 +39,28 @@ ros2 launch wheeltec_dashboard dashboard.launch.py
 ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
 ```
 
-然后在浏览器打开 `http://<机器人IP>:8080/`，页面默认会连接到
+**仿真一键 bringup**（Gazebo 仿真 + 面板一起拉起，机器无需真车）：
+
+```bash
+# 只起面板(含 sim_launcher)，再在网页"仿真 (Gazebo)"分组里选世界点"启动仿真"
+ros2 launch wheeltec_dashboard sim_bringup.launch.py
+
+# 或顺带自动起一个仿真世界
+ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=chassis chassis_world:=wheeltec_line_follow
+ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=arm arm_world:=grab_yolo
+# Gazebo 导航世界 + Nav2 一起起(slam 边建图边导航, /goal_pose 直接可用)
+ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=nav
+```
+
+> 逐页验证清单：① 打开 `http://<IP>:8000/` 顶栏显示"已连接"；② "仿真 (Gazebo)→机械臂仿真/
+> 机器人底盘仿真"页选世界【启动仿真】，状态徽标变"运行中"，几秒后场景画面出现；③ 机械臂：
+> "监控与抓取"页能看 `/joint_states`、动关节，"系统总览"3D 视图(Fixed frame=`world`)能看关节运动；
+> ④ 底盘：用"底盘控制"页遥控 `/cmd_vel`，3D 视图(Fixed frame=`odom`)能看小车行走与 `/scan`；
+> ⑤ 巡线：起 `line_follow_qr_fixed`，车沿红线走、路口读 QR 转向；⑥ 导航：`sim:=nav`（或 Nav2
+> 页【启动导航仿真】）一条命令起 Gazebo+Nav2（slam 模式免初始位姿），"功能模块→导航 Nav2"页
+> 发 `/goal_pose`，车自主到点。
+
+然后在浏览器打开 `http://<机器人IP>:8000/`，页面默认会连接到
 `ws://<同一host>:9090` (rosbridge)。
 
 > 仪表盘 launch 已自带一个 `web_video_server`（:8081），不要再手动
@@ -53,19 +74,22 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
 
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
-| `http_port` | `8080` | dashboard HTTP 端口 |
+| `http_port` | `8000` | dashboard HTTP 端口 |
 | `ws_port` | `9090` | rosbridge_websocket 端口 |
 | `video_port` | `8081` | web_video_server (MJPEG) 端口 |
 | `enable_video` | `true` | 是否随 dashboard 拉起 web_video_server |
+| `enable_watchdog` | `true` | 是否随 dashboard 拉起 sensor_watchdog |
+| `enable_sim_launcher` | `true` | 是否随 dashboard 拉起 sim_launcher（网页一键启停 Gazebo 仿真；false=只读）|
 | `address` | `0.0.0.0` | HTTP 监听地址 |
 
-例：`ros2 launch wheeltec_dashboard dashboard.launch.py http_port:=8000`
+例：`ros2 launch wheeltec_dashboard dashboard.launch.py http_port:=8080`
 
 ## 功能
 
 页面顶部为导航栏，按机器人本体的两个部分 —— **Wheeltec 底盘** 与
 **Lebai 机械臂** —— 分组（也支持 `#overview`、`#components`、`#control`、
-`#function`、`#mapping`、`#arm`、`#chat`、`#contact` 锚点深链）。顶栏右侧常驻
+`#function`、`#mapping`、`#arm`、`#armsim`、`#chassissim`、`#chat`、`#contact`
+锚点深链）。顶栏右侧常驻
 **机械臂在线徽标**（`/robot_status` 3 秒内有数据=在线绿、断流=离线红、
 未连 rosbridge=灰）：
 
@@ -85,6 +109,7 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
   - **底盘控制**：速度控制（遥控 + 安全等级）、自动回充、RGB 灯带、参数调节
   - **功能模块**（含子页面）：巡线、KCF 跟踪、YOLO 检测、骨架识别、
     路径跟随（wheeltec_path_follow 录制/回放可视化）、
+    路径跟随、导航 (Nav2)（初始位姿 /initialpose + 目标 /goal_pose，可地图点选 + 取消）、
     VLA 语音导航（含航点标定助手）
   - **建图**（含子页面，wheeltec_robot_slam 四种 SLAM 方式 + RRT 自主探索）：
     GMapping、Cartographer、Slam Toolbox、ORB-SLAM2（RGB-D 视觉）、
@@ -94,6 +119,27 @@ ros2 launch wheeltec_dashboard labrobot_bringup.launch.py
 - **Lebai 机械臂**
   - **监控与抓取**（含子页面）：监控与控制、HSV / YOLO / KCF / ArUco / VLM
     五种 grab_demo 抓取方案
+- **仿真 (Gazebo)**（把 Gazebo 场景经 web_video_server 转 MJPEG 转发到网页，
+  机器人/工作站不开 Gazebo GUI 也能看仿真画面）。两页顶部都有 **"仿真启停"** 卡：
+  选好世界点【启动仿真】，由后端 **`sim_launcher`** 节点执行对应 `ros2 launch`
+  （白名单内的包/世界，防任意命令执行；切世界先停旧的再起新的），状态徽标实时反映
+  运行中/未运行。**要看运动**：除转发的 Gazebo 画面外，仿真还发布 `/joint_states`+`/tf`，
+  "系统总览"3D 视图能显示机械臂关节运动与底盘行走（点页内"在 3D 视图看运动"快捷按钮）。
+  - **机械臂仿真**：转发抓取仿真场景 `/sim_scene/arm/image_raw` + 眼在手相机 + HSV
+    调试图 + 目标距离；控制在"监控与抓取"页。lebai_gazebo **按抓取方案分多个世界**：
+    `grab_world`(通用)、`grab_hsv_color`(HSV)、`grab_yolo`(YOLO)、`grab_kcf`(KCF)、
+    `grab_aruco`(ArUco，含 `model://aruco_marker`，首次用前跑
+    `scripts/make_aruco_marker.py` 生成标记)、`grab_vlm`(VLM 语言)。
+  - **机器人底盘仿真**：转发底盘仿真场景 `/sim_scene/chassis/image_raw` + 车上相机
+    `/camera/color/image_raw`；底盘话题与真机对齐（`/cmd_vel` 遥控、`/scan`、`/odom`，
+    3D 视图 Fixed frame 仿真填 `odom`）。wheeltec_gazebo **按功能分多个世界**（文件名即功能）：
+    `wheeltec_slam_nav`(建图/导航/避障)、`wheeltec_rrt_explore`(RRT 探索)、
+    `wheeltec_line_follow`(不带随机分叉的 QR 巡线)、`wheeltec_target_follow`(跟随/检测)、
+    `wheeltec_vla_nav`(VLA 语音导航/路径跟随)、`wheeltec_nav`(Nav2 自主导航)。
+  - 也可纯命令行启动：`ros2 launch lebai_gazebo gazebo_grab.launch.py world:=grab_yolo` /
+    `ros2 launch wheeltec_gazebo gazebo.launch.py world:=wheeltec_line_follow x:=-3.0 y:=0.0`。
+  - `sim_launcher` 默认随 dashboard launch 启动（`enable_sim_launcher:=true`）；设为
+    `false` 则面板只显示状态、不允许网页启停。
 - **AI 对话**：与大模型文字聊天，三种后端可切——Ollama·ROS 服务
   （`/chat_service`，ollama_ros_chat）、Ollama·ROS 话题流式
   （`/chat_message`→`/chat_response` 逐字渲染）、**DeepSeek API 联网直连**

@@ -1,0 +1,15 @@
+material QR/Straight
+{
+  technique
+  {
+    pass
+    {
+      texture_unit
+      {
+        texture qr_straight.png
+        filtering anisotropic
+        max_anisotropy 8
+      }
+    }
+  }
+}

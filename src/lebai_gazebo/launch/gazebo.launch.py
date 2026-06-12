@@ -1,9 +1,9 @@
 import os
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, RegisterEventHandler
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, RegisterEventHandler
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command
+from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 from launch_ros.parameter_descriptions import ParameterValue
@@ -11,8 +11,12 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description():
     pkg = get_package_share_directory('lebai_gazebo')
     xacro_file = os.path.join(pkg, 'urdf', 'lm3_gazebo.xacro')
-    world = os.path.join(pkg, 'worlds', 'grab_world.world')
-    
+
+    # 用 world 参数选择不同功能的抓取世界(文件名即功能):
+    #   grab_world(默认/通用) / grab_hsv_color / grab_yolo / grab_kcf / grab_aruco / grab_vlm
+    world = LaunchConfiguration('world')
+    world_path = PathJoinSubstitution([pkg, 'worlds', [world, '.world']])
+
     # 用 xacro 实时展开机器人描述
     robot_description = {
         'robot_description': ParameterValue(
@@ -24,7 +28,7 @@ def generate_launch_description():
     gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('gazebo_ros'), 'launch', 'gazebo.launch.py')),
-        launch_arguments={'world': world, 'verbose': 'true'}.items()
+        launch_arguments={'world': world_path, 'verbose': 'true'}.items()
     )
 
     # 发布 TF / robot_description(供 spawn 用)
@@ -56,6 +60,10 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'world', default_value='grab_world',
+            description='抓取世界名(worlds/<name>.world): grab_world / grab_hsv_color / '
+                        'grab_yolo / grab_kcf / grab_aruco / grab_vlm'),
         gazebo,
         robot_state_publisher,
         spawn_entity,

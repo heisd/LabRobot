@@ -1,0 +1,106 @@
+<?xml version="1.0" ?>
+<!-- =========================================================================
+  wheeltec_target_follow.world — Wheeltec 底盘"目标跟随 / 检测"世界(Gazebo Classic 11)。
+
+  功能定位: KCF 跟随 / YOLO 跟随 / 骨架(体感)跟随 / YOLO 检测。
+  半开放场地: 两面 grey_wall 作背景, 场内若干"行人"(person_standing / person_walking)
+  与物体(垃圾桶/桌子/可乐罐/树)作为被检测、被跟随的目标。
+
+  所有模型来自本机 ~/.gazebo/models(与 grab_world.world 同款绝对路径 URI)。
+  俯视场景相机发布 /sim_scene/chassis/image_raw, 经 web_video_server 在 Dashboard 查看。
+========================================================================= -->
+<sdf version="1.6">
+  <world name="wheeltec_target_follow">
+
+    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
+    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
+
+    <!-- 背景两面墙(L 形, 半开放) -->
+    <include>
+      <name>wall_back</name>
+      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>0 4.0 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>wall_side</name>
+      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <pose>-4.0 0 0 0 0 1.5708</pose>
+    </include>
+
+    <!-- ===================== 被跟随 / 被检测的目标 ===================== -->
+    <include>
+      <name>person_target</name>
+      <uri>model:///home/user/.gazebo/models/person_standing</uri>
+      <pose>2.0 0.5 0 0 0 -1.5708</pose>
+    </include>
+    <include>
+      <name>person_walking</name>
+      <uri>model:///home/user/.gazebo/models/person_walking</uri>
+      <pose>1.0 -2.0 0 0 0 1.0</pose>
+    </include>
+
+    <!-- 场景物体 -->
+    <include>
+      <name>cafe_table</name>
+      <uri>model:///home/user/.gazebo/models/cafe_table</uri>
+      <pose>3.0 -2.0 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>coke_can</name>
+      <uri>model:///home/user/.gazebo/models/coke_can</uri>
+      <pose>3.0 -2.0 0.78 0 0 0</pose>
+    </include>
+    <include>
+      <name>dumpster</name>
+      <uri>model:///home/user/.gazebo/models/dumpster</uri>
+      <pose>-2.5 3.0 0 0 0 0</pose>
+    </include>
+    <include>
+      <name>pine_tree</name>
+      <uri>model:///home/user/.gazebo/models/pine_tree</uri>
+      <pose>3.5 3.0 0 0 0 0</pose>
+    </include>
+
+    <!-- ===================== 俯视场景相机(转发到 Web) ===================== -->
+    <model name="scene_camera">
+      <static>true</static>
+      <pose>6.0 -6.0 5.5 0 0.55 2.356</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.05 0.05 0.05</size></box></geometry>
+        </visual>
+        <sensor type="camera" name="scene_cam">
+          <always_on>true</always_on>
+          <update_rate>15</update_rate>
+          <camera name="scene">
+            <horizontal_fov>1.05</horizontal_fov>
+            <image><width>960</width><height>540</height><format>R8G8B8</format></image>
+            <clip><near>0.1</near><far>100</far></clip>
+          </camera>
+          <plugin name="scene_cam_controller" filename="libgazebo_ros_camera.so">
+            <ros>
+              <namespace>/sim_scene/chassis</namespace>
+              <remapping>scene/image_raw:=image_raw</remapping>
+              <remapping>scene/camera_info:=camera_info</remapping>
+            </ros>
+            <camera_name>scene</camera_name>
+            <frame_name>scene_camera</frame_name>
+          </plugin>
+        </sensor>
+      </link>
+    </model>
+
+    <physics name="default_physics" default="0" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <gui fullscreen="0">
+      <camera name="user_camera">
+        <pose>6.5 -6.5 6.0 0 0.5 2.356</pose>
+      </camera>
+    </gui>
+
+  </world>
+</sdf>
