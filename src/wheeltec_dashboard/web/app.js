@@ -5,6 +5,23 @@
   const MAX_POINTS = 120; // ~2 min @ 1 Hz, less at higher rates
   const $ = (id) => document.getElementById(id);
 
+  // ---------- Toast 通知 ----------
+  // 关键事件（连接断开/急停/手柄/导航目标）的全局即时反馈：用户可能正
+  // 盯着别的卡片或标签页，卡内的 setCardMsg 看不到。
+  const toastStack = $('toast-stack');
+  function toast(text, kind, ms) {
+    if (!toastStack) return;
+    const el = document.createElement('div');
+    el.className = 'toast' + (kind ? ' ' + kind : '');
+    el.textContent = text;
+    toastStack.appendChild(el);
+    while (toastStack.children.length > 5) toastStack.removeChild(toastStack.firstChild);
+    setTimeout(() => {
+      el.classList.add('leaving');
+      setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 300);
+    }, ms || 3500);
+  }
+
   // ---------- Connection ----------
   const defaultUrl = `ws://${location.hostname || 'localhost'}:9090`;
   const urlInput = $('ws-url');
@@ -65,12 +82,16 @@
     r.on('connection', () => {
       if (ros !== r) return;
       setStatus('on', '已连接');
+      toast('rosbridge 已连接', 'ok');
       setupTopics();
     });
     r.on('close', () => {
       // Stale close from a previously discarded ros instance — ignore.
       if (ros !== r) return;
       setStatus('off', '已断开');
+      // 主动断开走 disconnect()（那时 ros 已置 null，进不到这里），
+      // 能走到这的都是意外掉线，必须显眼提示。
+      toast('rosbridge 连接断开', 'err');
       teardownTopics();
       setButtonForState(false);
       // Keep intent in sync with the visible label: after an unexpected
@@ -83,6 +104,7 @@
       if (ros !== r) return;
       console.error('rosbridge error', err);
       setStatus('off', '连接错误');
+      toast('rosbridge 连接错误，请检查 ws 地址与 rosbridge 是否在跑', 'err');
       // WebSocket usually fires 'close' right after 'error', but not
       // always (e.g. immediate handshake failure on some browsers).
       // Reset the same state here so the button label and intent stay
@@ -777,16 +799,149 @@
     }
   });
 
+  // ---------- 虚拟摇杆 ----------
+  // 拖拽遥控：纵向=线速度（上正），横向=角速度（左正，与 WASD 的 A=左转
+  // 一致）。Pointer Events 同时覆盖鼠标和触屏；按住时与键盘一样按 10 Hz
+  // 连发（看门狗语义），松开/取消/失焦立即归零停车。
+  let joyStop = () => {};
+  const joyBase = $('joystick');
+  const joyKnob = $('joystick-knob');
+  if (joyBase && joyKnob) {
+    let joyTimer = null;
+    let joyVec = { x: 0, y: 0 }; // 归一化偏移，x 右正 y 下正（屏幕系）
+
+    function setKnob(nx, ny) {
+      const r = joyBase.clientWidth / 2;
+      const max = r - joyKnob.offsetWidth / 2; // knob 不出底盘
+      joyKnob.style.left = (r + nx * max) + 'px';
+      joyKnob.style.top = (r + ny * max) + 'px';
+    }
+
+    function joyPublish() {
+      publishCmd(-joyVec.y * (+linMax.value), -joyVec.x * (+angMax.value));
+    }
+
+    function joyMove(ev) {
+      const rect = joyBase.getBoundingClientRect();
+      const r = rect.width / 2;
+      let nx = (ev.clientX - rect.left - r) / r;
+      let ny = (ev.clientY - rect.top - r) / r;
+      const len = Math.hypot(nx, ny);
+      if (len > 1) { nx /= len; ny /= len; }
+      joyVec = { x: nx, y: ny };
+      setKnob(nx, ny);
+    }
+
+    function joyEnd() {
+      joyVec = { x: 0, y: 0 };
+      setKnob(0, 0);
+      joyBase.classList.remove('dragging');
+      if (joyTimer) { clearInterval(joyTimer); joyTimer = null; }
+      publishCmd(0, 0);
+    }
+    joyStop = () => { if (joyBase.classList.contains('dragging')) joyEnd(); };
+
+    joyBase.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault();
+      joyBase.setPointerCapture(ev.pointerId);
+      joyBase.classList.add('dragging');
+      joyMove(ev);
+      joyPublish();
+      clearInterval(joyTimer);
+      joyTimer = setInterval(joyPublish, 100);
+    });
+    joyBase.addEventListener('pointermove', (ev) => {
+      if (joyBase.classList.contains('dragging')) joyMove(ev);
+    });
+    joyBase.addEventListener('pointerup', joyEnd);
+    joyBase.addEventListener('pointercancel', joyEnd);
+    // 与键盘遥控同样的安全语义：窗口失焦就再也收不到 pointerup 了
+    window.addEventListener('blur', joyStop);
+  }
+
+  // ---------- 游戏手柄 ----------
+  // Gamepad API：左摇杆驱动底盘（上=前进 左=左转），须勾选启用，避免
+  // 手柄误碰乱发速度。浏览器不推杆量事件，只能 poll，同样 10 Hz。
+  let gpStop = () => {};
+  const gpEnable = $('gamepad-enable');
+  const gpStatus = $('gamepad-status');
+  if (gpEnable && gpStatus) {
+    const GP_DEADZONE = 0.15;
+    let gpTimer = null;
+    let gpWasActive = false; // 上一帧杆量出过死区——回中时补发一帧零速
+
+    function gpPad() {
+      const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+      for (const p of pads) { if (p && p.connected) return p; }
+      return null;
+    }
+
+    function gpUpdateStatus() {
+      const pad = gpPad();
+      gpStatus.textContent = pad ? pad.id : '未检测到手柄';
+    }
+
+    function gpPoll() {
+      const pad = gpPad();
+      if (!pad) return;
+      const x = pad.axes[0] || 0;
+      const y = pad.axes[1] || 0;
+      if (Math.hypot(x, y) < GP_DEADZONE) {
+        if (gpWasActive) { gpWasActive = false; publishCmd(0, 0); }
+        return;
+      }
+      gpWasActive = true;
+      publishCmd(-y * (+linMax.value), -x * (+angMax.value));
+    }
+
+    gpStop = () => {
+      if (!gpEnable.checked && !gpTimer) return;
+      gpEnable.checked = false;
+      clearInterval(gpTimer);
+      gpTimer = null;
+      gpWasActive = false;
+    };
+
+    gpEnable.addEventListener('change', () => {
+      if (gpEnable.checked) {
+        clearInterval(gpTimer);
+        gpTimer = setInterval(gpPoll, 100);
+        gpUpdateStatus();
+        toast(gpPad() ? '手柄遥控已启用（左摇杆驱动）' : '手柄遥控已启用，等待手柄接入（接好后动一下摇杆）', 'ok');
+      } else {
+        const wasActive = gpWasActive;
+        gpStop();
+        if (wasActive) publishCmd(0, 0);
+        toast('手柄遥控已关闭', 'warn');
+      }
+    });
+
+    window.addEventListener('gamepadconnected', (e) => {
+      gpUpdateStatus();
+      toast('检测到手柄: ' + e.gamepad.id, 'ok');
+    });
+    window.addEventListener('gamepaddisconnected', () => {
+      gpUpdateStatus();
+      if (gpWasActive) { gpWasActive = false; publishCmd(0, 0); }
+    });
+  }
+
   // Emergency stop button: always publish (0,0), regardless of held inputs.
+  // 同时切断所有会继续连发的遥控源（按键九宫格/键盘/摇杆/手柄），否则
+  // 急停发完零速后它们的 10 Hz 循环又会把速度顶回去。
   const eStopBtn = $('e-stop');
   if (eStopBtn) {
     eStopBtn.addEventListener('click', () => {
       heldKeys.clear();
       stopKeyboardLoop(false);
+      stopBtn();
+      joyStop();
+      gpStop();
       // Send the stop a few times in case rosbridge / WiFi drops one.
       publishCmd(0, 0);
       setTimeout(() => publishCmd(0, 0), 50);
       setTimeout(() => publishCmd(0, 0), 150);
+      toast('已急停：连发 3 帧零速到 /cmd_vel', 'warn');
     });
   }
 
@@ -1913,12 +2068,14 @@
         pose: { position: { x: p.x, y: p.y, z: 0 }, orientation: quatFromYaw(p.yaw) },
       }));
       setCardMsg('nav2-goal-msg', `已发布 /goal_pose (x=${p.x.toFixed(2)}, y=${p.y.toFixed(2)})`);
+      toast(`导航目标已发布 (x=${p.x.toFixed(2)}, y=${p.y.toFixed(2)})，小车开始移动`, 'ok');
     });
     const cancel = $('nav2-cancel');
     if (cancel) cancel.addEventListener('click', () => {
       if (!cmdVelManualPub) { setCardMsg('nav2-goal-msg', '未连接 rosbridge'); return; }
       cmdVelManualPub.publish(new ROSLIB.Message({ linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } }));
       setCardMsg('nav2-goal-msg', '已发零速到 /cmd_vel_manual（nav_arbiter 取消当前导航目标）');
+      toast('已请求取消当前导航目标', 'warn');
     });
   })();
 
@@ -2885,6 +3042,7 @@
       },
     }));
     setCardMsg('wp-msg', `已发布 /goal_pose（选中点 x=${pose.x.toFixed(2)}, y=${pose.y.toFixed(2)}）`);
+    toast(`导航目标已发布 (x=${pose.x.toFixed(2)}, y=${pose.y.toFixed(2)})，小车开始移动`, 'ok');
   });
 
   // 航点列表：来自后端广播，带"导航 / 删除"操作（事件委托，重渲染不丢绑定）。
@@ -2934,6 +3092,7 @@
         },
       }));
       setCardMsg('wp-msg', '已发布 /goal_pose → ' + name);
+      toast('导航目标已发布 → ' + name + '，小车开始移动', 'ok');
     }
   });
 

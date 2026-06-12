@@ -261,9 +261,15 @@ ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=nav
   对管个数，不是急停）、`/self_check_data`（新固件该字段恒 0）、`/odom`、
   `/imu/data_raw`、`/Distance`、`/robot_enable_flag`（固件使能位 en_flag，
   需重编译驱动）、`/robot_recharge_mode`（固件回充模式回读，需重编译驱动）
-- 速度控制：方向按键 + 线/角速度上限滑块 + 键盘 WASD/空格 (停)；
-  **安全等级**开关发布 `/chassis_security`（0=速度流中断自动停车 /
-  1=保持最后速度，随下一帧 cmd_vel 写入固件 SecurityLevel）
+- 速度控制：方向按键 + **虚拟摇杆**（鼠标/触屏拖拽，松开归零停车）+
+  线/角速度上限滑块 + 键盘 WASD/空格 (停) + **游戏手柄**（Gamepad API，
+  勾选启用后左摇杆驱动，回中即停）；四种输入源任一在发速度时按急停会
+  同时切断全部连发循环。**安全等级**开关发布 `/chassis_security`
+  （0=速度流中断自动停车 / 1=保持最后速度，随下一帧 cmd_vel 写入固件
+  SecurityLevel）
+- **全局 Toast 通知**：rosbridge 连接/断开/出错、急停、手柄接入/启停、
+  导航目标发布与取消等关键事件在页面右下角即时弹出提示，不用盯着卡片
+  内的状态行
 - **自动回充**：发布 `/robot_recharge_flag`（1 开 / 0 关，发布后自动补发一帧
   零速 cmd_vel 把标志位带给固件）；卡内显示固件确认的回充模式、回充红外、
   充电状态与电流。回充中由充电桩 CAN 设备引导底盘，手动遥控可打断，

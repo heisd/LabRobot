@@ -483,6 +483,17 @@
             <button class="tk" data-vx="-1" data-wz="1">↙</button>
             <button class="tk" data-vx="-1" data-wz="-1">↘</button>
           </div>
+          <div class="joystick-wrap">
+            <div id="joystick" class="joystick-base" title="拖动摇杆控制底盘，松开自动归零停车">
+              <div id="joystick-knob" class="joystick-knob"></div>
+            </div>
+            <div class="joystick-hint">虚拟摇杆 · 上下=线速 左右=角速 · 松开停</div>
+            <label class="gamepad-row" title="左摇杆驱动底盘：上=前进 左=左转，回中即停">
+              <input id="gamepad-enable" type="checkbox" />
+              游戏手柄遥控（左摇杆）
+            </label>
+            <div id="gamepad-status" class="gamepad-status">未检测到手柄</div>
+          </div>
           <div class="teleop-sliders">
             <label>线速度上限 <span id="lin-val">0.30</span> m/s
               <input id="lin-max" type="range" min="0" max="1.5" step="0.05" value="0.3" />
@@ -2029,6 +2040,9 @@
       </section>
     </div>
   </main>
+
+  <!-- 全局 Toast 通知（连接状态/急停/手柄/导航等关键事件的即时反馈） -->
+  <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 
   <script src="app.js"></script>
 </body>
