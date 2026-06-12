@@ -1242,6 +1242,10 @@
   // `if (viewer) return;` short-circuit.
   let viewerResizeObserver = null;
   let viewerResizeFallback = null;
+  // "2D 导航目标"工具（等价 RViz 2D Nav Goal）：开关 + 进行中拖拽的取消
+  // 钩子（拖拽状态在 buildViewer 闭包里，Esc 退出工具时要把预览箭头清掉）
+  let navGoalMode = false;
+  let navGoalCancelDrag = () => {};
 
   // --- minimal quaternion / transform math for client-side TF ---
   const TF_IDENTITY = { translation: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 } };
@@ -1693,6 +1697,75 @@
 
     viewer = { scene, camera, renderer, controls, host };
 
+    // --- "2D 导航目标"手势：按下选位置、拖动定朝向，松开确认发布 ---
+    // 模式开着时 OrbitControls 已被禁用，指针事件归这里。目标点取相机
+    // 射线与 fixed frame 地面 z=0 的交点（地图平面就铺在那），发布前再经
+    // map TF 转回 map 系。
+    const navRay = new THREE.Raycaster();
+    const navPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    let navDrag = null;    // 按下点（fixed frame 地面坐标），null = 没在拖
+    let navArrow = null;   // 朝向预览箭头
+
+    function navGroundPoint(ev) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((ev.clientX - rect.left) / rect.width) * 2 - 1,
+        -((ev.clientY - rect.top) / rect.height) * 2 + 1);
+      navRay.setFromCamera(ndc, camera);
+      const hit = new THREE.Vector3();
+      return navRay.ray.intersectPlane(navPlane, hit) ? hit : null;
+    }
+    function navRemoveArrow() {
+      if (navArrow) { try { scene.remove(navArrow); } catch (_) { /* ignore */ } navArrow = null; }
+    }
+    navGoalCancelDrag = () => { navDrag = null; navRemoveArrow(); };
+
+    renderer.domElement.addEventListener('pointerdown', (ev) => {
+      if (!navGoalMode) return;
+      const p = navGroundPoint(ev);
+      if (!p) return;   // 视角太平射不到地面——忽略这次按下
+      ev.preventDefault();
+      renderer.domElement.setPointerCapture(ev.pointerId);
+      navDrag = { x: p.x, y: p.y };
+      navRemoveArrow();
+      navArrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0),
+        new THREE.Vector3(p.x, p.y, 0.02), 0.5, 0x3fb950, 0.2, 0.12);
+      scene.add(navArrow);
+    });
+    renderer.domElement.addEventListener('pointermove', (ev) => {
+      if (!navDrag || !navArrow) return;
+      const p = navGroundPoint(ev);
+      if (!p) return;
+      const dx = p.x - navDrag.x, dy = p.y - navDrag.y;
+      const len = Math.hypot(dx, dy);
+      if (len > 1e-3) {
+        navArrow.setDirection(new THREE.Vector3(dx / len, dy / len, 0));
+        navArrow.setLength(Math.max(0.4, len), 0.2, 0.12);
+      }
+    });
+    renderer.domElement.addEventListener('pointerup', (ev) => {
+      if (!navDrag) return;
+      const start = navDrag;
+      navDrag = null;
+      const p = navGroundPoint(ev);
+      navRemoveArrow();
+      if (!navGoalMode) return;   // 拖到一半 Esc 退出了
+      const end = p || start;
+      const dx = end.x - start.x, dy = end.y - start.y;
+      let yaw;
+      if (Math.hypot(dx, dy) >= 0.15) {
+        yaw = Math.atan2(dy, dx);
+      } else {
+        // 没拖出朝向：默认 = 从小车当前位置指向目标点（拿不到就 0）
+        const base = tfClient ? tfClient.lookup('base_footprint') : null;
+        yaw = base
+          ? Math.atan2(start.y - base.translation.y, start.x - base.translation.x)
+          : 0;
+      }
+      publishNavGoalFixed(start.x, start.y, yaw);
+    });
+    renderer.domElement.addEventListener('pointercancel', navGoalCancelDrag);
+
     const animate = () => {
       viewerRaf = requestAnimationFrame(animate);
       if (controls) controls.update();
@@ -1725,6 +1798,44 @@
   function setViewerStatus(text) {
     const el = $('viewer-status');
     if (el) el.textContent = text || '';
+  }
+
+  const NAV_GOAL_HINT = '2D 导航目标: 在地面上按下选位置、拖动定朝向，松开确认发布 /goal_pose（Esc 退出）';
+  function setNavGoalMode(on) {
+    navGoalMode = !!on;
+    if (!navGoalMode) navGoalCancelDrag();
+    const btn = $('vw-nav-goal');
+    if (btn) btn.classList.toggle('tool-active', navGoalMode);
+    const host = $('viewer');
+    if (host) host.classList.toggle('nav-goal-mode', navGoalMode);
+    if (viewer && viewer.controls) viewer.controls.enabled = !navGoalMode;
+    if (navGoalMode) {
+      setViewerStatus(NAV_GOAL_HINT);
+    } else {
+      const cur = (($('viewer-status') || {}).textContent) || '';
+      if (cur.indexOf('2D 导航目标:') === 0) setViewerStatus('');
+    }
+  }
+
+  // fixed frame 地面坐标 → map 系 /goal_pose。与其它发目标入口同样带二次
+  // 确认；成功后与 RViz 一致自动退出工具，防误点连发。
+  function publishNavGoalFixed(fx, fy, yawFixed) {
+    if (!goalPosePub) { toast('未连接 rosbridge，无法发布导航目标', 'err'); return; }
+    const mapTf = tfClient ? tfClient.lookup('map') : null;
+    if (!mapTf) { toast('无 map→fixed frame 的 TF（SLAM/AMCL 未跑），无法发布 map 系导航目标', 'err'); return; }
+    // p_fixed = R_map·p_map + t_map  =>  p_map = R_map⁻¹·(p_fixed − t_map)
+    const inv = tfInverse(mapTf);
+    const pm = quatRotateVec(inv.rotation, { x: fx, y: fy, z: 0 });
+    const x = pm.x + inv.translation.x;
+    const y = pm.y + inv.translation.y;
+    const yaw = yawFixed - yawFromQuat(mapTf.rotation);
+    if (!window.confirm(`导航到 x=${x.toFixed(2)}, y=${y.toFixed(2)}（map 系）？小车将开始移动。`)) return;
+    goalPosePub.publish(new ROSLIB.Message({
+      header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
+      pose: { position: { x, y, z: 0 }, orientation: quatFromYaw(yaw) },
+    }));
+    toast(`导航目标已发布 (x=${x.toFixed(2)}, y=${y.toFixed(2)})，小车开始移动`, 'ok');
+    setNavGoalMode(false);
   }
 
   function disposeLayers() {
@@ -1823,6 +1934,20 @@
   }
 
   $('vw-apply').addEventListener('click', rebuildViewer);
+  const navGoalBtn = $('vw-nav-goal');
+  if (navGoalBtn) navGoalBtn.addEventListener('click', () => {
+    if (navGoalMode) { setNavGoalMode(false); return; }
+    if (!viewer) { toast('3D 视图未初始化，请先连接 rosbridge', 'warn'); return; }
+    if (!tfClient || !tfClient.lookup('map')) {
+      toast('无 map→fixed frame 的 TF（SLAM/AMCL 未跑），无法发布 map 系导航目标', 'err');
+      return;
+    }
+    setNavGoalMode(true);
+  });
+  // Esc 随时退出工具（拖到一半也行，预览箭头一并清掉）
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && navGoalMode) setNavGoalMode(false);
+  });
   // 勾选机器人模型 / SLAM 地图开关即时生效（与"应用"等价，重建图层）
   ['vw-show-urdf', 'vw-show-map'].forEach((id) => {
     const el = $(id);

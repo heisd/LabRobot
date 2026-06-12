@@ -290,7 +290,11 @@ ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=nav
   `/pkg/<包名>/<路径>` 路由从 ament share 提供，每个 link 按实时 TF 摆放
   （无需关节运动学）；多个 robot_state_publisher（底盘+机械臂）可逗号并列。
   SLAM 地图复用 VLA 子页的 `/map` 数据铺为地面贴图，按 map→fixed TF 对齐，
-  未定位时自动隐藏。
+  未定位时自动隐藏。**2D 导航目标工具**（等价 RViz 2D Nav Goal）：点亮
+  工具按钮后 OrbitControls 暂停，在地面上按下选位置、拖动定朝向（绿色
+  箭头预览；不拖则朝向默认=从小车指向目标点），松开二次确认后把交点经
+  map TF 逆变换回 map 系发布 `/goal_pose`，发完自动退出工具，Esc 可随时
+  取消；无 map TF（SLAM/AMCL 未跑）时拒绝进入并提示。
 - **相机预览**：launch 同时拉起 `web_video_server`，dashboard 通过
   MJPEG 同时显示两路相机——默认车上 `/camera/color/image_raw` 与机械臂
   `/camera_arm/color/image_raw`，话题/画质/端口可编辑。深度流把 topic

@@ -714,6 +714,11 @@ main {
   height: 28px;
 }
 .viewer-controls button:hover { filter: brightness(1.15); }
+.viewer-controls button.tool-active {
+  background: var(--ok);
+  box-shadow: 0 0 0 2px rgba(63, 185, 80, 0.35);
+}
+.viewer.nav-goal-mode canvas { cursor: crosshair !important; }
 
 .cam-toolbar {
   display: flex;
