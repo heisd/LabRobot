@@ -4,7 +4,7 @@ It is a thin wrapper around ``http.server`` exposed as a ROS 2 node so that
 it can be launched alongside ``rosbridge_websocket`` from a single launch
 file. Parameters:
 
-* ``port`` (int, default 8080) — TCP port to listen on.
+* ``port`` (int, default 8000) — TCP port to listen on.
 * ``address`` (string, default "0.0.0.0") — interface to bind to.
 * ``web_root`` (string, default "") — override directory containing
   ``index.html``. When empty, the installed share/wheeltec_dashboard/web
@@ -57,7 +57,7 @@ class DashboardWebServer(Node):
     def __init__(self) -> None:
         super().__init__('wheeltec_dashboard_web_server')
 
-        self.declare_parameter('port', 8080)
+        self.declare_parameter('port', 8000)
         self.declare_parameter('address', '0.0.0.0')
         self.declare_parameter('web_root', '')
 

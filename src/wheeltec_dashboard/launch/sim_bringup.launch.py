@@ -13,7 +13,10 @@
   # 面板 + 自动起机械臂"YOLO 抓取"世界
   ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=arm arm_world:=grab_yolo
 
-打开 http://<本机IP>:8080/ , 顶部"仿真 (Gazebo)"分组即可看转发画面与启停。
+  # 面板 + 自动起"Gazebo 导航仿真 + Nav2"(slam 边建图边导航, /goal_pose 直接可用)
+  ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=nav
+
+打开 http://<本机IP>:8000/ , 顶部"仿真 (Gazebo)"分组即可看转发画面与启停。
 """
 
 import os
@@ -37,8 +40,13 @@ def _maybe_sim(context, *_args, **_kw):
         pkg = get_package_share_directory('lebai_gazebo')
         src = os.path.join(pkg, 'launch', 'gazebo_grab.launch.py')
         world = LaunchConfiguration('arm_world').perform(context)
+    elif sim == 'nav':
+        # Gazebo 导航世界 + Nav2(slam_toolbox 边建图边导航), /goal_pose 即驱动 Nav2
+        pkg = get_package_share_directory('wheeltec_gazebo')
+        src = os.path.join(pkg, 'launch', 'nav2_sim.launch.py')
+        world = LaunchConfiguration('nav_world').perform(context)
     else:
-        raise RuntimeError(f"未知 sim 值: {sim!r} (可选 none / chassis / arm)")
+        raise RuntimeError(f"未知 sim 值: {sim!r} (可选 none / chassis / arm / nav)")
     return [IncludeLaunchDescription(
         PythonLaunchDescriptionSource(src),
         launch_arguments={'world': world}.items(),
@@ -62,14 +70,18 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'sim', default_value='none',
-            description='是否随面板自动起仿真: none(只起面板, 网页里选世界) / chassis / arm'),
+            description='是否随面板自动起仿真: none(只起面板, 网页里选世界) / chassis / arm / '
+                        'nav(Gazebo 导航世界 + Nav2)'),
         DeclareLaunchArgument(
             'chassis_world', default_value='wheeltec_slam_nav',
-            description='sim:=chassis 时的底盘世界(wheeltec_slam_nav/rrt_explore/line_follow/target_follow/vla_nav)'),
+            description='sim:=chassis 时的底盘世界(wheeltec_slam_nav/rrt_explore/line_follow/target_follow/vla_nav/nav)'),
         DeclareLaunchArgument(
             'arm_world', default_value='grab_world',
             description='sim:=arm 时的抓取世界(grab_world/grab_hsv_color/grab_yolo/grab_kcf/grab_aruco/grab_vlm)'),
-        DeclareLaunchArgument('http_port', default_value='8080'),
+        DeclareLaunchArgument(
+            'nav_world', default_value='wheeltec_nav',
+            description='sim:=nav 时的导航世界(wheeltec_nav/wheeltec_slam_nav/wheeltec_vla_nav)'),
+        DeclareLaunchArgument('http_port', default_value='8000'),
         DeclareLaunchArgument('ws_port', default_value='9090'),
         DeclareLaunchArgument('video_port', default_value='8081'),
         DeclareLaunchArgument(

@@ -12,6 +12,8 @@
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>xacro</exec_depend>
   <exec_depend>gazebo_ros</exec_depend>
+  <!-- nav2_sim.launch.py 包含 wheeltec_nav2 的 Nav2 bringup -->
+  <exec_depend>wheeltec_nav2</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

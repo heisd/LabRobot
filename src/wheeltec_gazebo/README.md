@@ -20,6 +20,7 @@ Wheeltec 移动底盘的 **Gazebo Classic 11** 仿真：一台自洽的差速底
 | `worlds/wheeltec_nav.world` | **Nav2 自主导航**：grey_wall 分区房间 + 家具/障碍 + 过道，体现路径规划与代价地图避障 |
 | `models/qr_*` | **QR 码标识牌模型**：把 `simple_follower_ros2/qr_codes` 的 PNG 贴成 Gazebo 模型(立方体各面贴码) |
 | `launch/gazebo.launch.py` | 启动 Gazebo + 选定世界 + 生成底盘 |
+| `launch/nav2_sim.launch.py` | **Gazebo 导航世界 + Nav2 一键启动**（`/goal_pose` 即驱动 Nav2；参数自动适配仿真 `odom_combined→odom`，默认 slam 边建图边导航） |
 | `hooks/wheeltec_gazebo.dsv.in` | 把本包 `models/` 加进 `GAZEBO_MODEL_PATH`，让 `model://qr_*` 能解析 |
 
 **世界文件名都带功能名**，一看即知用途。所有障碍物来自本机 `~/.gazebo/models`
@@ -33,6 +34,8 @@ Wheeltec 移动底盘的 **Gazebo Classic 11** 仿真：一台自洽的差速底
 
 ```bash
 sudo apt install ros-humble-gazebo-ros-pkgs ros-humble-xacro ros-humble-robot-state-publisher
+# nav2_sim.launch.py(导航仿真)另需:
+sudo apt install ros-humble-nav2-bringup ros-humble-slam-toolbox
 ```
 
 ## 三、编译 & 运行
@@ -86,9 +89,22 @@ ros2 topic pub --once /cmd_vel geometry_msgs/Twist "{linear: {x: 0.2}}"  # 前�
 - **跟随 / 检测**：`world:=wheeltec_target_follow`，起 KCF/YOLO/bodyreader 跟随场内行人。
 - **VLA 语音导航 / 路径跟随**：`world:=wheeltec_vla_nav`，起 `vla_navigation` 的 vla_navigator，
   对房间里的书架/餐桌/柜子/回充区等地标做自然语言导航；路径录制/回放(wheeltec_path_follow)同此世界。
-- **Nav2 自主导航**：`world:=wheeltec_nav`，先 SLAM 建图并保存，再起 Nav2(AMCL + 规划/控制器)。
-  在 Dashboard“功能模块→导航 (Nav2)”页设初始位姿、发 `/goal_pose`(可在地图上点选)；规划器绕家具、
-  穿过道到目标。
+- **Nav2 自主导航**：一条命令把"Gazebo 导航世界 + Nav2"一起起好（`/goal_pose` 要真正驱动
+  Nav2，机器上必须跑着 Nav2——已写进 launch）：
+
+  ```bash
+  ros2 launch wheeltec_gazebo nav2_sim.launch.py                  # 默认 wheeltec_nav 世界
+  ros2 launch wheeltec_gazebo nav2_sim.launch.py world:=wheeltec_vla_nav
+  ```
+
+  它会自动把 `wheeltec_nav2` 的真机参数适配仿真（真机里程计坐标系是 EKF 的
+  `odom_combined`，仿真 diff_drive 发布的是 `odom`，启动时整体替换后写到
+  `/tmp/nav_param_*_sim.yaml`，原文件不动），并以 `use_sim_time:=True` 起
+  `wheeltec_nav2/bringup_launch.py`。默认 **`slam:=True`**：slam_toolbox 边建图边导航，
+  **免先存地图、免设初始位姿**（SLAM 自己发布 `map→odom`），Dashboard"功能模块→导航
+  Nav2"页（或页内【启动导航仿真】按钮）直接发 `/goal_pose` 即自主到点；已给仿真世界
+  建好图想用 AMCL 时：`slam:=False map:=/路径/xx.yaml`（此时需先发"初始位姿"）。
+  也可随面板一起起：`ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=nav`。
 
 建议各功能节点都加 `use_sim_time:=true`。
 

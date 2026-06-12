@@ -1050,6 +1050,18 @@
       <div class="subtab-panel" id="subpanel-nav2">
         <section class="card card-wide">
           <h2>Nav2 自主导航 <span class="muted">(/initialpose · /goal_pose · nav_arbiter)</span></h2>
+          <div class="fn-stream-toolbar">
+            <label>导航仿真世界
+              <select id="nav2sim-world">
+                <option value="wheeltec_nav">wheeltec_nav（Nav2 自主导航）</option>
+                <option value="wheeltec_slam_nav">wheeltec_slam_nav（建图/导航房间）</option>
+                <option value="wheeltec_vla_nav">wheeltec_vla_nav（地标分区房间）</option>
+              </select>
+            </label>
+            <button class="sim-start" data-key="nav" data-world-sel="nav2sim-world">启动导航仿真 (Gazebo+Nav2)</button>
+            <button class="sim-stop rc-stop" data-key="nav">停止</button>
+            <span class="sim-launch-status ctrl-src ctrl-src-idle" data-key="nav">仿真: —</span>
+          </div>
           <div class="grid">
             <div class="metric">
               <div class="metric-label">定位 (/amcl_pose)</div>
@@ -1064,10 +1076,15 @@
               <div id="nav2-cur" class="metric-value">—</div>
             </div>
           </div>
-          <p class="hint">需先启动 <strong>Nav2</strong>（含 AMCL + map_server + 规划/控制器，如 <code>vla_bringup.launch.py</code>
-            或 wheeltec 的 nav2 launch）并 rosbridge。<strong>仿真</strong>：用 <code>wheeltec_nav</code> 世界（"仿真启停"卡选它启动），
-            先 SLAM 建好图保存、再起 Nav2 定位与导航。地图/代价地图可在"系统总览"3D 视图看（<code>/map</code>，Fixed frame 仿真填 <code>odom</code>/定位后填 <code>map</code>）；
-            想在地图上点选目标，用下方的"VLA 航点管理"页（同 <code>/goal_pose</code>）。</p>
+          <p class="hint"><code>/goal_pose</code> 要真正驱动 Nav2，机器上必须跑着 Nav2 —— 已写进 launch：
+            <strong>仿真</strong>点上方【启动导航仿真】（= 后端执行
+            <code>ros2 launch wheeltec_gazebo nav2_sim.launch.py world:=&lt;所选&gt;</code>，Gazebo 导航世界 + Nav2 一起起；
+            参数已自动适配仿真 <code>odom_combined→odom</code>），默认 <strong>slam 模式边建图边导航</strong>，
+            <strong>免存地图、免设初始位姿</strong>，直接发"导航目标"即可；已存好仿真地图想用 AMCL 时，终端
+            <code>slam:=False map:=/路径/xx.yaml</code> 启动，再用下方"初始位姿"卡。<strong>真机</strong>用
+            <code>vla_bringup.launch.py</code> 或 <code>ros2 launch wheeltec_nav2 wheeltec_nav2.launch.py</code>（AMCL 定位，需设初始位姿）。
+            地图/代价地图可在"系统总览"3D 视图看（<code>/map</code>，定位后 Fixed frame 填 <code>map</code>）；
+            想在地图上点选目标，用"VLA 航点管理"页（同 <code>/goal_pose</code>）。</p>
         </section>
 
         <section class="card card-wide">

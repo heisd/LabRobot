@@ -62,6 +62,18 @@ CATALOG = {
             "wheeltec_nav": ["x:=-3.0", "y:=-3.0"],
         },
     },
+    # Gazebo 导航世界 + Nav2 一起起(nav2_sim.launch.py 默认 slam:=True 边建图边导航,
+    # /goal_pose 直接驱动 Nav2, 免存图免初始位姿)。与 chassis 互斥使用(都开 Gazebo)。
+    "nav": {
+        "pkg": "wheeltec_gazebo",
+        "launch": "nav2_sim.launch.py",
+        "label": "Nav2 导航仿真 (Gazebo + Nav2)",
+        "worlds": {
+            "wheeltec_nav": [],
+            "wheeltec_slam_nav": [],
+            "wheeltec_vla_nav": [],
+        },
+    },
 }
 
 

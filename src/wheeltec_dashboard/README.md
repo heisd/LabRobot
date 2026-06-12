@@ -7,7 +7,7 @@ telemetry from `turn_on_wheeltec_robot`, drives the chassis through
 ## 组成
 
 - `rosbridge_websocket` — 浏览器 ↔ ROS 2 桥接 (默认 `ws://<host>:9090`)
-- 一个 Python 节点 `web_server` — 用 `http.server` 静态托管前端 (默认 `http://<host>:8080`)
+- 一个 Python 节点 `web_server` — 用 `http.server` 静态托管前端 (默认 `http://<host>:8000`)
 - 前端：原生 HTML/CSS/JS + [`roslibjs`](https://github.com/RobotWebTools/roslibjs) + [`Chart.js`](https://www.chartjs.org/) + [`ros3djs`](https://github.com/RobotWebTools/ros3djs) / [`three.js`](https://threejs.org/) (走 CDN)
 
 ## 依赖
@@ -48,16 +48,19 @@ ros2 launch wheeltec_dashboard sim_bringup.launch.py
 # 或顺带自动起一个仿真世界
 ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=chassis chassis_world:=wheeltec_line_follow
 ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=arm arm_world:=grab_yolo
+# Gazebo 导航世界 + Nav2 一起起(slam 边建图边导航, /goal_pose 直接可用)
+ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=nav
 ```
 
-> 逐页验证清单：① 打开 `http://<IP>:8080/` 顶栏显示"已连接"；② "仿真 (Gazebo)→机械臂仿真/
+> 逐页验证清单：① 打开 `http://<IP>:8000/` 顶栏显示"已连接"；② "仿真 (Gazebo)→机械臂仿真/
 > 机器人底盘仿真"页选世界【启动仿真】，状态徽标变"运行中"，几秒后场景画面出现；③ 机械臂：
 > "监控与抓取"页能看 `/joint_states`、动关节，"系统总览"3D 视图(Fixed frame=`world`)能看关节运动；
 > ④ 底盘：用"底盘控制"页遥控 `/cmd_vel`，3D 视图(Fixed frame=`odom`)能看小车行走与 `/scan`；
-> ⑤ 巡线：起 `line_follow_qr_fixed`，车沿红线走、路口读 QR 转向；⑥ 导航：`wheeltec_nav` 世界
-> 起 Nav2，"功能模块→导航 (Nav2)"页设初始位姿、地图点选目标发 `/goal_pose`，车自主到点。
+> ⑤ 巡线：起 `line_follow_qr_fixed`，车沿红线走、路口读 QR 转向；⑥ 导航：`sim:=nav`（或 Nav2
+> 页【启动导航仿真】）一条命令起 Gazebo+Nav2（slam 模式免初始位姿），"功能模块→导航 Nav2"页
+> 发 `/goal_pose`，车自主到点。
 
-然后在浏览器打开 `http://<机器人IP>:8080/`，页面默认会连接到
+然后在浏览器打开 `http://<机器人IP>:8000/`，页面默认会连接到
 `ws://<同一host>:9090` (rosbridge)。
 
 > 仪表盘 launch 已自带一个 `web_video_server`（:8081），不要再手动
@@ -71,7 +74,7 @@ ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=arm arm_world:=grab_yo
 
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
-| `http_port` | `8080` | dashboard HTTP 端口 |
+| `http_port` | `8000` | dashboard HTTP 端口 |
 | `ws_port` | `9090` | rosbridge_websocket 端口 |
 | `video_port` | `8081` | web_video_server (MJPEG) 端口 |
 | `enable_video` | `true` | 是否随 dashboard 拉起 web_video_server |
@@ -79,7 +82,7 @@ ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=arm arm_world:=grab_yo
 | `enable_sim_launcher` | `true` | 是否随 dashboard 拉起 sim_launcher（网页一键启停 Gazebo 仿真；false=只读）|
 | `address` | `0.0.0.0` | HTTP 监听地址 |
 
-例：`ros2 launch wheeltec_dashboard dashboard.launch.py http_port:=8000`
+例：`ros2 launch wheeltec_dashboard dashboard.launch.py http_port:=8080`
 
 ## 功能
 
