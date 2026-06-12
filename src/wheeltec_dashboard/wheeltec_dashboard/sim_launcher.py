@@ -141,11 +141,13 @@ class SimLauncher(Node):
         # 同 key 已在跑 -> 先停再起(切换世界)
         self._stop(key)
         extra = spec["worlds"][world]
+        # argv 各元素来源: 常量 + CATALOG 白名单常量; world 已通过上方白名单成员检查,
+        # 列表参数且不经 shell, 外部输入只能"从白名单选一项", 无法注入任意命令。
         argv = ["ros2", "launch", spec["pkg"], spec["launch"], f"world:={world}", *extra]
         cmd_str = " ".join(argv)
         self.get_logger().info(f"启动 {key}: {cmd_str}")
         # 独立进程组, 停止时可整组 SIGINT; 继承当前(已 source)的环境
-        popen = subprocess.Popen(
+        popen = subprocess.Popen(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
             argv,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
