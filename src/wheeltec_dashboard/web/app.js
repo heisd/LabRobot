@@ -5,12 +5,41 @@
   const MAX_POINTS = 120; // ~2 min @ 1 Hz, less at higher rates
   const $ = (id) => document.getElementById(id);
 
+  // ---------- Toast 通知 ----------
+  // 关键事件（连接断开/急停/手柄/导航目标）的全局即时反馈：用户可能正
+  // 盯着别的卡片或标签页，卡内的 setCardMsg 看不到。
+  const toastStack = $('toast-stack');
+  function toast(text, kind, ms) {
+    if (!toastStack) return;
+    const el = document.createElement('div');
+    el.className = 'toast' + (kind ? ' ' + kind : '');
+    el.textContent = text;
+    toastStack.appendChild(el);
+    while (toastStack.children.length > 5) toastStack.removeChild(toastStack.firstChild);
+    setTimeout(() => {
+      el.classList.add('leaving');
+      setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 300);
+    }, ms || 3500);
+  }
+
   // ---------- Connection ----------
   const defaultUrl = `ws://${location.hostname || 'localhost'}:9090`;
   const urlInput = $('ws-url');
   const statusEl = $('ws-status');
   const connectBtn = $('ws-connect');
   urlInput.value = defaultUrl;
+  // 记住用户改过的 rosbridge 地址（端口转发/异机调试不用每次重填）；
+  // 没改过就一直跟随默认值。回车 = 立即连接。
+  try {
+    const savedUrl = localStorage.getItem('ws_url');
+    if (savedUrl) urlInput.value = savedUrl;
+  } catch (_) { /* localStorage 不可用就算了 */ }
+  urlInput.addEventListener('change', () => {
+    try { localStorage.setItem('ws_url', urlInput.value.trim()); } catch (_) { /* ignore */ }
+  });
+  urlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); connect(); }
+  });
 
   let ros = null;
   const subs = [];   // active subscriptions
@@ -52,7 +81,32 @@
     connectBtn.textContent = connected ? '断开' : '连接';
   }
 
-  function connect() {
+  // ---- 断线自动重连 ----
+  // 只对"建立过的连接意外掉线"和"自动尝试失败"重试（指数退避 2s→30s
+  // 封顶，状态栏显示倒计时）；用户手动点"连接"失败（多半是地址填错）
+  // 不重试，手动"断开"取消一切重试。页面加载时的首次连接也按自动流程
+  // 算——rosbridge 常比面板后起，开着页面等它上线即可。
+  let reconnectTimer = null;
+  let reconnectDelay = 0;   // 0 = 当前不在重连流程
+  const RECONNECT_MAX_MS = 30000;
+
+  function cancelReconnect() {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    reconnectDelay = 0;
+  }
+  function scheduleReconnect() {
+    if (reconnectTimer) return;
+    reconnectDelay = reconnectDelay ? Math.min(reconnectDelay * 2, RECONNECT_MAX_MS) : 2000;
+    setStatus('conn', `已断开，${Math.round(reconnectDelay / 1000)}s 后自动重连…`);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect(true);
+    }, reconnectDelay);
+  }
+
+  function connect(isAuto) {
+    if (!isAuto) cancelReconnect();
+    else if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     if (ros) {
       try { ros.close(); } catch (_) { /* ignore */ }
     }
@@ -61,16 +115,23 @@
     setStatus('conn', '连接中…');
     const r = new ROSLIB.Ros({ url: urlInput.value });
     ros = r;
+    let established = false;  // 本次尝试握手成功过——决定掉线后是否自动重连
 
     r.on('connection', () => {
       if (ros !== r) return;
+      established = true;
+      reconnectDelay = 0;     // 连上了，退避归零
       setStatus('on', '已连接');
+      toast('rosbridge 已连接', 'ok');
       setupTopics();
     });
     r.on('close', () => {
       // Stale close from a previously discarded ros instance — ignore.
       if (ros !== r) return;
       setStatus('off', '已断开');
+      // 主动断开走 disconnect()（那时 ros 已置 null，进不到这里），
+      // 能走到这的都是意外掉线，必须显眼提示。
+      if (established) toast('rosbridge 连接断开，自动重连中…', 'err');
       teardownTopics();
       setButtonForState(false);
       // Keep intent in sync with the visible label: after an unexpected
@@ -78,11 +139,15 @@
       // connect path — otherwise users have to click twice to reconnect.
       userWantsConnected = false;
       ros = null;
+      if (established || isAuto) scheduleReconnect();
     });
     r.on('error', (err) => {
       if (ros !== r) return;
       console.error('rosbridge error', err);
       setStatus('off', '连接错误');
+      // 自动重连的失败尝试不刷 toast——退避倒计时在状态栏可见
+      if (established) toast('rosbridge 连接断开，自动重连中…', 'err');
+      else if (!isAuto) toast('rosbridge 连接错误，请检查 ws 地址与 rosbridge 是否在跑', 'err');
       // WebSocket usually fires 'close' right after 'error', but not
       // always (e.g. immediate handshake failure on some browsers).
       // Reset the same state here so the button label and intent stay
@@ -92,10 +157,12 @@
       setButtonForState(false);
       userWantsConnected = false;
       ros = null;
+      if (established || isAuto) scheduleReconnect();
     });
   }
 
   function disconnect() {
+    cancelReconnect();
     userWantsConnected = false;
     if (ros) {
       try { ros.close(); } catch (_) { /* ignore */ }
@@ -648,17 +715,43 @@
   const holdMode = $('hold-mode');
   const cmdReadout = $('cmd-current');
 
-  linMax.addEventListener('input', () => { linVal.textContent = (+linMax.value).toFixed(2); });
-  angMax.addEventListener('input', () => { angVal.textContent = (+angMax.value).toFixed(2); });
+  // 速度上限本地持久化——刷新页面不用重新拉滑块（越界的存量值丢弃）
+  try {
+    const sl = localStorage.getItem('teleop_lin_max');
+    const sa = localStorage.getItem('teleop_ang_max');
+    if (sl !== null && +sl >= +linMax.min && +sl <= +linMax.max) linMax.value = sl;
+    if (sa !== null && +sa >= +angMax.min && +sa <= +angMax.max) angMax.value = sa;
+  } catch (_) { /* ignore */ }
+  linVal.textContent = (+linMax.value).toFixed(2);
+  angVal.textContent = (+angMax.value).toFixed(2);
+
+  linMax.addEventListener('input', () => {
+    linVal.textContent = (+linMax.value).toFixed(2);
+    try { localStorage.setItem('teleop_lin_max', linMax.value); } catch (_) { /* ignore */ }
+  });
+  angMax.addEventListener('input', () => {
+    angVal.textContent = (+angMax.value).toFixed(2);
+    try { localStorage.setItem('teleop_ang_max', angMax.value); } catch (_) { /* ignore */ }
+  });
 
   let curVx = 0, curWz = 0;
   let activeBtn = null;
   let repeatTimer = null;
+  let noConnWarnAt = 0;   // 未连接时按遥控的提示节流
 
   function publishCmd(vx, wz) {
     curVx = vx; curWz = wz;
     cmdReadout.textContent = `vx=${vx.toFixed(2)}, wz=${wz.toFixed(2)}`;
-    if (!cmdVelPub) return;
+    if (!cmdVelPub) {
+      // 没连上时遥控不能静默吞掉——按住连发只提示一次（5s 节流），
+      // 松开归零的 (0,0) 不提示
+      const now = Date.now();
+      if ((vx || wz) && now - noConnWarnAt > 5000) {
+        noConnWarnAt = now;
+        toast('未连接 rosbridge，速度指令没有发出', 'warn');
+      }
+      return;
+    }
     const msg = new ROSLIB.Message({
       linear: { x: vx, y: 0, z: 0 },
       angular: { x: 0, y: 0, z: wz },
@@ -777,16 +870,149 @@
     }
   });
 
+  // ---------- 虚拟摇杆 ----------
+  // 拖拽遥控：纵向=线速度（上正），横向=角速度（左正，与 WASD 的 A=左转
+  // 一致）。Pointer Events 同时覆盖鼠标和触屏；按住时与键盘一样按 10 Hz
+  // 连发（看门狗语义），松开/取消/失焦立即归零停车。
+  let joyStop = () => {};
+  const joyBase = $('joystick');
+  const joyKnob = $('joystick-knob');
+  if (joyBase && joyKnob) {
+    let joyTimer = null;
+    let joyVec = { x: 0, y: 0 }; // 归一化偏移，x 右正 y 下正（屏幕系）
+
+    function setKnob(nx, ny) {
+      const r = joyBase.clientWidth / 2;
+      const max = r - joyKnob.offsetWidth / 2; // knob 不出底盘
+      joyKnob.style.left = (r + nx * max) + 'px';
+      joyKnob.style.top = (r + ny * max) + 'px';
+    }
+
+    function joyPublish() {
+      publishCmd(-joyVec.y * (+linMax.value), -joyVec.x * (+angMax.value));
+    }
+
+    function joyMove(ev) {
+      const rect = joyBase.getBoundingClientRect();
+      const r = rect.width / 2;
+      let nx = (ev.clientX - rect.left - r) / r;
+      let ny = (ev.clientY - rect.top - r) / r;
+      const len = Math.hypot(nx, ny);
+      if (len > 1) { nx /= len; ny /= len; }
+      joyVec = { x: nx, y: ny };
+      setKnob(nx, ny);
+    }
+
+    function joyEnd() {
+      joyVec = { x: 0, y: 0 };
+      setKnob(0, 0);
+      joyBase.classList.remove('dragging');
+      if (joyTimer) { clearInterval(joyTimer); joyTimer = null; }
+      publishCmd(0, 0);
+    }
+    joyStop = () => { if (joyBase.classList.contains('dragging')) joyEnd(); };
+
+    joyBase.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault();
+      joyBase.setPointerCapture(ev.pointerId);
+      joyBase.classList.add('dragging');
+      joyMove(ev);
+      joyPublish();
+      clearInterval(joyTimer);
+      joyTimer = setInterval(joyPublish, 100);
+    });
+    joyBase.addEventListener('pointermove', (ev) => {
+      if (joyBase.classList.contains('dragging')) joyMove(ev);
+    });
+    joyBase.addEventListener('pointerup', joyEnd);
+    joyBase.addEventListener('pointercancel', joyEnd);
+    // 与键盘遥控同样的安全语义：窗口失焦就再也收不到 pointerup 了
+    window.addEventListener('blur', joyStop);
+  }
+
+  // ---------- 游戏手柄 ----------
+  // Gamepad API：左摇杆驱动底盘（上=前进 左=左转），须勾选启用，避免
+  // 手柄误碰乱发速度。浏览器不推杆量事件，只能 poll，同样 10 Hz。
+  let gpStop = () => {};
+  const gpEnable = $('gamepad-enable');
+  const gpStatus = $('gamepad-status');
+  if (gpEnable && gpStatus) {
+    const GP_DEADZONE = 0.15;
+    let gpTimer = null;
+    let gpWasActive = false; // 上一帧杆量出过死区——回中时补发一帧零速
+
+    function gpPad() {
+      const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+      for (const p of pads) { if (p && p.connected) return p; }
+      return null;
+    }
+
+    function gpUpdateStatus() {
+      const pad = gpPad();
+      gpStatus.textContent = pad ? pad.id : '未检测到手柄';
+    }
+
+    function gpPoll() {
+      const pad = gpPad();
+      if (!pad) return;
+      const x = pad.axes[0] || 0;
+      const y = pad.axes[1] || 0;
+      if (Math.hypot(x, y) < GP_DEADZONE) {
+        if (gpWasActive) { gpWasActive = false; publishCmd(0, 0); }
+        return;
+      }
+      gpWasActive = true;
+      publishCmd(-y * (+linMax.value), -x * (+angMax.value));
+    }
+
+    gpStop = () => {
+      if (!gpEnable.checked && !gpTimer) return;
+      gpEnable.checked = false;
+      clearInterval(gpTimer);
+      gpTimer = null;
+      gpWasActive = false;
+    };
+
+    gpEnable.addEventListener('change', () => {
+      if (gpEnable.checked) {
+        clearInterval(gpTimer);
+        gpTimer = setInterval(gpPoll, 100);
+        gpUpdateStatus();
+        toast(gpPad() ? '手柄遥控已启用（左摇杆驱动）' : '手柄遥控已启用，等待手柄接入（接好后动一下摇杆）', 'ok');
+      } else {
+        const wasActive = gpWasActive;
+        gpStop();
+        if (wasActive) publishCmd(0, 0);
+        toast('手柄遥控已关闭', 'warn');
+      }
+    });
+
+    window.addEventListener('gamepadconnected', (e) => {
+      gpUpdateStatus();
+      toast('检测到手柄: ' + e.gamepad.id, 'ok');
+    });
+    window.addEventListener('gamepaddisconnected', () => {
+      gpUpdateStatus();
+      if (gpWasActive) { gpWasActive = false; publishCmd(0, 0); }
+    });
+  }
+
   // Emergency stop button: always publish (0,0), regardless of held inputs.
+  // 同时切断所有会继续连发的遥控源（按键九宫格/键盘/摇杆/手柄），否则
+  // 急停发完零速后它们的 10 Hz 循环又会把速度顶回去。
   const eStopBtn = $('e-stop');
   if (eStopBtn) {
     eStopBtn.addEventListener('click', () => {
       heldKeys.clear();
       stopKeyboardLoop(false);
+      stopBtn();
+      joyStop();
+      gpStop();
       // Send the stop a few times in case rosbridge / WiFi drops one.
       publishCmd(0, 0);
       setTimeout(() => publishCmd(0, 0), 50);
       setTimeout(() => publishCmd(0, 0), 150);
+      toast('已急停：连发 3 帧零速到 /cmd_vel', 'warn');
     });
   }
 
@@ -1087,6 +1313,10 @@
   // `if (viewer) return;` short-circuit.
   let viewerResizeObserver = null;
   let viewerResizeFallback = null;
+  // "2D 导航目标"工具（等价 RViz 2D Nav Goal）：开关 + 进行中拖拽的取消
+  // 钩子（拖拽状态在 buildViewer 闭包里，Esc 退出工具时要把预览箭头清掉）
+  let navGoalMode = false;
+  let navGoalCancelDrag = () => {};
 
   // --- minimal quaternion / transform math for client-side TF ---
   const TF_IDENTITY = { translation: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 } };
@@ -1538,6 +1768,75 @@
 
     viewer = { scene, camera, renderer, controls, host };
 
+    // --- "2D 导航目标"手势：按下选位置、拖动定朝向，松开确认发布 ---
+    // 模式开着时 OrbitControls 已被禁用，指针事件归这里。目标点取相机
+    // 射线与 fixed frame 地面 z=0 的交点（地图平面就铺在那），发布前再经
+    // map TF 转回 map 系。
+    const navRay = new THREE.Raycaster();
+    const navPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    let navDrag = null;    // 按下点（fixed frame 地面坐标），null = 没在拖
+    let navArrow = null;   // 朝向预览箭头
+
+    function navGroundPoint(ev) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((ev.clientX - rect.left) / rect.width) * 2 - 1,
+        -((ev.clientY - rect.top) / rect.height) * 2 + 1);
+      navRay.setFromCamera(ndc, camera);
+      const hit = new THREE.Vector3();
+      return navRay.ray.intersectPlane(navPlane, hit) ? hit : null;
+    }
+    function navRemoveArrow() {
+      if (navArrow) { try { scene.remove(navArrow); } catch (_) { /* ignore */ } navArrow = null; }
+    }
+    navGoalCancelDrag = () => { navDrag = null; navRemoveArrow(); };
+
+    renderer.domElement.addEventListener('pointerdown', (ev) => {
+      if (!navGoalMode) return;
+      const p = navGroundPoint(ev);
+      if (!p) return;   // 视角太平射不到地面——忽略这次按下
+      ev.preventDefault();
+      renderer.domElement.setPointerCapture(ev.pointerId);
+      navDrag = { x: p.x, y: p.y };
+      navRemoveArrow();
+      navArrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0),
+        new THREE.Vector3(p.x, p.y, 0.02), 0.5, 0x3fb950, 0.2, 0.12);
+      scene.add(navArrow);
+    });
+    renderer.domElement.addEventListener('pointermove', (ev) => {
+      if (!navDrag || !navArrow) return;
+      const p = navGroundPoint(ev);
+      if (!p) return;
+      const dx = p.x - navDrag.x, dy = p.y - navDrag.y;
+      const len = Math.hypot(dx, dy);
+      if (len > 1e-3) {
+        navArrow.setDirection(new THREE.Vector3(dx / len, dy / len, 0));
+        navArrow.setLength(Math.max(0.4, len), 0.2, 0.12);
+      }
+    });
+    renderer.domElement.addEventListener('pointerup', (ev) => {
+      if (!navDrag) return;
+      const start = navDrag;
+      navDrag = null;
+      const p = navGroundPoint(ev);
+      navRemoveArrow();
+      if (!navGoalMode) return;   // 拖到一半 Esc 退出了
+      const end = p || start;
+      const dx = end.x - start.x, dy = end.y - start.y;
+      let yaw;
+      if (Math.hypot(dx, dy) >= 0.15) {
+        yaw = Math.atan2(dy, dx);
+      } else {
+        // 没拖出朝向：默认 = 从小车当前位置指向目标点（拿不到就 0）
+        const base = tfClient ? tfClient.lookup('base_footprint') : null;
+        yaw = base
+          ? Math.atan2(start.y - base.translation.y, start.x - base.translation.x)
+          : 0;
+      }
+      publishNavGoalFixed(start.x, start.y, yaw);
+    });
+    renderer.domElement.addEventListener('pointercancel', navGoalCancelDrag);
+
     const animate = () => {
       viewerRaf = requestAnimationFrame(animate);
       if (controls) controls.update();
@@ -1570,6 +1869,44 @@
   function setViewerStatus(text) {
     const el = $('viewer-status');
     if (el) el.textContent = text || '';
+  }
+
+  const NAV_GOAL_HINT = '2D 导航目标: 在地面上按下选位置、拖动定朝向，松开确认发布 /goal_pose（Esc 退出）';
+  function setNavGoalMode(on) {
+    navGoalMode = !!on;
+    if (!navGoalMode) navGoalCancelDrag();
+    const btn = $('vw-nav-goal');
+    if (btn) btn.classList.toggle('tool-active', navGoalMode);
+    const host = $('viewer');
+    if (host) host.classList.toggle('nav-goal-mode', navGoalMode);
+    if (viewer && viewer.controls) viewer.controls.enabled = !navGoalMode;
+    if (navGoalMode) {
+      setViewerStatus(NAV_GOAL_HINT);
+    } else {
+      const cur = (($('viewer-status') || {}).textContent) || '';
+      if (cur.indexOf('2D 导航目标:') === 0) setViewerStatus('');
+    }
+  }
+
+  // fixed frame 地面坐标 → map 系 /goal_pose。与其它发目标入口同样带二次
+  // 确认；成功后与 RViz 一致自动退出工具，防误点连发。
+  function publishNavGoalFixed(fx, fy, yawFixed) {
+    if (!goalPosePub) { toast('未连接 rosbridge，无法发布导航目标', 'err'); return; }
+    const mapTf = tfClient ? tfClient.lookup('map') : null;
+    if (!mapTf) { toast('无 map→fixed frame 的 TF（SLAM/AMCL 未跑），无法发布 map 系导航目标', 'err'); return; }
+    // p_fixed = R_map·p_map + t_map  =>  p_map = R_map⁻¹·(p_fixed − t_map)
+    const inv = tfInverse(mapTf);
+    const pm = quatRotateVec(inv.rotation, { x: fx, y: fy, z: 0 });
+    const x = pm.x + inv.translation.x;
+    const y = pm.y + inv.translation.y;
+    const yaw = yawFixed - yawFromQuat(mapTf.rotation);
+    if (!window.confirm(`导航到 x=${x.toFixed(2)}, y=${y.toFixed(2)}（map 系）？小车将开始移动。`)) return;
+    goalPosePub.publish(new ROSLIB.Message({
+      header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
+      pose: { position: { x, y, z: 0 }, orientation: quatFromYaw(yaw) },
+    }));
+    toast(`导航目标已发布 (x=${x.toFixed(2)}, y=${y.toFixed(2)})，小车开始移动`, 'ok');
+    setNavGoalMode(false);
   }
 
   function disposeLayers() {
@@ -1668,6 +2005,20 @@
   }
 
   $('vw-apply').addEventListener('click', rebuildViewer);
+  const navGoalBtn = $('vw-nav-goal');
+  if (navGoalBtn) navGoalBtn.addEventListener('click', () => {
+    if (navGoalMode) { setNavGoalMode(false); return; }
+    if (!viewer) { toast('3D 视图未初始化，请先连接 rosbridge', 'warn'); return; }
+    if (!tfClient || !tfClient.lookup('map')) {
+      toast('无 map→fixed frame 的 TF（SLAM/AMCL 未跑），无法发布 map 系导航目标', 'err');
+      return;
+    }
+    setNavGoalMode(true);
+  });
+  // Esc 随时退出工具（拖到一半也行，预览箭头一并清掉）
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && navGoalMode) setNavGoalMode(false);
+  });
   // 勾选机器人模型 / SLAM 地图开关即时生效（与"应用"等价，重建图层）
   ['vw-show-urdf', 'vw-show-map'].forEach((id) => {
     const el = $(id);
@@ -1680,6 +2031,30 @@
       odomPath.geometry.setDrawRange(0, 0);
     }
   });
+
+  // ---------- 点击放大查看（lightbox）----------
+  // 所有 MJPEG 流画面（.cam-img）点一下铺满全屏看细节——直接复用同一个
+  // 流 URL（多开一路 web_video_server 客户端而已）。KCF 框选画面
+  // （.bbox-select 容器内）按下是框选语义，不抢；占位图没内容不放大。
+  const lightbox = $('lightbox');
+  const lightboxImg = $('lightbox-img');
+  if (lightbox && lightboxImg) {
+    const closeLightbox = () => {
+      lightbox.hidden = true;
+      lightboxImg.removeAttribute('src');   // 断开放大那路流，省带宽
+    };
+    document.addEventListener('click', (e) => {
+      const img = e.target.closest ? e.target.closest('img.cam-img') : null;
+      if (!img || img.closest('.bbox-select')) return;
+      if ((img.src || '').indexOf('placeholder') !== -1) return;
+      lightboxImg.src = img.src;
+      lightbox.hidden = false;
+    });
+    lightbox.addEventListener('click', closeLightbox);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !lightbox.hidden) closeLightbox();
+    });
+  }
 
   // ---------- Cameras (web_video_server) ----------
   const camPort = $('cam-port');
@@ -1913,12 +2288,14 @@
         pose: { position: { x: p.x, y: p.y, z: 0 }, orientation: quatFromYaw(p.yaw) },
       }));
       setCardMsg('nav2-goal-msg', `已发布 /goal_pose (x=${p.x.toFixed(2)}, y=${p.y.toFixed(2)})`);
+      toast(`导航目标已发布 (x=${p.x.toFixed(2)}, y=${p.y.toFixed(2)})，小车开始移动`, 'ok');
     });
     const cancel = $('nav2-cancel');
     if (cancel) cancel.addEventListener('click', () => {
       if (!cmdVelManualPub) { setCardMsg('nav2-goal-msg', '未连接 rosbridge'); return; }
       cmdVelManualPub.publish(new ROSLIB.Message({ linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } }));
       setCardMsg('nav2-goal-msg', '已发零速到 /cmd_vel_manual（nav_arbiter 取消当前导航目标）');
+      toast('已请求取消当前导航目标', 'warn');
     });
   })();
 
@@ -2521,6 +2898,9 @@
   let wpMapTried = false;   // 本次连接是否已自动尝试 GetMap
   let vlaWaypoints = [];    // 后端广播的航点列表
   let wpFile = '';          // 后端持久化文件路径（显示用）
+  let wpZoom = 1;           // 画布缩放（相对"整图适配宽度"的倍数，1=整图）
+  let wpPanX = 0;           // 画布像素平移（wpRedraw 里钳制，1 倍时锁回 0）
+  let wpPanY = 0;
 
   function setWpMapStatus(text) {
     const el = $('wp-map-status');
@@ -2700,18 +3080,29 @@
   const wpMapFileLoad = $('wp-map-file-load');
   if (wpMapFileLoad) wpMapFileLoad.addEventListener('click', fetchWpMapFromFile);
 
-  // map 世界坐标 ↔ 显示画布坐标（位图已预翻转，y 轴只需一次镜像换算）
+  // map 世界坐标 ↔ 显示画布坐标（位图已预翻转，y 轴只需一次镜像换算；
+  // view.s 已含缩放倍数，tx/ty 是平移）
   function wpWorldToCanvas(wx, wy, view) {
     return {
-      x: (wx - wpMap.ox) / wpMap.res * view.s,
-      y: view.h - (wy - wpMap.oy) / wpMap.res * view.s,
+      x: (wx - wpMap.ox) / wpMap.res * view.s + view.tx,
+      y: view.h - (wy - wpMap.oy) / wpMap.res * view.s + view.ty,
     };
   }
   function wpCanvasToWorld(cx, cy, view) {
     return {
-      x: cx / view.s * wpMap.res + wpMap.ox,
-      y: (view.h - cy) / view.s * wpMap.res + wpMap.oy,
+      x: (cx - view.tx) / view.s * wpMap.res + wpMap.ox,
+      y: (view.h + view.ty - cy) / view.s * wpMap.res + wpMap.oy,
     };
+  }
+
+  // 平移钳制：画布始终被地图盖住不留空边（140px 最小高度下地图比画布
+  // 矮的罕见情况取反向区间，效果是允许贴边）。1 倍缩放时区间收敛为 0。
+  function wpClampPan(view) {
+    const mapW = wpMap.w * view.s, mapH = wpMap.h * view.s;
+    wpPanX = Math.max(Math.min(0, view.w - mapW), Math.min(Math.max(0, view.w - mapW), wpPanX));
+    wpPanY = Math.max(Math.min(0, mapH - view.h), Math.min(Math.max(0, mapH - view.h), wpPanY));
+    view.tx = wpPanX;
+    view.ty = wpPanY;
   }
 
   function drawWpArrow(ctx, p, worldYaw, color, r) {
@@ -2739,12 +3130,16 @@
       canvas.width = dispW;
       canvas.height = dispH;
     }
-    const view = { s, w: dispW, h: dispH };
+    const view = { s: s * wpZoom, w: dispW, h: dispH, tx: 0, ty: 0 };
+    wpClampPan(view);
     canvas._view = view;   // pointer 事件换算用
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, dispW, dispH);
-    ctx.drawImage(wpMap.bmp, 0, 0, dispW, dispH);
+    // 位图左上角 = map 帧 (ox, oy + h·res)，按 view 变换摆放——与
+    // wpWorldToCanvas 同一套公式，标记和底图永远对得上
+    ctx.drawImage(wpMap.bmp, view.tx, view.h - wpMap.h * view.s + view.ty,
+      wpMap.w * view.s, wpMap.h * view.s);
     // 已保存航点（蓝点 + 名字）
     ctx.font = '11px sans-serif';
     vlaWaypoints.forEach((wp) => {
@@ -2774,22 +3169,91 @@
     el.textContent = `x=${wpSel.x.toFixed(3)}  y=${wpSel.y.toFixed(3)}  yaw=${wpSel.yaw.toFixed(3)} rad (${(wpSel.yaw * 180 / Math.PI).toFixed(1)}°)`;
   }
 
-  // 地图取点交互：按下定位置，按住拖动定朝向（同 RViz 2D Goal Pose），触屏可用。
+  // 地图取点 + 视图操控：
+  //   左键/单指     按下定位置、按住拖动定朝向（同 RViz 2D Goal Pose）
+  //   滚轮/双指捏合  以光标（两指中点）为锚缩放，1~12 倍
+  //   中键/右键拖动  平移（画布上的右键菜单已屏蔽）
+  //   视图复位按钮   回到整图
   (function initWpMapPick() {
     const canvas = $('wp-map');
     if (!canvas) return;
     let downWorld = null;
+    let panLast = null;          // 中/右键平移：上一点画布坐标
+    const touches = new Map();   // 活动触点 id -> 画布坐标（双指捏合用）
+    let pinchPrev = null;        // 上一帧 { dist, mx, my }
+
+    function evCanvas(e) {
+      const r = canvas.getBoundingClientRect();
+      if (!r.width || !r.height) return null;
+      return {
+        x: (e.clientX - r.left) * (canvas.width / r.width),
+        y: (e.clientY - r.top) * (canvas.height / r.height),
+      };
+    }
     function evWorld(e) {
       const view = canvas._view;
       if (!view || !wpMap) return null;
-      const r = canvas.getBoundingClientRect();
-      if (!r.width || !r.height) return null;
-      const cx = (e.clientX - r.left) * (canvas.width / r.width);
-      const cy = (e.clientY - r.top) * (canvas.height / r.height);
-      return wpCanvasToWorld(cx, cy, view);
+      const c = evCanvas(e);
+      return c ? wpCanvasToWorld(c.x, c.y, view) : null;
     }
+
+    const ZOOM_MIN = 1, ZOOM_MAX = 12;
+    function wpZoomLabel() {
+      const el = $('wp-zoom');
+      if (el) el.textContent = wpZoom > 1.001 ? '×' + wpZoom.toFixed(1) : '';
+    }
+    // 以画布点 (cx,cy) 为锚缩放：锚点对应的世界坐标在缩放前后不动——
+    // 先记锚点世界坐标，换缩放后反解平移（wpRedraw 里再钳制）。
+    function zoomAt(cx, cy, factor) {
+      const view = canvas._view;
+      if (!view || !wpMap) return;
+      const z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, wpZoom * factor));
+      const w = wpCanvasToWorld(cx, cy, view);
+      const s1 = (view.s / wpZoom) * z;
+      wpZoom = z;
+      wpPanX = cx - (w.x - wpMap.ox) / wpMap.res * s1;
+      wpPanY = cy - view.h + (w.y - wpMap.oy) / wpMap.res * s1;
+      wpRedraw();
+      wpZoomLabel();
+    }
+
+    canvas.addEventListener('wheel', (e) => {
+      if (!wpMap || !canvas._view) return;
+      e.preventDefault();
+      const c = evCanvas(e);
+      if (c) zoomAt(c.x, c.y, Math.pow(1.0015, -e.deltaY));
+    }, { passive: false });
+
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    const wpViewReset = $('wp-view-reset');
+    if (wpViewReset) wpViewReset.addEventListener('click', () => {
+      wpZoom = 1; wpPanX = 0; wpPanY = 0;
+      wpRedraw();
+      wpZoomLabel();
+    });
+
     canvas.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && (e.button === 1 || e.button === 2)) {
+        panLast = evCanvas(e);
+        try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+        e.preventDefault();
+        return;
+      }
       if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (e.pointerType === 'touch') {
+        const c = evCanvas(e);
+        if (c) touches.set(e.pointerId, c);
+        if (touches.size === 2) {
+          // 第二指落下 → 切捏合模式，放弃进行中的选点（位置已选上，
+          // 不再跟着拖朝向）
+          downWorld = null;
+          pinchPrev = null;
+          try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+          e.preventDefault();
+          return;
+        }
+      }
       const w = evWorld(e);
       if (!w) return;
       downWorld = w;
@@ -2800,6 +3264,33 @@
       e.preventDefault();
     });
     canvas.addEventListener('pointermove', (e) => {
+      if (panLast) {
+        const c = evCanvas(e);
+        if (!c) return;
+        wpPanX += c.x - panLast.x;
+        wpPanY += c.y - panLast.y;
+        panLast = c;
+        wpRedraw();
+        return;
+      }
+      if (e.pointerType === 'touch' && touches.size === 2) {
+        const c = evCanvas(e);
+        if (!c || !touches.has(e.pointerId)) return;
+        touches.set(e.pointerId, c);
+        const pts = Array.from(touches.values());
+        const cur = {
+          dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
+          mx: (pts[0].x + pts[1].x) / 2,
+          my: (pts[0].y + pts[1].y) / 2,
+        };
+        if (pinchPrev && pinchPrev.dist > 0) {
+          wpPanX += cur.mx - pinchPrev.mx;
+          wpPanY += cur.my - pinchPrev.my;
+          zoomAt(cur.mx, cur.my, cur.dist / pinchPrev.dist);   // 内部钳制+重绘
+        }
+        pinchPrev = cur;
+        return;
+      }
       if (!downWorld) return;
       const w = evWorld(e);
       if (!w) return;
@@ -2809,7 +3300,14 @@
       updateWpSelText();
       wpRedraw();
     });
-    const finish = () => { downWorld = null; };
+    const finish = (e) => {
+      downWorld = null;
+      panLast = null;
+      if (e && e.pointerType === 'touch') {
+        touches.delete(e.pointerId);
+        if (touches.size < 2) pinchPrev = null;
+      }
+    };
     canvas.addEventListener('pointerup', finish);
     canvas.addEventListener('pointercancel', finish);
   })();
@@ -2885,6 +3383,7 @@
       },
     }));
     setCardMsg('wp-msg', `已发布 /goal_pose（选中点 x=${pose.x.toFixed(2)}, y=${pose.y.toFixed(2)}）`);
+    toast(`导航目标已发布 (x=${pose.x.toFixed(2)}, y=${pose.y.toFixed(2)})，小车开始移动`, 'ok');
   });
 
   // 航点列表：来自后端广播，带"导航 / 删除"操作（事件委托，重渲染不丢绑定）。
@@ -2934,6 +3433,7 @@
         },
       }));
       setCardMsg('wp-msg', '已发布 /goal_pose → ' + name);
+      toast('导航目标已发布 → ' + name + '，小车开始移动', 'ok');
     }
   });
 
@@ -4900,6 +5400,7 @@
   (function initNav() {
     function initTabGroup(opts) {
       const btns = Array.from(document.querySelectorAll(opts.btnSel));
+      const storeKey = 'ui_tab_' + opts.key;
       function activate(val) {
         if (!btns.some((b) => b.dataset[opts.key] === val)) return;
         btns.forEach((b) => b.classList.toggle('active', b.dataset[opts.key] === val));
@@ -4909,6 +5410,8 @@
         // which reads as 0×0 while the panel is display:none. Nudging a resize
         // once the panel is visible makes them re-measure and fill the space.
         window.dispatchEvent(new Event('resize'));
+        // 记住停留位置，刷新后原地恢复
+        try { localStorage.setItem(storeKey, val); } catch (_) { /* ignore */ }
         if (opts.onActivate) opts.onActivate(val);
       }
       btns.forEach((b) => b.addEventListener('click', () => {
@@ -4917,6 +5420,12 @@
           try { history.replaceState(null, '', '#' + b.dataset[opts.key]); } catch (_) { /* ignore */ }
         }
       }));
+      // 刷新后回到上次停留的页签（顶层 tab 的 #hash 深链在调用方随后
+      // 覆盖，优先级更高；存量值无效时 activate 自己会拒绝）
+      try {
+        const saved = localStorage.getItem(storeKey);
+        if (saved) activate(saved);
+      } catch (_) { /* ignore */ }
       return activate;
     }
 
@@ -4970,6 +5479,6 @@
     });
   })();
 
-  // Auto-connect on load.
-  connect();
+  // Auto-connect on load（按自动流程：rosbridge 还没起来就退避重试）.
+  connect(true);
 })();

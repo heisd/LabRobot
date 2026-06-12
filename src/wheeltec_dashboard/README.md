@@ -245,7 +245,10 @@ ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=nav
 - **地图航点管理**（VLA 子页）：自动加载已建好的地图（`/map_server/map`
   GetMap 服务 + `/map` 话题兜底，SLAM 建图中实时刷新），画布上叠加小车
   实时位姿（绿箭头）、已存航点（蓝点）；**按下选点、拖动定朝向**（同 RViz
-  2D Goal Pose）或"用当前位姿"，填名字【保存到机器人】→ 后端
+  2D Goal Pose）或"用当前位姿"；画布支持**滚轮/触屏双指捏合缩放**（以光
+  标为锚，1~12 倍）与**中键/右键拖动平移**（平移钳制在地图范围内），
+  工具栏显示当前倍数、"视图复位"一键回整图——大地图精确选点不再费眼。
+  填名字【保存到机器人】→ 后端
   `vla_navigator` 经 `/vla/waypoint_cmd` **立即生效**并整表持久化到
   `~/.ros/vla_waypoints.yaml`（重启优先加载，一次标定永久有效）；航点列表
   （`/vla/waypoints` 广播）支持【导航】（直发 `/goal_pose`）与【删除】；
@@ -261,9 +264,25 @@ ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=nav
   对管个数，不是急停）、`/self_check_data`（新固件该字段恒 0）、`/odom`、
   `/imu/data_raw`、`/Distance`、`/robot_enable_flag`（固件使能位 en_flag，
   需重编译驱动）、`/robot_recharge_mode`（固件回充模式回读，需重编译驱动）
-- 速度控制：方向按键 + 线/角速度上限滑块 + 键盘 WASD/空格 (停)；
-  **安全等级**开关发布 `/chassis_security`（0=速度流中断自动停车 /
-  1=保持最后速度，随下一帧 cmd_vel 写入固件 SecurityLevel）
+- 速度控制：方向按键 + **虚拟摇杆**（鼠标/触屏拖拽，松开归零停车）+
+  线/角速度上限滑块 + 键盘 WASD/空格 (停) + **游戏手柄**（Gamepad API，
+  勾选启用后左摇杆驱动，回中即停）；四种输入源任一在发速度时按急停会
+  同时切断全部连发循环。**安全等级**开关发布 `/chassis_security`
+  （0=速度流中断自动停车 / 1=保持最后速度，随下一帧 cmd_vel 写入固件
+  SecurityLevel）
+- **全局 Toast 通知**：rosbridge 连接/断开/出错、急停、手柄接入/启停、
+  导航目标发布与取消等关键事件在页面右下角即时弹出提示，不用盯着卡片
+  内的状态行；未连接时按遥控也会提示"指令没有发出"（5s 节流）而不是
+  静默吞掉
+- **断线自动重连**：建立过的连接意外掉线、或页面加载时 rosbridge 还没
+  起来，按指数退避（2s→30s 封顶）自动重试，状态栏显示倒计时；手动点
+  "连接"失败（多半是地址填错）不重试，手动"断开"取消重试
+- **本地持久化**：rosbridge 地址（改过才存）、遥控线/角速度上限、当前
+  停留的顶层页签与三组子页签都记在 localStorage，刷新页面原地恢复；
+  ws 地址框回车即连接
+- **画面点击放大**：任意 MJPEG 流画面（相机/巡线/KCF/YOLO/骨架等调试
+  图）点一下全屏查看，再点或 Esc 关闭；KCF 手动框选画面除外（按下是
+  框选语义）
 - **自动回充**：发布 `/robot_recharge_flag`（1 开 / 0 关，发布后自动补发一帧
   零速 cmd_vel 把标志位带给固件）；卡内显示固件确认的回充模式、回充红外、
   充电状态与电流。回充中由充电桩 CAN 设备引导底盘，手动遥控可打断，
@@ -284,7 +303,11 @@ ros2 launch wheeltec_dashboard sim_bringup.launch.py sim:=nav
   `/pkg/<包名>/<路径>` 路由从 ament share 提供，每个 link 按实时 TF 摆放
   （无需关节运动学）；多个 robot_state_publisher（底盘+机械臂）可逗号并列。
   SLAM 地图复用 VLA 子页的 `/map` 数据铺为地面贴图，按 map→fixed TF 对齐，
-  未定位时自动隐藏。
+  未定位时自动隐藏。**2D 导航目标工具**（等价 RViz 2D Nav Goal）：点亮
+  工具按钮后 OrbitControls 暂停，在地面上按下选位置、拖动定朝向（绿色
+  箭头预览；不拖则朝向默认=从小车指向目标点），松开二次确认后把交点经
+  map TF 逆变换回 map 系发布 `/goal_pose`，发完自动退出工具，Esc 可随时
+  取消；无 map TF（SLAM/AMCL 未跑）时拒绝进入并提示。
 - **相机预览**：launch 同时拉起 `web_video_server`，dashboard 通过
   MJPEG 同时显示两路相机——默认车上 `/camera/color/image_raw` 与机械臂
   `/camera_arm/color/image_raw`，话题/画质/端口可编辑。深度流把 topic

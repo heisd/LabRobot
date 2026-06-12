@@ -120,10 +120,11 @@
           <label class="vw-check"><input id="vw-show-map" type="checkbox" checked /> SLAM 地图</label>
           <button id="vw-apply">应用</button>
           <button id="vw-clear-path">清空轨迹</button>
+          <button id="vw-nav-goal" type="button" title="在地面上按下选位置、拖动定朝向，松开确认后发布 /goal_pose（Esc 或再点一次退出）">2D 导航目标</button>
         </div>
         <div id="viewer" class="viewer"></div>
         <div id="viewer-status" class="viewer-status"></div>
-        <p class="hint">图层：Grid / 坐标轴 / LaserScan(<code>/scan</code>) / Odom 轨迹 / <strong>机器人模型(URDF)</strong> / <strong>SLAM 地图(/map)</strong>。TF 直接订阅 <code>/tf</code>+<code>/tf_static</code>，无需 tf2_web_republisher。<strong>机器人模型</strong>：经 rosbridge 调 URDF 节点的 <code>get_parameters</code> 取已展开的 <code>robot_description</code>，浏览器解析后按每个 link 的实时 TF 摆放；网格文件（STL/DAE）由面板 HTTP 服务的 <code>/pkg/&lt;包名&gt;/…</code> 路由提供（重编译 wheeltec_dashboard 生效）。机械臂模型若由独立的 robot_state_publisher 发布，在"URDF 节点"里用逗号补上其节点名即可。<strong>SLAM 地图</strong>：复用 VLA 子页的 <code>/map</code> 数据（map_server GetMap + SLAM 实时刷新；<strong>GetMap 失败自动改读包内地图文件</strong>，默认 <code>/pkg/wheeltec_nav2/map/WHEELTEC.yaml</code>，浏览器直接解析 YAML+PGM，无需 map_server），按 map→fixed frame 的 TF 铺在地面——建图时 fixed frame 填 <code>map</code> 看图最直观；未定位（无 map TF）时地图层自动隐藏。<strong>注意</strong>：<code>/odom</code> 只是<em>话题</em>名——底盘 TF 树的根是 EKF 发布的 <code>odom_combined</code>（<code>odom_combined→base_footprint→base_link→…</code>），所以 Fixed frame 要填 <code>odom_combined</code> 而不是 <code>odom</code>；填错或底盘（EKF）没启动时，下方状态栏会提示当前 TF 树根，且模型会临时以机器人自身根坐标系显示。</p>
+        <p class="hint">图层：Grid / 坐标轴 / LaserScan(<code>/scan</code>) / Odom 轨迹 / <strong>机器人模型(URDF)</strong> / <strong>SLAM 地图(/map)</strong>。TF 直接订阅 <code>/tf</code>+<code>/tf_static</code>，无需 tf2_web_republisher。<strong>机器人模型</strong>：经 rosbridge 调 URDF 节点的 <code>get_parameters</code> 取已展开的 <code>robot_description</code>，浏览器解析后按每个 link 的实时 TF 摆放；网格文件（STL/DAE）由面板 HTTP 服务的 <code>/pkg/&lt;包名&gt;/…</code> 路由提供（重编译 wheeltec_dashboard 生效）。机械臂模型若由独立的 robot_state_publisher 发布，在"URDF 节点"里用逗号补上其节点名即可。<strong>SLAM 地图</strong>：复用 VLA 子页的 <code>/map</code> 数据（map_server GetMap + SLAM 实时刷新；<strong>GetMap 失败自动改读包内地图文件</strong>，默认 <code>/pkg/wheeltec_nav2/map/WHEELTEC.yaml</code>，浏览器直接解析 YAML+PGM，无需 map_server），按 map→fixed frame 的 TF 铺在地面——建图时 fixed frame 填 <code>map</code> 看图最直观；未定位（无 map TF）时地图层自动隐藏。<strong>注意</strong>：<code>/odom</code> 只是<em>话题</em>名——底盘 TF 树的根是 EKF 发布的 <code>odom_combined</code>（<code>odom_combined→base_footprint→base_link→…</code>），所以 Fixed frame 要填 <code>odom_combined</code> 而不是 <code>odom</code>；填错或底盘（EKF）没启动时，下方状态栏会提示当前 TF 树根，且模型会临时以机器人自身根坐标系显示。<strong>2D 导航目标</strong>：点亮按钮后在地面上按下选位置、拖动定朝向（不拖则朝向默认=从小车指向目标点），松开确认即发布 <code>/goal_pose</code>（map 系，需 SLAM/AMCL 在跑、有 map TF；与 RViz 一致发完自动退出工具，Esc 或再点按钮可取消）。</p>
       </section>
 
       <!-- 底部一行用 flex 自适应铺满：任何屏宽都不留空白（窄屏自动换行） -->
@@ -482,6 +483,17 @@
             <button class="tk" data-vx="1" data-wz="-1">↗</button>
             <button class="tk" data-vx="-1" data-wz="1">↙</button>
             <button class="tk" data-vx="-1" data-wz="-1">↘</button>
+          </div>
+          <div class="joystick-wrap">
+            <div id="joystick" class="joystick-base" title="拖动摇杆控制底盘，松开自动归零停车">
+              <div id="joystick-knob" class="joystick-knob"></div>
+            </div>
+            <div class="joystick-hint">虚拟摇杆 · 上下=线速 左右=角速 · 松开停</div>
+            <label class="gamepad-row" title="左摇杆驱动底盘：上=前进 左=左转，回中即停">
+              <input id="gamepad-enable" type="checkbox" />
+              游戏手柄遥控（左摇杆）
+            </label>
+            <div id="gamepad-status" class="gamepad-status">未检测到手柄</div>
           </div>
           <div class="teleop-sliders">
             <label>线速度上限 <span id="lin-val">0.30</span> m/s
@@ -1007,6 +1019,8 @@
               <input id="wp-map-file" type="text" value="/pkg/wheeltec_nav2/map/WHEELTEC.yaml" />
             </label>
             <button id="wp-map-file-load" type="button">从包加载</button>
+            <button id="wp-view-reset" type="button" title="恢复整图视野（滚轮/双指缩放，中键或右键拖动平移）">视图复位</button>
+            <span id="wp-zoom" class="muted"></span>
             <span id="wp-map-status" class="muted"></span>
           </div>
           <div class="wp-map-wrap">
@@ -1042,7 +1056,7 @@
             <span id="wp-count" class="muted"></span>
           </div>
           <div id="wp-list" class="wp-list"></div>
-          <p class="hint"><strong>用法</strong>：先建好图并启动定位（<code>vla_bringup.launch.py</code> 含 Nav2 + map_server），地图会自动加载（也可点"加载地图"，服务默认 <code>/map_server/map</code>；SLAM 建图中则直接订阅 <code>/map</code> 实时刷新）。在地图上<strong>按下选位置、拖动定朝向</strong>（同 RViz 2D Goal Pose），或点"用当前位姿"取小车所在点；填名字点【保存到机器人】→ <code>vla_navigator</code> <strong>立即生效</strong>（说"去厨房"马上可用）并整表写入 <code>~/.ros/vla_waypoints.yaml</code> —— <strong>该文件重启/重编译后优先加载，下次无需重新设置</strong>。列表里【导航】直接发 <code>/goal_pose</code> 去该点（不经大模型），【删除】同步持久化。绿色箭头=小车实时位姿，蓝点=已存航点，黄色箭头=当前选点。需要重编译并重启 <code>vla_navigation</code> 后端一次以获得 <code>/vla/waypoints</code> 能力；地图原点带旋转的罕见情况暂不支持。</p>
+          <p class="hint"><strong>用法</strong>：先建好图并启动定位（<code>vla_bringup.launch.py</code> 含 Nav2 + map_server），地图会自动加载（也可点"加载地图"，服务默认 <code>/map_server/map</code>；SLAM 建图中则直接订阅 <code>/map</code> 实时刷新）。在地图上<strong>按下选位置、拖动定朝向</strong>（同 RViz 2D Goal Pose），或点"用当前位姿"取小车所在点；<strong>滚轮（触屏双指捏合）以光标为锚缩放，中键或右键拖动平移</strong>，大地图上精确选点不再费眼，"视图复位"回到整图。填名字点【保存到机器人】→ <code>vla_navigator</code> <strong>立即生效</strong>（说"去厨房"马上可用）并整表写入 <code>~/.ros/vla_waypoints.yaml</code> —— <strong>该文件重启/重编译后优先加载，下次无需重新设置</strong>。列表里【导航】直接发 <code>/goal_pose</code> 去该点（不经大模型），【删除】同步持久化。绿色箭头=小车实时位姿，蓝点=已存航点，黄色箭头=当前选点。需要重编译并重启 <code>vla_navigation</code> 后端一次以获得 <code>/vla/waypoints</code> 能力；地图原点带旋转的罕见情况暂不支持。</p>
         </section>
       </div>
 
@@ -2029,6 +2043,15 @@
       </section>
     </div>
   </main>
+
+  <!-- 点击相机/调试画面放大查看（再点一下或 Esc 关闭） -->
+  <div id="lightbox" class="lightbox" hidden>
+    <img id="lightbox-img" alt="放大画面" />
+    <div class="lightbox-hint">点击任意处或按 Esc 关闭</div>
+  </div>
+
+  <!-- 全局 Toast 通知（连接状态/急停/手柄/导航等关键事件的即时反馈） -->
+  <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 
   <script src="app.js"></script>
 </body>
