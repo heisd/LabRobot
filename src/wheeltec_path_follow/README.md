@@ -110,3 +110,20 @@ ros2 launch wheeltec_path_follow follow_path.launch.py \
 2. 路径文件较大时回放过程中会消耗内存,建议合理控制采样点数量。
 3. `follow_path.py` 通过 Nav2 action 调用,因此必须先有正确定位与有效地图。
 4. 录制时机器人 odom 漂移会直接反映在路径上,建议在打滑较少的地面录制。
+
+## 在WSL Humble 编译的结果
+```bash
+> colcon build --packages-select wheeltec_path_follow
+
+Starting >>> wheeltec_path_follow
+--- stderr: wheeltec_path_follow                                
+In file included from /home/li/Lab/src/wheeltec_path_follow/src/save_path.cpp:12:
+/opt/ros/humble/include/tf2_geometry_msgs/tf2_geometry_msgs/tf2_geometry_msgs.h:35:2: warning: #warning This header is obsolete, please include tf2_geometry_msgs/tf2_geometry_msgs.hpp instead [-Wcpp]
+   35 | #warning This header is obsolete, please include tf2_geometry_msgs/tf2_geometry_msgs.hpp instead
+      |  ^~~~~~~
+---
+Finished <<< wheeltec_path_follow [29.9s]
+
+Summary: 1 package finished [30.2s]
+  1 package had stderr output: wheeltec_path_follow
+```

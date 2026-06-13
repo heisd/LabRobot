@@ -10,7 +10,7 @@ set(CMAKE_CXX_FLAGS "${NEW_CXX_FLAGS}")
 # find dependencies
 find_package(ament_cmake)
 find_package(Eigen3 REQUIRED)
-find_package(OpenCV 4.10 REQUIRED)
+find_package(OpenCV REQUIRED)
 
 add_library(${PROJECT_NAME}
   SHARED

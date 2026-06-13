@@ -92,3 +92,18 @@ ros2 launch double_lidar_fusion double_lidar_fusion.launch.py
 2. 安装角度/偏移参数必须按实际车体测量,否则两路雷达的同一物体会出现重影。
 3. 默认输出 `frame_id = laser`,务必有 `base_link -> laser` 的静态 TF。
 4. 与单雷达驱动同时启动同一台机器时,注意不要冲突占用串口/网口。
+## 在WSL上编译结果
+```bash
+> colcon build --packages-select double_lidar_fusion
+Starting >>> double_lidar_fusion
+[Processing: double_lidar_fusion]                         
+[Processing: double_lidar_fusion]                                 
+--- stderr: double_lidar_fusion                                          
+** WARNING ** io features related to pcap will be disabled
+---
+Finished <<< double_lidar_fusion [1min 23s]
+
+Summary: 1 package finished [1min 24s]
+  1 package had stderr output: double_lidar_fusion
+
+```

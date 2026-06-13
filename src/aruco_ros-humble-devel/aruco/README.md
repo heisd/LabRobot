@@ -47,3 +47,27 @@ colcon build --packages-select aruco
 1. 本包是纯库,运行 `ros2 run aruco ...` 不会有可执行文件。
 2. OpenCV 版本需与本机一致,否则可能出现 ABI 兼容问题。
 3. 若希望命令行调用,可使用 ArUco 上游提供的工具(本包未包含)。
+
+## 构建失败
+```bash
+> colcon build --packages-select aruco
+Starting >>> aruco   
+--- stderr: aruco                         
+CMake Error at CMakeLists.txt:13 (find_package):
+  Could not find a configuration file for package "OpenCV" that is compatible
+  with requested version "4.10".
+
+  The following configuration files were considered but not accepted:
+
+    /usr/lib/x86_64-linux-gnu/cmake/opencv4/OpenCVConfig.cmake, version: 4.5.4
+    /lib/x86_64-linux-gnu/cmake/opencv4/OpenCVConfig.cmake, version: 4.5.4
+
+
+
+---
+Failed   <<< aruco [4.58s, exited with code 1]
+
+Summary: 0 packages finished [4.91s]
+  1 package failed: aruco
+  1 package had stderr output: aruco
+```

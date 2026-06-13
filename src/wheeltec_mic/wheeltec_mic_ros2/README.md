@@ -117,3 +117,24 @@ ros2 launch wheeltec_mic_ros2 base.launch.py
 3. 离线命令词需先用 `set_awake_word`、`get_offline_result` 服务配置。
 4. 与其他 `cmd_vel` 发布者(键盘 / joy / KCF 跟随)同时运行会冲突。
 5. 反馈音频与系统默认音频设备共用,可能需在 `~/.asoundrc` 中指定 card。
+
+## 在WSL Humble 编译后
+```bash
+> colcon build --packages-select wheeltec_mic_ros2
+
+Starting >>> wheeltec_mic_ros2
+--- stderr: wheeltec_mic_ros2                             
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_mic/wheeltec_mic_ros2/lib/arm64/liboffline_record_lib.so when searching for -loffline_record_lib
+/usr/bin/ld: cannot find -loffline_record_lib: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_mic/wheeltec_mic_ros2/lib/arm64/liboffline_record_lib.so when searching for -loffline_record_lib
+collect2: error: ld returned 1 exit status
+gmake[2]: *** [CMakeFiles/voice_control.dir/build.make:167: voice_control] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:251: CMakeFiles/voice_control.dir/all] Error 2
+gmake: *** [Makefile:146: all] Error 2
+---
+Failed   <<< wheeltec_mic_ros2 [1.08s, exited with code 2]
+
+Summary: 0 packages finished [1.38s]
+  1 package failed: wheeltec_mic_ros2
+  1 package had stderr output: wheeltec_mic_ros2
+```

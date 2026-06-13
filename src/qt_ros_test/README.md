@@ -89,3 +89,187 @@ ros2 launch qt_ros_test qt_ros_test.launch.py
 2. `user_passward` 用于上位机调用 sudo,**部署到生产环境时务必修改默认值或改用密钥**。
 3. RGB 话题默认是 compressed,若相机驱动只发布裸图像,需修改参数。
 4. 与其他 cmd_vel 发布者同时使用会冲突。
+
+## 在WSL Humble 编译如下
+```bash
+> colcon build --packages-select qt_ros_test
+Starting >>> qt_ros_test
+[Processing: qt_ros_test]                             
+[Processing: qt_ros_test]                                     
+--- stderr: qt_ros_test                                          
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp: In destructor ‘virtual qt_ros_test::MainWindow::~MainWindow()’:
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:86:22: warning: ‘static int QProcess::execute(const QString&)’ is deprecated: Use QProcess::execute(const QString &program, const QStringList &arguments) instead [-Wdeprecated-declarations]
+   86 |     QProcess::execute("killall -s INT -w ros2\n");
+      |     ~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from /usr/include/x86_64-linux-gnu/qt5/QtCore/QtCore:170,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGuiDepends:3,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGui:3,
+                 from /home/li/Lab/src/qt_ros_test/src/main_window.cpp:12:
+/usr/include/x86_64-linux-gnu/qt5/QtCore/qprocess.h:265:16: note: declared here
+  265 |     static int execute(const QString &command);
+      |                ^~~~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp: In member function ‘void qt_ros_test::MainWindow::init_cmd()’:
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:114:16: warning: ‘void QProcess::start(const QString&, QIODevice::OpenMode)’ is deprecated: Use QProcess::start(const QString &program, const QStringList &arguments,OpenMode mode = ReadWrite) instead [-Wdeprecated-declarations]
+  114 |     _cmd->start("bash");
+      |     ~~~~~~~~~~~^~~~~~~~
+In file included from /usr/include/x86_64-linux-gnu/qt5/QtCore/QtCore:170,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGuiDepends:3,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGui:3,
+                 from /home/li/Lab/src/qt_ros_test/src/main_window.cpp:12:
+/usr/include/x86_64-linux-gnu/qt5/QtCore/qprocess.h:168:10: note: declared here
+  168 |     void start(const QString &command, OpenMode mode = ReadWrite);
+      |          ^~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp: In member function ‘void qt_ros_test::MainWindow::closeroslaunch()’:
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:143:19: warning: ‘void QProcess::start(const QString&, QIODevice::OpenMode)’ is deprecated: Use QProcess::start(const QString &program, const QStringList &arguments,OpenMode mode = ReadWrite) instead [-Wdeprecated-declarations]
+  143 |     killall->start("sh /home/wheeltec/wheeltec_ros2/src/qt_ros_test/script/killall.sh\n");
+      |     ~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from /usr/include/x86_64-linux-gnu/qt5/QtCore/QtCore:170,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGuiDepends:3,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGui:3,
+                 from /home/li/Lab/src/qt_ros_test/src/main_window.cpp:12:
+/usr/include/x86_64-linux-gnu/qt5/QtCore/qprocess.h:168:10: note: declared here
+  168 |     void start(const QString &command, OpenMode mode = ReadWrite);
+      |          ^~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp: In member function ‘void qt_ros_test::MainWindow::slot_cmd_read()’:
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:158:10: warning: ISO C++ forbids variable length array ‘buffer’ [-Wvla]
+  158 |     char buffer[maxSize];
+      |          ^~~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp: In member function ‘void qt_ros_test::MainWindow::ReadSettings()’:
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:214:10: warning: unused variable ‘remember’ [-Wunused-variable]
+  214 |     bool remember = settings.value("remember_settings", false).toBool();
+      |          ^~~~~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:215:10: warning: unused variable ‘checked’ [-Wunused-variable]
+  215 |     bool checked = settings.value("use_environment_variables", false).toBool();
+      |          ^~~~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp: In member function ‘void qt_ros_test::MainWindow::on_pushButton_2dmap_clicked(bool)’:
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:498:32: warning: ‘static bool QProcess::startDetached(const QString&)’ is deprecated: Use QProcess::startDetached(const QString &program, const QStringList &arguments) instead [-Wdeprecated-declarations]
+  498 |         rviz_cmd->startDetached("rviz2");
+      |         ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+In file included from /usr/include/x86_64-linux-gnu/qt5/QtCore/QtCore:170,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGuiDepends:3,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGui:3,
+                 from /home/li/Lab/src/qt_ros_test/src/main_window.cpp:12:
+/usr/include/x86_64-linux-gnu/qt5/QtCore/qprocess.h:280:17: note: declared here
+  280 |     static bool startDetached(const QString &command);
+      |                 ^~~~~~~~~~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:504:32: warning: ‘static bool QProcess::startDetached(const QString&)’ is deprecated: Use QProcess::startDetached(const QString &program, const QStringList &arguments) instead [-Wdeprecated-declarations]
+  504 |         rviz_cmd->startDetached("killall -2 rviz2");
+      |         ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~
+In file included from /usr/include/x86_64-linux-gnu/qt5/QtCore/QtCore:170,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGuiDepends:3,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGui:3,
+                 from /home/li/Lab/src/qt_ros_test/src/main_window.cpp:12:
+/usr/include/x86_64-linux-gnu/qt5/QtCore/qprocess.h:280:17: note: declared here
+  280 |     static bool startDetached(const QString &command);
+      |                 ^~~~~~~~~~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp: In member function ‘void qt_ros_test::MainWindow::on_pushButton_2dmap_2_clicked()’:
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:527:32: warning: ‘static bool QProcess::startDetached(const QString&)’ is deprecated: Use QProcess::startDetached(const QString &program, const QStringList &arguments) instead [-Wdeprecated-declarations]
+  527 |         rviz_cmd->startDetached("rviz2");
+      |         ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+In file included from /usr/include/x86_64-linux-gnu/qt5/QtCore/QtCore:170,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGuiDepends:3,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGui:3,
+                 from /home/li/Lab/src/qt_ros_test/src/main_window.cpp:12:
+/usr/include/x86_64-linux-gnu/qt5/QtCore/qprocess.h:280:17: note: declared here
+  280 |     static bool startDetached(const QString &command);
+      |                 ^~~~~~~~~~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:533:32: warning: ‘static bool QProcess::startDetached(const QString&)’ is deprecated: Use QProcess::startDetached(const QString &program, const QStringList &arguments) instead [-Wdeprecated-declarations]
+  533 |         rviz_cmd->startDetached("killall -2 rviz2");
+      |         ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~
+In file included from /usr/include/x86_64-linux-gnu/qt5/QtCore/QtCore:170,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGuiDepends:3,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGui:3,
+                 from /home/li/Lab/src/qt_ros_test/src/main_window.cpp:12:
+/usr/include/x86_64-linux-gnu/qt5/QtCore/qprocess.h:280:17: note: declared here
+  280 |     static bool startDetached(const QString &command);
+      |                 ^~~~~~~~~~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp: In member function ‘void qt_ros_test::MainWindow::on_pushButton_2dmap_3_clicked()’:
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:556:32: warning: ‘static bool QProcess::startDetached(const QString&)’ is deprecated: Use QProcess::startDetached(const QString &program, const QStringList &arguments) instead [-Wdeprecated-declarations]
+  556 |         rviz_cmd->startDetached("rviz2");
+      |         ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+In file included from /usr/include/x86_64-linux-gnu/qt5/QtCore/QtCore:170,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGuiDepends:3,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGui:3,
+                 from /home/li/Lab/src/qt_ros_test/src/main_window.cpp:12:
+/usr/include/x86_64-linux-gnu/qt5/QtCore/qprocess.h:280:17: note: declared here
+  280 |     static bool startDetached(const QString &command);
+      |                 ^~~~~~~~~~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:562:32: warning: ‘static bool QProcess::startDetached(const QString&)’ is deprecated: Use QProcess::startDetached(const QString &program, const QStringList &arguments) instead [-Wdeprecated-declarations]
+  562 |         rviz_cmd->startDetached("killall -2 rviz2");
+      |         ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~
+In file included from /usr/include/x86_64-linux-gnu/qt5/QtCore/QtCore:170,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGuiDepends:3,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGui:3,
+                 from /home/li/Lab/src/qt_ros_test/src/main_window.cpp:12:
+/usr/include/x86_64-linux-gnu/qt5/QtCore/qprocess.h:280:17: note: declared here
+  280 |     static bool startDetached(const QString &command);
+      |                 ^~~~~~~~~~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp: In member function ‘void qt_ros_test::MainWindow::on_pushButton_2dnav_clicked(bool)’:
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:600:32: warning: ‘static bool QProcess::startDetached(const QString&)’ is deprecated: Use QProcess::startDetached(const QString &program, const QStringList &arguments) instead [-Wdeprecated-declarations]
+  600 |         rviz_cmd->startDetached("rviz2");
+      |         ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+In file included from /usr/include/x86_64-linux-gnu/qt5/QtCore/QtCore:170,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGuiDepends:3,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGui:3,
+                 from /home/li/Lab/src/qt_ros_test/src/main_window.cpp:12:
+/usr/include/x86_64-linux-gnu/qt5/QtCore/qprocess.h:280:17: note: declared here
+  280 |     static bool startDetached(const QString &command);
+      |                 ^~~~~~~~~~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:606:32: warning: ‘static bool QProcess::startDetached(const QString&)’ is deprecated: Use QProcess::startDetached(const QString &program, const QStringList &arguments) instead [-Wdeprecated-declarations]
+  606 |         rviz_cmd->startDetached("killall -2 rviz2");
+      |         ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~
+In file included from /usr/include/x86_64-linux-gnu/qt5/QtCore/QtCore:170,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGuiDepends:3,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGui:3,
+                 from /home/li/Lab/src/qt_ros_test/src/main_window.cpp:12:
+/usr/include/x86_64-linux-gnu/qt5/QtCore/qprocess.h:280:17: note: declared here
+  280 |     static bool startDetached(const QString &command);
+      |                 ^~~~~~~~~~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp: In member function ‘void qt_ros_test::MainWindow::on_pushButton_3dmap_clicked(bool)’:
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:628:32: warning: ‘static bool QProcess::startDetached(const QString&)’ is deprecated: Use QProcess::startDetached(const QString &program, const QStringList &arguments) instead [-Wdeprecated-declarations]
+  628 |         rviz_cmd->startDetached("rviz2");
+      |         ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+In file included from /usr/include/x86_64-linux-gnu/qt5/QtCore/QtCore:170,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGuiDepends:3,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGui:3,
+                 from /home/li/Lab/src/qt_ros_test/src/main_window.cpp:12:
+/usr/include/x86_64-linux-gnu/qt5/QtCore/qprocess.h:280:17: note: declared here
+  280 |     static bool startDetached(const QString &command);
+      |                 ^~~~~~~~~~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:634:32: warning: ‘static bool QProcess::startDetached(const QString&)’ is deprecated: Use QProcess::startDetached(const QString &program, const QStringList &arguments) instead [-Wdeprecated-declarations]
+  634 |         rviz_cmd->startDetached("killall -2 rviz2");
+      |         ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~
+In file included from /usr/include/x86_64-linux-gnu/qt5/QtCore/QtCore:170,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGuiDepends:3,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGui:3,
+                 from /home/li/Lab/src/qt_ros_test/src/main_window.cpp:12:
+/usr/include/x86_64-linux-gnu/qt5/QtCore/qprocess.h:280:17: note: declared here
+  280 |     static bool startDetached(const QString &command);
+      |                 ^~~~~~~~~~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp: In member function ‘void qt_ros_test::MainWindow::on_pushButton_3dnav_clicked(bool)’:
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:662:32: warning: ‘static bool QProcess::startDetached(const QString&)’ is deprecated: Use QProcess::startDetached(const QString &program, const QStringList &arguments) instead [-Wdeprecated-declarations]
+  662 |         rviz_cmd->startDetached("rviz2");
+      |         ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+In file included from /usr/include/x86_64-linux-gnu/qt5/QtCore/QtCore:170,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGuiDepends:3,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGui:3,
+                 from /home/li/Lab/src/qt_ros_test/src/main_window.cpp:12:
+/usr/include/x86_64-linux-gnu/qt5/QtCore/qprocess.h:280:17: note: declared here
+  280 |     static bool startDetached(const QString &command);
+      |                 ^~~~~~~~~~~~~
+/home/li/Lab/src/qt_ros_test/src/main_window.cpp:668:32: warning: ‘static bool QProcess::startDetached(const QString&)’ is deprecated: Use QProcess::startDetached(const QString &program, const QStringList &arguments) instead [-Wdeprecated-declarations]
+  668 |         rviz_cmd->startDetached("killall -2 rviz2");
+      |         ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~
+In file included from /usr/include/x86_64-linux-gnu/qt5/QtCore/QtCore:170,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGuiDepends:3,
+                 from /usr/include/x86_64-linux-gnu/qt5/QtGui/QtGui:3,
+                 from /home/li/Lab/src/qt_ros_test/src/main_window.cpp:12:
+/usr/include/x86_64-linux-gnu/qt5/QtCore/qprocess.h:280:17: note: declared here
+  280 |     static bool startDetached(const QString &command);
+      |                 ^~~~~~~~~~~~~
+---
+Finished <<< qt_ros_test [1min 14s]
+
+Summary: 1 package finished [1min 14s]
+  1 package had stderr output: qt_ros_test
+```

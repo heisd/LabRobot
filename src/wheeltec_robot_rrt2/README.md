@@ -152,3 +152,36 @@ ros2 launch wheeltec_robot_rrt rrt_assigner.launch.py
 3. 行为树节点 `pick_coloured_box` 假设机械臂/夹爪等外设可用,纯底盘机器人请屏蔽相关 BT 子树。
 4. 探索区域多边形必须 **闭合且包含机器人当前位置**,否则 assigner 会卡住。
 5. 多机器人探索时需要把 `assigner` 改成多 namespace。
+
+## WSL Humble 编译出现的问题
+```bash
+> colcon build --packages-select wheeltec_robot_rrt
+
+Starting >>> wheeltec_robot_rrt
+--- stderr: wheeltec_robot_rrt                           
+CMake Error at CMakeLists.txt:23 (find_package):
+  By not providing "Findwheeltec_rrt_msg.cmake" in CMAKE_MODULE_PATH this
+  project has asked CMake to find a package configuration file provided by
+  "wheeltec_rrt_msg", but CMake did not find one.
+
+  Could not find a package configuration file provided by "wheeltec_rrt_msg"
+  with any of the following names:
+
+    wheeltec_rrt_msgConfig.cmake
+    wheeltec_rrt_msg-config.cmake
+
+  Add the installation prefix of "wheeltec_rrt_msg" to CMAKE_PREFIX_PATH or
+  set "wheeltec_rrt_msg_DIR" to a directory containing one of the above
+  files.  If "wheeltec_rrt_msg" provides a separate development package or
+  SDK, be sure it has been installed.
+
+
+---
+Failed   <<< wheeltec_robot_rrt [26.1s, exited with code 1]
+
+Summary: 0 packages finished [26.4s]
+  1 package failed: wheeltec_robot_rrt
+  1 package had stderr output: wheeltec_robot_rrt
+```
+
+## 这次修改到这个包

@@ -108,3 +108,24 @@ ros2 launch aruco_ros marker_publisher.launch.py
 2. 若图像没有矫正,务必设置 `image_is_rectified:=false`。
 3. `reference_frame` 与 `camera_frame` 必须与 TF 中实际存在的 frame 一致。
 4. 多 Marker 检测对算力敏感,建议在 USB3 相机 + Jetson 上使用 `DM_NORMAL`。
+
+## 构建失败 应该是Opencv版本的问题
+```bash
+> colcon build --packages-select aruco_ros
+Starting >>> aruco_ros
+--- stderr: aruco_ros                           
+CMake Error at CMakeLists.txt:13 (find_package):
+  Could not find a configuration file for package "OpenCV" that is compatible
+  with requested version "4.10".
+
+  The following configuration files were considered but not accepted:
+
+    /usr/lib/x86_64-linux-gnu/cmake/opencv4/OpenCVConfig.cmake, version: 4.5.4
+    /lib/x86_64-linux-gnu/cmake/opencv4/OpenCVConfig.cmake, version: 4.5.4
+
+
+
+---
+Failed   <<< aruco_ros [11.4s, exited with code 1]
+
+```

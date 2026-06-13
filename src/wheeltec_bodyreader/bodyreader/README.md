@@ -112,3 +112,115 @@ ros2 launch bodyreader bodyfollow.launch.py
 2. 跟随时机器人会直接发布 `cmd_vel`,务必保留 `space` 急停手段。
 3. PID 增益需根据实际场地/速度调试,默认参数较保守。
 4. 多人同时进入视野时,SDK 会按 ID 锁定首个识别到的人,可结合 `Lockedcharrgb` 改进。
+
+## 在WSL Humble 下编译的结果是
+```bash
+ colcon build --packages-select bodyreader
+Starting >>> bodyreader
+[Processing: bodyreader]                         
+--- stderr: bodyreader                                
+In file included from /home/li/Lab/src/wheeltec_bodyreader/bodyreader/include/astra/capi/astra.h:21,
+                 from /home/li/Lab/src/wheeltec_bodyreader/bodyreader/src/main.cpp:17:
+/home/li/Lab/src/wheeltec_bodyreader/bodyreader/include/astra/capi/astra_ctypes.h:52:16: warning: ISO C++ prohibits anonymous structs [-Wpedantic]
+   52 |         struct {
+      |                ^
+/home/li/Lab/src/wheeltec_bodyreader/bodyreader/include/astra/capi/astra_ctypes.h:58:16: warning: ISO C++ prohibits anonymous structs [-Wpedantic]
+   58 |         struct {
+      |                ^
+In file included from /home/li/Lab/src/wheeltec_bodyreader/bodyreader/src/main.cpp:22:
+/home/li/Lab/src/wheeltec_bodyreader/bodyreader/include/key_handler.h: In function ‘void signal_handler(int)’:
+/home/li/Lab/src/wheeltec_bodyreader/bodyreader/include/key_handler.h:59:32: warning: unused parameter ‘s’ [-Wunused-parameter]
+   59 | static void signal_handler(int s) {
+      |                            ~~~~^
+In file included from /home/li/Lab/src/wheeltec_bodyreader/bodyreader/src/image_trans.cpp:5:
+/opt/ros/humble/include/image_transport/image_transport/image_transport.h:32:89: note: ‘#pragma message: Warning: This header is deprecated. Use 'image_transport.hpp' instead’
+   32 | #pragma message ("Warning: This header is deprecated. Use 'image_transport.hpp' instead")
+      |                                                                                         ^
+/home/li/Lab/src/wheeltec_bodyreader/bodyreader/src/main.cpp: In function ‘void print_color(astra_colorframe_t)’:
+/home/li/Lab/src/wheeltec_bodyreader/bodyreader/src/main.cpp:69:23: warning: comparison of integer expressions of different signedness: ‘int’ and ‘uint32_t’ {aka ‘unsigned int’} [-Wsign-compare]
+   69 |     for (int i = 0; i < metadata.height * metadata.width; i++)
+      |                     ~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra.so when searching for -lastra
+/usr/bin/ld: cannot find -lastra: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra.so when searching for -lastra
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra.so when searching for -lastra
+/usr/bin/ld: cannot find -lastra: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra.so when searching for -lastra
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core.so when searching for -lastra_core
+/usr/bin/ld: cannot find -lastra_core: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core.so when searching for -lastra_core
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core_api.so when searching for -lastra_core_api
+/usr/bin/ld: cannot find -lastra_core_api: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core_api.so when searching for -lastra_core_api
+collect2: error: ld returned 1 exit status
+gmake[2]: *** [CMakeFiles/main.dir/build.make:183: main] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:147: CMakeFiles/main.dir/all] Error 2
+gmake[1]: *** Waiting for unfinished jobs....
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra.so when searching for -lastra
+/usr/bin/ld: cannot find -lastra: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra.so when searching for -lastra
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core.so when searching for -lastra_core
+/usr/bin/ld: cannot find -lastra_core: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core.so when searching for -lastra_core
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core_api.so when searching for -lastra_core_api
+/usr/bin/ld: cannot find -lastra_core_api: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core_api.so when searching for -lastra_core_api
+collect2: error: ld returned 1 exit status
+gmake[2]: *** [CMakeFiles/image_trans.dir/build.make:185: image_trans] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:277: CMakeFiles/image_trans.dir/all] Error 2
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra.so when searching for -lastra
+/usr/bin/ld: cannot find -lastra: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra.so when searching for -lastra
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core.so when searching for -lastra_core
+/usr/bin/ld: cannot find -lastra_core: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core.so when searching for -lastra_core
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core_api.so when searching for -lastra_core_api
+/usr/bin/ld: cannot find -lastra_core_api: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core_api.so when searching for -lastra_core_api
+collect2: error: ld returned 1 exit status
+gmake[2]: *** [CMakeFiles/feedback.dir/build.make:175: feedback] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:251: CMakeFiles/feedback.dir/all] Error 2
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra.so when searching for -lastra
+/usr/bin/ld: cannot find -lastra: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra.so when searching for -lastra
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core.so when searching for -lastra_core
+/usr/bin/ld: cannot find -lastra_core: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core.so when searching for -lastra_core
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core_api.so when searching for -lastra_core_api
+/usr/bin/ld: cannot find -lastra_core_api: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core_api.so when searching for -lastra_core_api
+collect2: error: ld returned 1 exit status
+gmake[2]: *** [CMakeFiles/follower.dir/build.make:183: follower] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:199: CMakeFiles/follower.dir/all] Error 2
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra.so when searching for -lastra
+/usr/bin/ld: cannot find -lastra: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra.so when searching for -lastra
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core.so when searching for -lastra_core
+/usr/bin/ld: cannot find -lastra_core: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core.so when searching for -lastra_core
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core_api.so when searching for -lastra_core_api
+/usr/bin/ld: cannot find -lastra_core_api: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core_api.so when searching for -lastra_core_api
+collect2: error: ld returned 1 exit status
+gmake[2]: *** [CMakeFiles/interaction.dir/build.make:175: interaction] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:225: CMakeFiles/interaction.dir/all] Error 2
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra.so when searching for -lastra
+/usr/bin/ld: cannot find -lastra: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra.so when searching for -lastra
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core.so when searching for -lastra_core
+/usr/bin/ld: cannot find -lastra_core: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core.so when searching for -lastra_core
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core_api.so when searching for -lastra_core_api
+/usr/bin/ld: cannot find -lastra_core_api: No such file or directory
+/usr/bin/ld: skipping incompatible /home/li/Lab/src/wheeltec_bodyreader/bodyreader/lib/libastra_core_api.so when searching for -lastra_core_api
+collect2: error: ld returned 1 exit status
+gmake[2]: *** [CMakeFiles/bodydata_process.dir/build.make:183: bodydata_process] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:173: CMakeFiles/bodydata_process.dir/all] Error 2
+gmake: *** [Makefile:146: all] Error 2
+---
+Failed   <<< bodyreader [57.9s, exited with code 2]
+
+Summary: 0 packages finished [58.5s]
+  1 package failed: bodyreader
+  1 package had stderr output: bodyreader
+```

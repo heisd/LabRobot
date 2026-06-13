@@ -9,8 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON) #...is required...
 set(CMAKE_CXX_EXTENSIONS ON) #...with compiler extensions like gnu++11
 
 
-set(OpenCV_DIR "/opt/opencv_410/lib/cmake/opencv4")
-find_package(OpenCV 4.10 REQUIRED)
+find_package(OpenCV REQUIRED)
 
 set(THIS_PACKAGE_INCLUDE_DEPENDS
 

@@ -327,3 +327,42 @@ KCF 跟踪算法实现基于：
 
 **注意**：使用本包前，请确保相机和机器人控制节点已正确配置并可以正常工作。
 
+## WSL Humble下编译错误
+```bash
+> colcon build --packages-select wheeltec_robot_kcf
+
+Starting >>> wheeltec_robot_kcf
+[Processing: wheeltec_robot_kcf]                             
+--- stderr: wheeltec_robot_kcf                               
+/home/li/Lab/src/wheeltec_robot_kcf/src/run_tracker.cpp: In member function ‘void ImageConverter::Cancel()’:
+/home/li/Lab/src/wheeltec_robot_kcf/src/run_tracker.cpp:59:15: error: ‘class ImageConverter’ has no member named ‘has_display’
+   59 |     if (this->has_display) {
+      |               ^~~~~~~~~~~
+/home/li/Lab/src/wheeltec_robot_kcf/src/run_tracker.cpp: In member function ‘void ImageConverter::imageCb(std::shared_ptr<sensor_msgs::msg::Image_<std::allocator<void> > >)’:
+/home/li/Lab/src/wheeltec_robot_kcf/src/run_tracker.cpp:92:15: error: ‘class ImageConverter’ has no member named ‘has_display’
+   92 |     if (this->has_display) {
+      |               ^~~~~~~~~~~
+/home/li/Lab/src/wheeltec_robot_kcf/src/run_tracker.cpp:96:19: error: ‘class ImageConverter’ has no member named ‘has_display’
+   96 |             this->has_display = false;
+      |                   ^~~~~~~~~~~
+/home/li/Lab/src/wheeltec_robot_kcf/src/run_tracker.cpp:127:15: error: ‘class ImageConverter’ has no member named ‘has_display’
+  127 |     if (this->has_display) {
+      |               ^~~~~~~~~~~
+/home/li/Lab/src/wheeltec_robot_kcf/src/run_tracker.cpp:133:19: error: ‘class ImageConverter’ has no member named ‘has_display’
+  133 |             this->has_display = false;
+      |                   ^~~~~~~~~~~
+/home/li/Lab/src/wheeltec_robot_kcf/src/run_tracker.cpp: In member function ‘void ImageConverter::depthCb(std::shared_ptr<sensor_msgs::msg::Image_<std::allocator<void> > >)’:
+/home/li/Lab/src/wheeltec_robot_kcf/src/run_tracker.cpp:195:15: error: ‘class ImageConverter’ has no member named ‘has_display’
+  195 |     if (this->has_display) {
+      |               ^~~~~~~~~~~
+gmake[2]: *** [CMakeFiles/run_tracker_node.dir/build.make:76: CMakeFiles/run_tracker_node.dir/src/run_tracker.cpp.o] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:137: CMakeFiles/run_tracker_node.dir/all] Error 2
+gmake: *** [Makefile:146: all] Error 2
+---
+Failed   <<< wheeltec_robot_kcf [35.1s, exited with code 2]
+
+Summary: 0 packages finished [35.5s]
+  1 package failed: wheeltec_robot_kcf
+  1 package had stderr output: wheeltec_robot_kcf
+```
+

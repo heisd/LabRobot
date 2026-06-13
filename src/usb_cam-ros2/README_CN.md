@@ -93,3 +93,17 @@ ros2 run rqt_image_view rqt_image_view /image_raw
 2. 使用 `mjpeg2rgb` 时必须确保相机支持 MJPEG,否则切换为 `yuyv2rgb`。
 3. `camera_info_url` 指向的 yaml 需提前标定,否则发布的 `CameraInfo` 不正确。
 4. 多相机同时启动时,需要在不同 namespace 下运行并指定不同 `video_device`。
+
+## 编译WSL Humble 
+```bash
+> colcon build --packages-select usb_cam
+Starting >>> usb_cam 
+[Processing: usb_cam]                         
+--- stderr: usb_cam                                
+In this package, headers install destination is set to `include` by ament_auto_package. It is recommended to install `include/usb_cam` instead and will be the default behavior of ament_auto_package from ROS 2 Kilted Kaiju. On distributions before Kilted, ament_auto_package behaves the same way when you use USE_SCOPED_HEADER_INSTALL_DIR option.
+---
+Finished <<< usb_cam [55.8s]
+
+Summary: 1 package finished [56.1s]
+  1 package had stderr output: usb_cam
+```

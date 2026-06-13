@@ -121,3 +121,21 @@ ros2 interface show wheeltec_mic_msg/msg/MotionControl
 
 1. `PcmMsg` 通过 `string[]` 传输二进制 PCM,在 Python 中要使用 `bytes` 转换。
 2. 服务参数与底层 SDK 接口对应,修改前请参阅讯飞文档。
+
+## 在WSL Humble 编译后
+```bash
+> colcon build --packages-select wheeltec_mic_msg
+Starting >>> wheeltec_mic_msg
+--- stderr: wheeltec_mic_msg                           
+failed to create symbolic link '/home/li/Lab/build/wheeltec_mic_msg/ament_cmake_python/wheeltec_mic_msg/wheeltec_mic_msg' because existing path cannot be removed: Is a directory
+gmake[2]: *** [CMakeFiles/ament_cmake_python_symlink_wheeltec_mic_msg.dir/build.make:70: CMakeFiles/ament_cmake_python_symlink_wheeltec_mic_msg] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:421: CMakeFiles/ament_cmake_python_symlink_wheeltec_mic_msg.dir/all] Error 2
+gmake[1]: *** Waiting for unfinished jobs....
+gmake: *** [Makefile:146: all] Error 2
+---
+Failed   <<< wheeltec_mic_msg [24.7s, exited with code 2]
+
+Summary: 0 packages finished [25.1s]
+  1 package failed: wheeltec_mic_msg
+  1 package had stderr output: wheeltec_mic_msg
+```

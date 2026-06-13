@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.8)
 project(arm_demo)
 
+# WSL fix: Prevent finding Windows CURL/packages
+set(CURL_NO_CURL_CMAKE ON)
+set(CMAKE_IGNORE_PREFIX_PATH "/mnt/c")
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -16,8 +20,10 @@ find_package(moveit_ros_planning_interface REQUIRED)
 find_package(moveit_common REQUIRED)
 moveit_package()
 
-
 add_executable(ik_demo src/ik_demo.cpp)
+ament_target_dependencies(ik_demo
+  moveit_ros_planning_interface
+)
 
 add_executable(fk_demo src/fk_demo.cpp)
 target_include_directories(fk_demo PUBLIC
@@ -25,10 +31,6 @@ target_include_directories(fk_demo PUBLIC
   $<INSTALL_INTERFACE:include>)
 target_compile_features(fk_demo PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
 ament_target_dependencies(fk_demo
-  moveit_ros_planning_interface
-)
-
-ament_target_dependencies(ik_demo
   moveit_ros_planning_interface
 )
 

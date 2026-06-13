@@ -96,6 +96,8 @@ astra_camera/
 ## 编译与运行
 
 ```bash
+# 安装依赖
+sudo -E apt-get install libuvc-dev
 colcon build --packages-up-to astra_camera
 source install/setup.bash
 
@@ -126,3 +128,23 @@ ros2 launch wheeltec_rviz2 wheeltec_camera.launch.py
 3. 高分辨率高帧率会消耗大量 USB 带宽,建议每条 USB 总线只挂一台。
 4. 部分型号(Astra Pro)彩色流走 UVC,深度流走 OpenNI2,需保证 `libuvc` 与权限均正常。
 5. 推出新 firmware 后请同步升级 SDK,否则可能出现卡帧。
+
+## 在WSL Humble下编译
+```bash
+> colcon build --packages-select astra_camera
+Starting >>> astra_camera
+[Processing: astra_camera]                             
+[Processing: astra_camera]                                     
+[Processing: astra_camera]                                       
+--- stderr: astra_camera                                         
+gmake[2]: *** No rule to make target '/home/li/Lab/src/ros2_astra_camera-master/astra_camera/openni2_redist/x64/libOpenNI2_astra.so', needed by 'libastra_camera.so'.  Stop.
+gmake[2]: *** Waiting for unfinished jobs....
+gmake[1]: *** [CMakeFiles/Makefile2:143: CMakeFiles/astra_camera.dir/all] Error 2
+gmake: *** [Makefile:146: all] Error 2
+---
+Failed   <<< astra_camera [1min 47s, exited with code 2]
+
+Summary: 0 packages finished [1min 48s]
+  1 package failed: astra_camera
+  1 package had stderr output: astra_camera
+```
