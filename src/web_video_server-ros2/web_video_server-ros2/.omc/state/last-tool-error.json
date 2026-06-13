@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"pkill -9 -f \\\"gzserver|gzclient|gazebo_ros|move_group|spawn_entity|controller_manager|kcf_track|grab_service|web_video_server|ros2 launch\\\" 2>/dev/null\\nsleep 2\\n{ echo \\\"=== leftover sim ...",
+  "error": "Exit code 1",
+  "timestamp": "2026-06-13T04:43:32.695Z",
+  "retry_count": 1
+}

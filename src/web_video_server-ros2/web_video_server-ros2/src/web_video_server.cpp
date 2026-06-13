@@ -54,42 +54,42 @@ WebVideoServer::WebVideoServer(rclcpp::Node::SharedPtr &nh, rclcpp::Node::Shared
         async_web_server_cpp::HttpReply::stock_reply(async_web_server_cpp::HttpReply::not_found))
 {
   rclcpp::Parameter parameter;
-  if (private_nh->get_parameter("port", parameter)) {
+  if (nh->get_parameter("port", parameter)) {
     port_ = parameter.as_int();
   } else {
     port_ = 8080;
   }
-  if (private_nh->get_parameter("verbose", parameter)) {
+  if (nh->get_parameter("verbose", parameter)) {
     __verbose = parameter.as_bool();
   } else {
     __verbose = true;
   }
 
-  if (private_nh->get_parameter("address", parameter)) {
+  if (nh->get_parameter("address", parameter)) {
     address_ = parameter.as_string();
   } else {
     address_ = "0.0.0.0";
   }
 
   int server_threads;
-  if (private_nh->get_parameter("server_threads", parameter)) {
+  if (nh->get_parameter("server_threads", parameter)) {
     server_threads = parameter.as_int();
   } else {
     server_threads = 1;
   }
 
-  if (private_nh->get_parameter("ros_threads", parameter)) {
+  if (nh->get_parameter("ros_threads", parameter)) {
     ros_threads_ = parameter.as_int();
   } else {
     ros_threads_ = 2;
   }
-  if (private_nh->get_parameter("publish_rate", parameter)) {
+  if (nh->get_parameter("publish_rate", parameter)) {
     publish_rate_ = parameter.as_double();
   } else {
     publish_rate_ = -1.0;
   }
 
-  if (private_nh->get_parameter("default_stream_type", parameter)) {
+  if (nh->get_parameter("default_stream_type", parameter)) {
     __default_stream_type = parameter.as_string();
   } else {
     __default_stream_type = "mjpeg";
@@ -378,10 +378,16 @@ bool WebVideoServer::handle_list_streams(const async_web_server_cpp::HttpRequest
 int main(int argc, char **argv)
 {
   rclcpp::init(argc, argv);
-  auto nh = std::make_shared<rclcpp::Node>("web_video_server");
-  auto private_nh = std::make_shared<rclcpp::Node>("_web_video_server");
-
-  web_video_server::WebVideoServer server(nh, private_nh);
+  // 允许从命令行/launch 传入的参数覆盖(port/address 等)自动声明并生效。
+  // 否则 get_parameter 对未声明参数恒返回 false, port 永远停在默认 8080,
+  // 与 Dashboard 期望的 8081 不符 -> 网页取不到 MJPEG 流。
+  rclcpp::NodeOptions node_options;
+  node_options.automatically_declare_parameters_from_overrides(true);
+  auto nh = std::make_shared<rclcpp::Node>("web_video_server", node_options);
+  // 只建一个节点。原版还会建一个私有节点 "_web_video_server" 专门读参数,
+  // 于是 ros2 node list 里会出现两个 web_video_server 相关节点。参数已统一从 nh 读,
+  // 私有节点已无用, 这里两个形参都传 nh, 避免多出那个隐藏节点。
+  web_video_server::WebVideoServer server(nh, nh);
   server.setup_cleanup_inactive_streams();
   server.spin();
 

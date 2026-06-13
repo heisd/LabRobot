@@ -1,7 +1,7 @@
 #include "grab_demo/charuco_dectet_node.hpp"
-// 使用OpenCV 4.10的本地头文件（通过绝对路径）
-#include "/usr/local/opencv410/include/opencv4/opencv2/objdetect.hpp"
-#include "/usr/local/opencv410/include/opencv4/opencv2/calib3d.hpp"  // 用于solvePnP
+// 需要 OpenCV >= 4.7 的 objdetect 模块(提供 cv::aruco::ArucoDetector/CharucoDetector 新 API)
+#include <opencv2/objdetect.hpp>
+#include <opencv2/calib3d.hpp>  // 用于solvePnP
 
 
 int main(int argc, char const *argv[])

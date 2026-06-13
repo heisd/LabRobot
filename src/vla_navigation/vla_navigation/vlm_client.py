@@ -44,7 +44,7 @@ SYSTEM_PROMPT = """你是一台轮式机器人的导航大脑(Vision-Language-Ac
 class VLMClient:
     """Ollama 多模态客户端 (生成 /api/generate)."""
 
-    def __init__(self, base_url='http://localhost:11434', model='qwen2.5vl:3b',
+    def __init__(self, base_url='http://localhost:11434', model='qwen3-vl:2b',
                  timeout=60.0, temperature=0.2, logger=None):
         self.base_url = base_url.rstrip('/')
         self.model = model

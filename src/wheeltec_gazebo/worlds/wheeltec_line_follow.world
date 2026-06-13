@@ -21,8 +21,8 @@
 <sdf version="1.6">
   <world name="wheeltec_line_follow">
 
-    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
-    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
+    <include><uri>model://ground_plane</uri></include>
+    <include><uri>model://sun</uri></include>
 
     <!-- ===================== 红色巡线(带路口的回路, 仅视觉) ===================== -->
     <model name="track_line">
@@ -91,12 +91,12 @@
     <!-- 起点两个锥桶(标记出生点) -->
     <include>
       <name>start_cone_l</name>
-      <uri>model:///home/user/.gazebo/models/construction_cone</uri>
+      <uri>model://construction_cone</uri>
       <pose>-3.2 0.35 0 0 0 0</pose>
     </include>
     <include>
       <name>start_cone_r</name>
-      <uri>model:///home/user/.gazebo/models/construction_cone</uri>
+      <uri>model://construction_cone</uri>
       <pose>-3.2 -0.35 0 0 0 0</pose>
     </include>
 

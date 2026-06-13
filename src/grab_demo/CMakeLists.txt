@@ -55,6 +55,17 @@ ament_export_dependencies(rosidl_default_runtime)
 
 
 
+# ---------------------------------------------------------------------------
+# ArUco / ChArUco 标定与检测节点 (可选)
+# 使用 OpenCV >= 4.7 objdetect 模块的新 API (cv::aruco::ArucoDetector 等),
+# 系统 OpenCV 4.5.x (Ubuntu 22.04 默认) 没有该 API, 找不到时自动跳过编译,
+# 不影响其它节点(仿真抓取只用 hsv_range + grab_service_node)。
+# ---------------------------------------------------------------------------
+find_path(OPENCV_ARUCO_DETECTOR_HEADER opencv2/objdetect/aruco_detector.hpp
+  HINTS ${OpenCV_INCLUDE_DIRS} /usr/include/opencv4 /usr/local/include/opencv4
+        /usr/include /usr/local/include)
+if(OPENCV_ARUCO_DETECTOR_HEADER)
+  message(STATUS "找到 OpenCV ArucoDetector 新 API, 编译 aruco/charuco 节点")
 add_executable(charuco_dectet_node src/charuco_dectet_node.cpp)
 ament_target_dependencies(charuco_dectet_node
  rclcpp
@@ -68,6 +79,9 @@ ament_target_dependencies(charuco_dectet_node
 )
 install(TARGETS charuco_dectet_node
   DESTINATION lib/${PROJECT_NAME})
+else()
+  message(WARNING "未找到 OpenCV ArucoDetector 新 API (需 OpenCV>=4.7), 跳过 aruco_dectet / charuco_dectet_node 的编译")
+endif()
 
   
 add_executable(hand_eye src/hand_eye.cpp)
@@ -109,6 +123,7 @@ install(TARGETS hsv_range
 
 
 
+  if(OPENCV_ARUCO_DETECTOR_HEADER)
   add_executable(aruco_dectet src/aruco_dectet.cpp)
   ament_target_dependencies(aruco_dectet
     rclcpp
@@ -122,7 +137,8 @@ install(TARGETS hsv_range
     tf2_geometry_msgs
   )
   install(TARGETS aruco_dectet
-    DESTINATION lib/${PROJECT_NAME})  
+    DESTINATION lib/${PROJECT_NAME})
+  endif()
 
 
 

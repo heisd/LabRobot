@@ -52,14 +52,20 @@ def generate_launch_description() -> LaunchDescription:
             parameters=[{
                 'port': http_port,
                 'address': address,
+                'video_port': video_port,
             }],
         ),
+        # respawn: web_video_server 若在启动瞬间崩溃(如端口 8081 被上一次残留进程
+        # 占用 -> bind 抛异常退出), launch 默认不会重启它, 于是网页一直取不到 MJPEG。
+        # 加 respawn 让它崩溃后自动重启(等残留释放端口后即可绑定成功)。
         Node(
             package='web_video_server',
             executable='web_video_server',
             name='web_video_server',
             output='screen',
             condition=IfCondition(enable_video),
+            respawn=True,
+            respawn_delay=2.0,
             parameters=[{
                 'port': video_port,
                 'address': address,

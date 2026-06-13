@@ -1,0 +1,139 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1781340591370,
+  "projectRoot": "/home/li/Lab",
+  "techStack": {
+    "languages": [],
+    "frameworks": [],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "src"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "build": {
+      "path": "build",
+      "purpose": "Build output",
+      "fileCount": 3,
+      "lastAccessed": 1781340591363,
+      "keyFiles": [
+        "COLCON_IGNORE",
+        "compile_commands.json"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 2,
+      "lastAccessed": 1781340591363,
+      "keyFiles": [
+        "lebai.md",
+        "wheeltec.md"
+      ]
+    },
+    "firmware": {
+      "path": "firmware",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1781340591364,
+      "keyFiles": [
+        "C63A原理图_V2.0_2025-06-16.pdf"
+      ]
+    },
+    "install": {
+      "path": "install",
+      "purpose": null,
+      "fileCount": 12,
+      "lastAccessed": 1781340591364,
+      "keyFiles": [
+        "COLCON_IGNORE",
+        "_local_setup_util_ps1.py",
+        "_local_setup_util_sh.py",
+        "local_setup.bash",
+        "local_setup.ps1"
+      ]
+    },
+    "log": {
+      "path": "log",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1781340591365,
+      "keyFiles": [
+        "COLCON_IGNORE"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 0,
+      "lastAccessed": 1781340591365,
+      "keyFiles": []
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src/wheeltec_dashboard/web/app.js",
+      "accessCount": 14,
+      "lastAccessed": 1781359484428,
+      "type": "file"
+    },
+    {
+      "path": "src/wheeltec_dashboard/wheeltec_dashboard/web_server.py",
+      "accessCount": 6,
+      "lastAccessed": 1781360239455,
+      "type": "file"
+    },
+    {
+      "path": "src/lebai_gazebo/worlds/FixWorldPlan.md",
+      "accessCount": 6,
+      "lastAccessed": 1781360818323,
+      "type": "file"
+    },
+    {
+      "path": "src/wheeltec_dashboard/web/style.css",
+      "accessCount": 2,
+      "lastAccessed": 1781360660199,
+      "type": "file"
+    },
+    {
+      "path": "src/wheeltec_dashboard/launch/sim_bringup.launch.py",
+      "accessCount": 1,
+      "lastAccessed": 1781358975765,
+      "type": "file"
+    },
+    {
+      "path": "src/wheeltec_dashboard/launch/dashboard.launch.py",
+      "accessCount": 1,
+      "lastAccessed": 1781359469001,
+      "type": "file"
+    },
+    {
+      "path": "src/lebai_gazebo/urdf/lm3_gazebo.xacro",
+      "accessCount": 1,
+      "lastAccessed": 1781361319703,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

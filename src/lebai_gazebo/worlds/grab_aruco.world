@@ -14,26 +14,27 @@
 <sdf version="1.6">
   <world name="grab_aruco">
 
-    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
-    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
+    <include><uri>model://ground_plane</uri></include>
+    <include><uri>model://sun</uri></include>
 
+    <!-- 桌心 x=0.85(近沿 0.45), 与机器人前缘留出净空 -->
     <include>
       <name>table</name>
-      <uri>model:///home/user/.gazebo/models/table</uri>
-      <pose>0.55 0 0 0 0 0</pose>
+      <uri>model://table</uri>
+      <pose>0.85 0 -0.45 0 0 1.5708</pose>
     </include>
 
     <!-- ArUco 标记牌(平放桌面, 正面朝上) -->
     <include>
       <name>aruco_marker</name>
       <uri>model://aruco_marker</uri>
-      <pose>0.50 0.0 1.015 0 0 0</pose>
+      <pose>0.55 0.0 0.565 0 0 0</pose>
     </include>
     <!-- 抓取目标物(标记贴在它旁边/上方, 这里放一个木块作被抓物) -->
     <include>
       <name>wood_cube</name>
-      <uri>model:///home/user/.gazebo/models/wood_cube_5cm</uri>
-      <pose>0.50 0.14 1.015 0 0 0</pose>
+      <uri>model://wood_cube_5cm</uri>
+      <pose>0.55 0.14 0.565 0 0 0</pose>
     </include>
 
     <!-- ===================== 场景相机(转发到 Web /sim_scene/arm/image_raw) ===================== -->

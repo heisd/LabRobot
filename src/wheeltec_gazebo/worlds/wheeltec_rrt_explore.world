@@ -6,72 +6,72 @@
   grey_wall 围成外圈 7.5×7.5m, 内部用 NIST 标准迷宫墙(nist_maze_wall_120/240)
   隔出几条走廊与未知区域, 适合 wheeltec_robot_rrt 自主探索、Nav2 避障、各类 SLAM。
 
-  所有模型来自本机 ~/.gazebo/models(与 grab_world.world 同款绝对路径 URI)。
-  home 不是 /home/user 时, 批量替换 /home/user/ 即可。
+  所有模型来自本机 ~/.gazebo/models(与 grab_world.world 同款相对 URI)。
+ 
   俯视场景相机发布 /sim_scene/chassis/image_raw, 经 web_video_server 在 Dashboard 查看。
 ========================================================================= -->
 <sdf version="1.6">
   <world name="wheeltec_rrt_explore">
 
-    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
-    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
+    <include><uri>model://ground_plane</uri></include>
+    <include><uri>model://sun</uri></include>
 
     <!-- ===================== 外圈墙 ===================== -->
     <include>
       <name>wall_north</name>
-      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <uri>model://grey_wall</uri>
       <pose>0 3.75 0 0 0 0</pose>
     </include>
     <include>
       <name>wall_south</name>
-      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <uri>model://grey_wall</uri>
       <pose>0 -3.75 0 0 0 0</pose>
     </include>
     <include>
       <name>wall_east</name>
-      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <uri>model://grey_wall</uri>
       <pose>3.75 0 0 0 0 1.5708</pose>
     </include>
     <include>
       <name>wall_west</name>
-      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <uri>model://grey_wall</uri>
       <pose>-3.75 0 0 0 0 1.5708</pose>
     </include>
 
     <!-- ===================== 内部迷宫墙(NIST 标准段, 不必严丝合缝, 留缝即走廊) ===================== -->
     <include>
       <name>maze_a</name>
-      <uri>model:///home/user/.gazebo/models/nist_maze_wall_240</uri>
+      <uri>model://nist_maze_wall_240</uri>
       <pose>1.0 2.0 0 0 0 0</pose>
     </include>
     <include>
       <name>maze_b</name>
-      <uri>model:///home/user/.gazebo/models/nist_maze_wall_240</uri>
+      <uri>model://nist_maze_wall_240</uri>
       <pose>-1.5 1.0 0 0 0 1.5708</pose>
     </include>
     <include>
       <name>maze_c</name>
-      <uri>model:///home/user/.gazebo/models/nist_maze_wall_240</uri>
+      <uri>model://nist_maze_wall_240</uri>
       <pose>-1.0 -0.5 0 0 0 0</pose>
     </include>
     <include>
       <name>maze_d</name>
-      <uri>model:///home/user/.gazebo/models/nist_maze_wall_240</uri>
+      <uri>model://nist_maze_wall_240</uri>
       <pose>1.5 -1.0 0 0 0 1.5708</pose>
     </include>
     <include>
       <name>maze_e</name>
-      <uri>model:///home/user/.gazebo/models/nist_maze_wall_120</uri>
+      <uri>model://nist_maze_wall_120</uri>
       <pose>2.5 -2.2 0 0 0 0</pose>
     </include>
     <include>
       <name>maze_f</name>
-      <uri>model:///home/user/.gazebo/models/nist_maze_wall_120</uri>
+      <uri>model://nist_maze_wall_120</uri>
       <pose>-2.2 -2.0 0 0 0 1.5708</pose>
     </include>
     <include>
       <name>maze_g</name>
-      <uri>model:///home/user/.gazebo/models/nist_maze_wall_120</uri>
+      <uri>model://nist_maze_wall_120</uri>
       <pose>0.0 -2.6 0 0 0 0</pose>
     </include>
 

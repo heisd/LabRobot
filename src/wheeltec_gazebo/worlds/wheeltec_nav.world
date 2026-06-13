@@ -14,66 +14,66 @@
 <sdf version="1.6">
   <world name="wheeltec_nav">
 
-    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
-    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
+    <include><uri>model://ground_plane</uri></include>
+    <include><uri>model://sun</uri></include>
 
     <!-- 外圈墙 -->
     <include>
-      <name>wall_north</name><uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <name>wall_north</name><uri>model://grey_wall</uri>
       <pose>0 3.75 0 0 0 0</pose>
     </include>
     <include>
-      <name>wall_south</name><uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <name>wall_south</name><uri>model://grey_wall</uri>
       <pose>0 -3.75 0 0 0 0</pose>
     </include>
     <include>
-      <name>wall_east</name><uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <name>wall_east</name><uri>model://grey_wall</uri>
       <pose>3.75 0 0 0 0 1.5708</pose>
     </include>
     <include>
-      <name>wall_west</name><uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <name>wall_west</name><uri>model://grey_wall</uri>
       <pose>-3.75 0 0 0 0 1.5708</pose>
     </include>
 
     <!-- 中间隔断(两段 + 一个过道缺口在东侧) -->
     <include>
-      <name>partition_1</name><uri>model:///home/user/.gazebo/models/nist_maze_wall_240</uri>
+      <name>partition_1</name><uri>model://nist_maze_wall_240</uri>
       <pose>-2.3 0 0 0 0 0</pose>
     </include>
     <include>
-      <name>partition_2</name><uri>model:///home/user/.gazebo/models/nist_maze_wall_120</uri>
+      <name>partition_2</name><uri>model://nist_maze_wall_120</uri>
       <pose>0.0 0 0 0 0 0</pose>
     </include>
 
     <!-- 南区家具/障碍 -->
     <include>
-      <name>cafe_table</name><uri>model:///home/user/.gazebo/models/cafe_table</uri>
+      <name>cafe_table</name><uri>model://cafe_table</uri>
       <pose>-2.5 -2.4 0 0 0 0</pose>
     </include>
     <include>
-      <name>bookshelf</name><uri>model:///home/user/.gazebo/models/bookshelf</uri>
+      <name>bookshelf</name><uri>model://bookshelf</uri>
       <pose>2.6 -2.6 0 0 0 1.5708</pose>
     </include>
     <include>
-      <name>barrel_s</name><uri>model:///home/user/.gazebo/models/construction_barrel</uri>
+      <name>barrel_s</name><uri>model://construction_barrel</uri>
       <pose>0.6 -2.3 0 0 0 0</pose>
     </include>
 
     <!-- 北区家具/障碍 -->
     <include>
-      <name>cabinet</name><uri>model:///home/user/.gazebo/models/cabinet</uri>
+      <name>cabinet</name><uri>model://cabinet</uri>
       <pose>-2.6 2.6 0 0 0 1.5708</pose>
     </include>
     <include>
-      <name>barrel_n</name><uri>model:///home/user/.gazebo/models/construction_barrel</uri>
+      <name>barrel_n</name><uri>model://construction_barrel</uri>
       <pose>1.5 2.2 0 0 0 0</pose>
     </include>
     <include>
-      <name>cone_n</name><uri>model:///home/user/.gazebo/models/construction_cone</uri>
+      <name>cone_n</name><uri>model://construction_cone</uri>
       <pose>2.6 1.0 0 0 0 0</pose>
     </include>
     <include>
-      <name>person_standing</name><uri>model:///home/user/.gazebo/models/person_standing</uri>
+      <name>person_standing</name><uri>model://person_standing</uri>
       <pose>0.3 1.6 0 0 0 -1.0</pose>
     </include>
 

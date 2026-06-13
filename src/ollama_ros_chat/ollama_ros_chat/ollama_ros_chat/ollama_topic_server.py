@@ -26,18 +26,19 @@ class OllamaChatNode(Node):
         
         # Ollama配置
         self.base_url = "http://localhost:11434"
-        self.use_model = None
-        self.stream = False
+        self.use_model = "qwen3-vl:2b"
+        self.stream = True
         self.temperature = 0.5
         self.history_length = 10
         self.available_models = []
-        self.conversation_history = [{"role": "system", "content": "You are a helpful assistant"}]
         
         # 初始化模型
         self.initialize_models()
         self.select_model()
         
-        self.get_logger().info('Ollama Chat Server Node initialized')
+        self.conversation_history = [{"role": "system", "content": f"You are {self.use_model}, a helpful assistant developed by Alibaba Cloud."}]
+        
+        self.get_logger().info('Ollama Chat Topic Server Node initialized')
 
     def initialize_models(self):
         """Query available Ollama models"""
@@ -57,13 +58,16 @@ class OllamaChatNode(Node):
 
     def select_model(self) -> None:
         """Select first available model"""
-        if not self.available_models:
-            self.get_logger().error("No models available")
-            return
+        target_model = "qwen3-vl:2b"
+        if target_model in self.available_models:
+            self.use_model = target_model
+        elif self.available_models:
+            self.use_model = self.available_models[0]
         
-        self.use_model = self.available_models[0]
-        self.get_logger().info(f"Selected model: {self.use_model}")
-        response = requests.post(f"{self.base_url}/api/generate", json={'model': self.use_model})
+        if self.use_model:
+            self.get_logger().info(f"Selected model: {self.use_model}")
+        else:
+            self.get_logger().error("No models available")
 
     def message_callback(self, msg):
         """Handle incoming chat messages"""
@@ -71,15 +75,23 @@ class OllamaChatNode(Node):
             # 解析接收到的消息
             message_data = json.loads(msg.data)
             user_message = message_data.get('content', '')
+            images = message_data.get('images', [])
             
             # 更新对话历史
-            self.conversation_history.append({"role": "user", "content": user_message})
+            msg_dict = {"role": "user", "content": user_message}
+            if images:
+                msg_dict["images"] = images
+            
+            self.conversation_history.append(msg_dict)
             print("Received message:", user_message)
+            if images:
+                print(f"Received {len(images)} images")
+
             # 获取响应
             time_start = time.time()
             response_content = self.get_response(self.conversation_history)
             time_end = time.time()
-            print("Response_content:",response_content)
+            print("Response_content:", response_content)
             print("Time taken:", time_end - time_start)
             
             if response_content:
@@ -91,15 +103,16 @@ class OllamaChatNode(Node):
             self.get_logger().error(f"Error processing message: {e}")
 
     def get_response(self, messages: List[Dict[str, str]]) -> Optional[str]:
-        """Get response from Ollama model"""
+        """Get response from Ollama model using /api/chat"""
         try:
-            prompt = self._convert_messages_to_prompt(messages)
-            url = f"{self.base_url}/api/generate"
+            url = f"{self.base_url}/api/chat"
             data = {
                 "model": self.use_model,
-                "prompt": prompt,
+                "messages": messages,
                 "stream": self.stream,
-                "temperature": self.temperature
+                "options": {
+                    "temperature": self.temperature
+                }
             }
 
             response = requests.post(url, json=data, stream=self.stream)
@@ -108,8 +121,8 @@ class OllamaChatNode(Node):
                 for line in response.iter_lines():
                     if line:
                         json_response = json.loads(line)
-                        if 'response' in json_response:
-                            chunk = json_response['response']
+                        if 'message' in json_response:
+                            chunk = json_response['message'].get('content', '')
                             full_response += chunk
                             # 发布部分响应
                             publish_msg = String()
@@ -119,7 +132,7 @@ class OllamaChatNode(Node):
                                 "is_done": json_response['done']
                             })
                             self.response_publisher.publish(publish_msg)
-                        if json_response['done'] is True : 
+                        if json_response.get('done', False):
                             return full_response
             else:
                 self.get_logger().error(f"Error: Received status code {response.status_code}")
@@ -128,20 +141,6 @@ class OllamaChatNode(Node):
         except Exception as e:
             self.get_logger().error(f"An error occurred: {e}")
             return None
-
-    def _convert_messages_to_prompt(self, messages: List[Dict[str, str]]) -> str:
-        """Convert message history to a format Ollama can understand"""
-        prompt = ""
-        for message in messages:
-            role = message["role"]
-            content = message["content"]
-            if role == "system":
-                prompt += f"system: {content}\n"
-            elif role == "user":
-                prompt += f"user: {content}\n"
-            elif role == "assistant":
-                prompt += f"assistant: {content}\n"
-        return prompt
 
     def process_data(self, data_list: List[Dict[str, str]]) -> List[Dict[str, str]]:
         """Maintain conversation history within specified length"""

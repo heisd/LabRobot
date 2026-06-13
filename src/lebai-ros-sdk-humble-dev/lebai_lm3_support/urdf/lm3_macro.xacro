@@ -77,6 +77,11 @@
 		<mesh filename="${collision_car_base}" />
 	</geometry>
 </collision>
+<!-- Gazebo 仿真必需: 无 inertial 的根链路会让 URDF->SDF 转换静默丢弃整个模型 -->
+<inertial>
+	<mass value="5.0"/>
+	<inertia ixx="0.05" ixy="0" ixz="0" iyy="0.05" iyz="0" izz="0.05"/>
+</inertial>
 </link>
 
 <joint name="base_link" type="fixed">
@@ -100,6 +105,11 @@
 			<mesh filename="${collision_base}" />
 		</geometry>
 	</collision>
+	<!-- Gazebo 仿真必需: 同上, 无质量链路会被 SDF 转换丢弃 -->
+	<inertial>
+		<mass value="1.2"/>
+		<inertia ixx="0.005" ixy="0" ixz="0" iyy="0.005" iyz="0" izz="0.005"/>
+	</inertial>
 </link>
 <link name="${prefix}link_1">
 	<visual>

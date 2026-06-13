@@ -11,24 +11,25 @@
 <sdf version="1.6">
   <world name="grab_kcf">
 
-    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
-    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
+    <include><uri>model://ground_plane</uri></include>
+    <include><uri>model://sun</uri></include>
 
+    <!-- 桌心 x=0.85(近沿 0.45), 与机器人前缘留出净空 -->
     <include>
       <name>table</name>
-      <uri>model:///home/user/.gazebo/models/table</uri>
-      <pose>0.55 0 0 0 0 0</pose>
+      <uri>model://table</uri>
+      <pose>0.85 0 -0.45 0 0 1.5708</pose>
     </include>
 
     <include>
       <name>coke_can</name>
-      <uri>model:///home/user/.gazebo/models/coke_can</uri>
-      <pose>0.50 0.0 1.015 0 0 0</pose>
+      <uri>model://coke_can</uri>
+      <pose>0.55 0.0 0.565 0 0 0</pose>
     </include>
     <include>
       <name>wood_cube</name>
-      <uri>model:///home/user/.gazebo/models/wood_cube_5cm</uri>
-      <pose>0.60 0.16 1.015 0 0 0</pose>
+      <uri>model://wood_cube_5cm</uri>
+      <pose>0.62 0.16 0.565 0 0 0</pose>
     </include>
 
     <!-- ===================== 场景相机(转发到 Web /sim_scene/arm/image_raw) ===================== -->

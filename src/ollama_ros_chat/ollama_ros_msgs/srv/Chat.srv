@@ -1,5 +1,6 @@
 # Request
 string content
+string[] images
 
 ---
 # Response

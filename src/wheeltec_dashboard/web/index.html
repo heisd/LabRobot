@@ -114,7 +114,7 @@
             <input id="vw-odom" type="text" value="/odom" />
           </label>
           <label>URDF 节点（可逗号分隔多个）
-            <input id="vw-urdf" type="text" value="/robot_state_publisher" />
+            <input id="vw-urdf" type="text" value="/robot_state_publisher,/arm_robot_state_publisher" />
           </label>
           <label class="vw-check"><input id="vw-show-urdf" type="checkbox" checked /> 机器人模型</label>
           <label class="vw-check"><input id="vw-show-map" type="checkbox" checked /> SLAM 地图</label>
@@ -1819,6 +1819,35 @@
       </section>
 
       <section class="card card-wide">
+        <h2>仿真关节控制 <span class="muted">(/lebai_trajectory_controller/joint_trajectory · 只控制仿真臂)</span></h2>
+        <div class="mj-grid">
+          <label>关节1 <span class="armsim-val" data-idx="0">0°</span>
+            <input class="armsim-j" data-idx="0" type="range" min="-180" max="180" step="1" value="0" /></label>
+          <label>关节2 <span class="armsim-val" data-idx="1">0°</span>
+            <input class="armsim-j" data-idx="1" type="range" min="-180" max="180" step="1" value="0" /></label>
+          <label>关节3 <span class="armsim-val" data-idx="2">0°</span>
+            <input class="armsim-j" data-idx="2" type="range" min="-180" max="180" step="1" value="0" /></label>
+          <label>关节4 <span class="armsim-val" data-idx="3">0°</span>
+            <input class="armsim-j" data-idx="3" type="range" min="-180" max="180" step="1" value="0" /></label>
+          <label>关节5 <span class="armsim-val" data-idx="4">0°</span>
+            <input class="armsim-j" data-idx="4" type="range" min="-180" max="180" step="1" value="0" /></label>
+          <label>关节6 <span class="armsim-val" data-idx="5">0°</span>
+            <input class="armsim-j" data-idx="5" type="range" min="-180" max="180" step="1" value="0" /></label>
+        </div>
+        <div class="mj-actions">
+          <button id="armsim-traj-run" class="mj-run" type="button">执行运动</button>
+          <button id="armsim-traj-zero" type="button">回零位</button>
+          <button id="armsim-traj-demo" type="button">演示动作（挥手）</button>
+          <button id="armsim-traj-fill" type="button">同步当前关节角</button>
+          <span id="armsim-traj-status" class="muted"></span>
+        </div>
+        <p class="hint">滑块设定 6 个关节目标角（角度制），"执行运动"经 rosbridge 把
+          <code>JointTrajectory</code> 发到仿真控制器 <code>/lebai_trajectory_controller/joint_trajectory</code>，
+          运动时长按最大关节行程自动估算。"同步当前关节角"读取 <code>/joint_states</code> 回填滑块。
+          仅对 Gazebo 仿真臂生效（真机控制在"监控与抓取"页，走乐白驱动）。</p>
+      </section>
+
+      <section class="card card-wide">
         <h2>机械臂抓取仿真 <span class="muted">(lebai_gazebo · Gazebo 场景转发到 Web)</span></h2>
         <div class="fn-stream-toolbar">
           <label>场景画面话题
@@ -1849,8 +1878,9 @@
           都在"监控与抓取"页（仿真与真机话题一致，面板直接可用），抓取闭环触发后这里的<strong>目标距离</strong>会实时更新。
           下方两路为眼在手相机与 HSV 识别调试图。仿真相机/画质/端口设置与"组件状态"页的 web_video_server 共用。
           想看机械臂的<strong>三维关节运动</strong>：去"系统总览"的 3D 视图（仿真发布 <code>/joint_states</code> 与
-          <code>/tf</code>），"URDF 节点"填 <code>/robot_state_publisher</code>、Fixed frame 填 <code>world</code>
-          （仿真里机械臂固定在 world 原点）。</p>
+          <code>/tf</code>），"URDF 节点"填 <code>/arm_robot_state_publisher</code>（已在默认值里）、Fixed frame 填
+          <code>world</code>（仿真里机械臂固定在 world 原点；节点名带 arm_ 前缀是为了与底盘的
+          robot_state_publisher 区分，避免互相拿错 URDF）。</p>
       </section>
 
       <section class="card card-wide">

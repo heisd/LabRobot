@@ -9,31 +9,32 @@
 <sdf version="1.6">
   <world name="grab_world">
 
-    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
-    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
+    <include><uri>model://ground_plane</uri></include>
+    <include><uri>model://sun</uri></include>
 
-    <!-- 桌子: 桌面约 1.0m 高 -->
+    <!-- 桌子: 桌面约 0.565m 高(下沉并旋转 90°, 适配 LM3 臂展)。
+         桌心 x=0.85(近沿 0.45), 与机器人前缘(~0.363)留出 ~0.09m 净空, 不再贴住机械臂。 -->
     <include>
       <name>table</name>
-      <uri>model:///home/user/.gazebo/models/table</uri>
-      <pose>0.55 0 0 0 0 0</pose>
+      <uri>model://table</uri>
+      <pose>0.85 0 -0.45 0 0 1.5708</pose>
     </include>
 
-    <!-- 标准物体(放在桌面上 ~1.015m) -->
+    <!-- 标准物体(放在桌面上 ~0.565m, 后撤后仍在臂可达半径内 x≲0.63) -->
     <include>
       <name>coke_can</name>
-      <uri>model:///home/user/.gazebo/models/coke_can</uri>
-      <pose>0.45 0.10 1.015 0 0 0</pose>
+      <uri>model://coke_can</uri>
+      <pose>0.52 0.10 0.565 0 0 0</pose>
     </include>
     <include>
       <name>wood_cube</name>
-      <uri>model:///home/user/.gazebo/models/wood_cube_5cm</uri>
-      <pose>0.45 -0.10 1.015 0 0 0</pose>
+      <uri>model://wood_cube_5cm</uri>
+      <pose>0.52 -0.10 0.565 0 0 0</pose>
     </include>
     <include>
       <name>beer</name>
-      <uri>model:///home/user/.gazebo/models/beer</uri>
-      <pose>0.60 0.0 1.015 0 0 0</pose>
+      <uri>model://beer</uri>
+      <pose>0.62 0.0 0.565 0 0 0</pose>
     </include>
 
     <!-- ===================== 场景相机(转发到 Web) ===================== -->

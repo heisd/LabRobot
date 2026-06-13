@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"export PATH=$(echo \\\"$PATH\\\" | tr \\\":\\\" \\\"\\\\n\\\" | grep -v \\\"^/mnt/\\\" | paste -sd:)\\nsource /opt/ros/humble/setup.bash >/dev/null 2>&1\\nsource ~/Lab/install/setup.bash >/dev/null 2>&1\\necho...",
+  "error": "Exit code 1\n=== web_video_server available? ===\n=== start web_video_server on :8081 ===\n--- /stream?topic=/sim_scene/arm/image_raw : first bytes (MJPEG header) ---\n\n--- HTTP response headers ---\nHTTP/1.1 502 Bad Gateway\r\nConnection: keep-alive\r\nKeep-Alive: timeout=4\r\nProxy-Connection: keep-alive\r\nContent-Length: 0\r\n\r\n--- web_video_server log tail ---\nPackage 'web_video_server' not found",
+  "timestamp": "2026-06-13T04:19:44.035Z",
+  "retry_count": 1
+}

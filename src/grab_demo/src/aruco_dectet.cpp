@@ -2,9 +2,9 @@
 #include <eigen3/Eigen/Core>
 #include <eigen3/Eigen/Geometry>
 
-// 使用OpenCV 4.10的本地头文件（通过绝对路径）
-#include "/usr/local/opencv410/include/opencv4/opencv2/objdetect.hpp"
-#include "/usr/local/opencv410/include/opencv4/opencv2/calib3d.hpp"  // 用于solvePnP
+// 需要 OpenCV >= 4.7 的 objdetect 模块(提供 cv::aruco::ArucoDetector 新 API)
+#include <opencv2/objdetect.hpp>
+#include <opencv2/calib3d.hpp>  // 用于solvePnP
 #include <opencv4/opencv2/highgui/highgui.hpp>
 #include <opencv4/opencv2/core/eigen.hpp>
 #include <image_transport/image_transport.hpp>

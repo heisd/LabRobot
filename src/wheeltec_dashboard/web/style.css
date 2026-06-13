@@ -817,6 +817,10 @@ main {
   color: var(--err);
   font-size: 13px;
 }
+/* .cam-err 设了 display:flex 会盖掉 [hidden] 默认的 display:none, 导致 JS 把
+   errEl.hidden=true 也藏不住"无法加载流"。这条属性选择器优先级更高, 让 hidden 生效:
+   流一旦出图(errEl.hidden=true)提示即消失。 */
+.cam-err[hidden] { display: none; }
 
 .log-toolbar {
   display: flex;

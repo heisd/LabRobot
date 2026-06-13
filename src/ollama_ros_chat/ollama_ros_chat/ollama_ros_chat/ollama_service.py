@@ -26,11 +26,24 @@ class OllamaChatNode(Node):
         self.temperature = 0.5
         self.history_length = 10
         self.available_models = []
-        self.conversation_history = [{"role": "system", "content": "You are a helpful assistant"}]
+        self.use_model = "qwen3-vl:2b"  # Default model
         
         # 初始化模型
         self.initialize_models()
-        self.select_model()
+        
+        # 优先选择用户指定的模型
+        target_model = "qwen3-vl:2b"
+        if target_model in self.available_models:
+            self.use_model = target_model
+        elif self.available_models:
+            self.use_model = self.available_models[0]
+        
+        self.conversation_history = [{"role": "system", "content": f"You are {self.use_model}, a helpful assistant developed by Alibaba Cloud."}]
+
+        if self.use_model:
+            self.get_logger().info(f"Selected model: {self.use_model}")
+        else:
+            self.get_logger().error("No models available to select")
         
         self.get_logger().info('Ollama Chat Server Node initialized')
 
@@ -58,27 +71,34 @@ class OllamaChatNode(Node):
         
         self.use_model = self.available_models[0]
         self.get_logger().info(f"Selected model: {self.use_model}")
-        response = requests.post(f"{self.base_url}/api/generate", json={'model': self.use_model})
+        # No need to pre-load with generate here if we use chat
 
     def handle_chat_request(self, request, response):
         """Handle incoming chat service requests"""
         try:
             # 解析接收到的消息
             user_message = request.content
+            images = getattr(request, 'images', [])
             
             # 更新对话历史
-            self.conversation_history.append({"role": "user", "content": user_message})
-            print("Received message:", user_message,flush=True)
+            msg = {"role": "user", "content": user_message}
+            if images:
+                msg["images"] = list(images)
+            
+            self.conversation_history.append(msg)
+            print("Received message:", user_message, flush=True)
+            if images:
+                print(f"Received {len(images)} images", flush=True)
+
             # 获取响应
             time_start = time.time()
             response_content = self.get_response(self.conversation_history)
             time_end = time.time()
-            print("Response_content:", response_content,end='\n',flush=True)
-            print("Time taken:", time_end - time_start,flush=True)
-            
+            print("Response_content:", response_content, end='\n', flush=True)
+            print("Time taken:", time_end - time_start, flush=True)
             
             if response_content:
-                # 更新对话历史
+                # 更新对话历史 (assistant 不带图片)
                 self.conversation_history.append({"role": "assistant", "content": response_content})
                 self.conversation_history = self.process_data(self.conversation_history)
                 
@@ -100,29 +120,30 @@ class OllamaChatNode(Node):
         return response
 
     def get_response(self, messages: List[Dict[str, str]]) -> Optional[str]:
-        """Get response from Ollama model"""
+        """Get response from Ollama model using /api/chat"""
         try:
-            prompt = self._convert_messages_to_prompt(messages)
-            url = f"{self.base_url}/api/generate"
+            url = f"{self.base_url}/api/chat"
             data = {
                 "model": self.use_model,
-                "prompt": prompt,
-                "stream": self.stream,
-                "temperature": self.temperature
+                "messages": messages,
+                "stream": True,
+                "options": {
+                    "temperature": self.temperature
+                }
             }
 
-            response = requests.post(url, json=data, stream=self.stream, timeout=120)
+            response = requests.post(url, json=data, stream=True, timeout=120)
             if response.status_code == 200:
                 full_response = ""
                 for line in response.iter_lines():
                     if line:
                         json_response = json.loads(line)
-                        if 'response' in json_response:
-                            chunk = json_response['response']
+                        if 'message' in json_response:
+                            chunk = json_response['message'].get('content', '')
                             full_response += chunk
-                            #print(chunk, end='', flush=True)
-                            if json_response['done'] is True:
-                                return full_response
+                            print(chunk, end='', flush=True)
+                        if json_response.get('done', False):
+                            return full_response
             else:
                 self.get_logger().error(f"Error: Received status code {response.status_code}")
                 return None

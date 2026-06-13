@@ -1,0 +1,63 @@
+<?xml version="1.0" ?>
+<!-- box_target_red — 红色小方块(HSV 颜色抓取目标)。
+     原模型是 6×6×2m 的"降落台"网格, 远超机械臂尺度, 已改为 5cm 可抓取纯红立方体。
+     link 原点在方块底面, world 里按桌面高度摆放即贴桌, dynamic 可被夹起。 -->
+<sdf version="1.6">
+  <model name="box_target_red">
+    <link name="link">
+      <pose>0 0 0.025 0 0 0</pose>
+      <inertial>
+        <mass>0.05</mass>
+        <inertia>
+          <ixx>2.0833333e-05</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>2.0833333e-05</iyy>
+          <iyz>0</iyz>
+          <izz>2.0833333e-05</izz>
+        </inertia>
+      </inertial>
+
+      <collision name="collision">
+        <geometry>
+          <box>
+            <size>0.05 0.05 0.05</size>
+          </box>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>1.0</mu>
+              <mu2>1.0</mu2>
+            </ode>
+          </friction>
+          <contact>
+            <ode>
+              <kp>100000</kp>
+              <kd>1</kd>
+              <min_depth>0.001</min_depth>
+              <max_vel>0.1</max_vel>
+            </ode>
+          </contact>
+        </surface>
+      </collision>
+
+      <visual name="visual">
+        <geometry>
+          <box>
+            <size>0.05 0.05 0.05</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.8 0.0 0.0 1</ambient>
+          <diffuse>0.9 0.05 0.05 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+          <script>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+            <name>Gazebo/Red</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

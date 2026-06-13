@@ -9,9 +9,7 @@
   (urdf/wheeltec_gazebo.xacro), 不写死在世界里, 方便换车型/换传感器。
 
   所有障碍物都来自本机 ~/.gazebo/models 下的标准模型, 用与 grab_world.world 相同的
-  绝对路径 URI(model:///home/user/.gazebo/models/XXX), 无需联网下载。若你的 home 不是
-  /home/user(如 /home/li), 把下面所有 /home/user/ 批量替换成你的实际家目录即可
-  (grab_world.world 同此约定)。
+  相对 URI(model://XXX), 无需联网下载。
 
   另含一个俯视"场景相机"(libgazebo_ros_camera.so), 把整个仿真画面发布成 ROS 图像
   话题 /sim_scene/chassis/image_raw, 再经 web_video_server 转成 MJPEG, 在 Dashboard
@@ -20,75 +18,75 @@
 <sdf version="1.6">
   <world name="wheeltec_slam_nav">
 
-    <include><uri>model:///home/user/.gazebo/models/ground_plane</uri></include>
-    <include><uri>model:///home/user/.gazebo/models/sun</uri></include>
+    <include><uri>model://ground_plane</uri></include>
+    <include><uri>model://sun</uri></include>
 
     <!-- ===================== 房间四面墙(grey_wall ≈ 7.5×0.2×2.8m) ===================== -->
     <include>
       <name>wall_north</name>
-      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <uri>model://grey_wall</uri>
       <pose>0 3.75 0 0 0 0</pose>
     </include>
     <include>
       <name>wall_south</name>
-      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <uri>model://grey_wall</uri>
       <pose>0 -3.75 0 0 0 0</pose>
     </include>
     <include>
       <name>wall_east</name>
-      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <uri>model://grey_wall</uri>
       <pose>3.75 0 0 0 0 1.5708</pose>
     </include>
     <include>
       <name>wall_west</name>
-      <uri>model:///home/user/.gazebo/models/grey_wall</uri>
+      <uri>model://grey_wall</uri>
       <pose>-3.75 0 0 0 0 1.5708</pose>
     </include>
 
     <!-- ===================== 房间内障碍物(均来自 ~/.gazebo/models) ===================== -->
     <include>
       <name>bookshelf</name>
-      <uri>model:///home/user/.gazebo/models/bookshelf</uri>
+      <uri>model://bookshelf</uri>
       <pose>3.0 2.5 0 0 0 0</pose>
     </include>
     <include>
       <name>cabinet</name>
-      <uri>model:///home/user/.gazebo/models/cabinet</uri>
+      <uri>model://cabinet</uri>
       <pose>-3.0 2.5 0 0 0 1.5708</pose>
     </include>
     <include>
       <name>cafe_table</name>
-      <uri>model:///home/user/.gazebo/models/cafe_table</uri>
+      <uri>model://cafe_table</uri>
       <pose>1.5 -1.0 0 0 0 0</pose>
     </include>
     <include>
       <name>dumpster</name>
-      <uri>model:///home/user/.gazebo/models/dumpster</uri>
+      <uri>model://dumpster</uri>
       <pose>3.0 -2.8 0 0 0 1.5708</pose>
     </include>
     <include>
       <name>barrel_1</name>
-      <uri>model:///home/user/.gazebo/models/construction_barrel</uri>
+      <uri>model://construction_barrel</uri>
       <pose>-1.5 -2.0 0 0 0 0</pose>
     </include>
     <include>
       <name>barrel_2</name>
-      <uri>model:///home/user/.gazebo/models/construction_barrel</uri>
+      <uri>model://construction_barrel</uri>
       <pose>0.0 2.2 0 0 0 0</pose>
     </include>
     <include>
       <name>cone_1</name>
-      <uri>model:///home/user/.gazebo/models/construction_cone</uri>
+      <uri>model://construction_cone</uri>
       <pose>-2.2 -1.0 0 0 0 0</pose>
     </include>
     <include>
       <name>cone_2</name>
-      <uri>model:///home/user/.gazebo/models/construction_cone</uri>
+      <uri>model://construction_cone</uri>
       <pose>1.0 1.6 0 0 0 0</pose>
     </include>
     <include>
       <name>person_standing</name>
-      <uri>model:///home/user/.gazebo/models/person_standing</uri>
+      <uri>model://person_standing</uri>
       <pose>-2.6 0.6 0 0 0 -1.2</pose>
     </include>
 

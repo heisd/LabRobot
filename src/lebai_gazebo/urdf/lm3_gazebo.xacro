@@ -19,6 +19,18 @@
        否则链接/关节重名报错。 -->
   <xacro:include filename="$(find lebai_lm3_support)/urdf/lm3_macro.xacro"/>
 
+  <!-- ===================== 锚定到世界 ===================== -->
+  <!-- 车底座碰撞网格的轮子伸到 base_link 原点下方 0.035m: 若 spawn 在 z=0,
+       轮子穿进地面, ODE 会把整车弹飞("机器人飞出去")。这里按 Gazebo 惯例
+       加 world 链接 + fixed joint, 把底座抬到轮子贴地并固定住——抓取演示
+       不需要底盘移动, 固定后机械臂运动的反作用力也不会推着车漂移。 -->
+  <link name="world"/>
+  <joint name="world_to_base" type="fixed">
+    <parent link="world"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 0.035" rpy="0 0 0"/>
+  </joint>
+
   <!-- ===================== eye-in-hand 相机 ===================== -->
   <link name="camera_arm_link">
     <visual>
@@ -74,6 +86,10 @@
   <gazebo>
     <plugin filename="libgazebo_ros2_control.so" name="gazebo_ros2_control">
       <parameters>$(find lebai_gazebo)/config/gazebo_controllers.yaml</parameters>
+      <!-- 指明从哪个节点取 robot_description: 底盘侧也有同名 robot_state_publisher,
+           不指定会随机撞到底盘 URDF(无 ros2_control 标签 -> 插件罢工)。
+           与 gazebo.launch.py 里的节点名保持一致。 -->
+      <robot_param_node>arm_robot_state_publisher</robot_param_node>
     </plugin>
   </gazebo>
 

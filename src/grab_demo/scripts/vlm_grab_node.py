@@ -13,10 +13,11 @@
   4. 把"理解结果"发到 /vlm/result(String) 供 Dashboard 显示;
   5. 若 auto_grab=true, 自动调用 /obj_grab_service 让机械臂抓取。
 
-VLM 接口支持两种(provider 参数):
-  - "openai"   : OpenAI 兼容 /chat/completions(可指向本地 Ollama/vLLM 或云端 OpenAI);
+VLM 接口支持三种(provider 参数):
+  - "ollama"   : 本地 Ollama 原生接口 /api/generate;
+  - "openai"   : OpenAI 兼容 /chat/completions;
   - "anthropic": Anthropic Claude /v1/messages。
-仅使用 Python 标准库 urllib, 无额外 pip 依赖。API Key 从环境变量读取(不写进参数)。
+仅使用 Python 标准库 urllib, 无额外 pip 依赖。
 """
 
 import base64
@@ -80,11 +81,11 @@ class VlmGrabNode(Node):
         self.z_offset = float(self.declare_parameter("z_offset", 0.07).value)
 
         # VLM 接口
-        self.provider = self.declare_parameter("provider", "openai").value  # openai | anthropic
-        self.api_base = self.declare_parameter("api_base", "https://api.openai.com/v1").value
-        self.model = self.declare_parameter("model", "gpt-4o-mini").value
+        self.provider = self.declare_parameter("provider", "ollama").value  # ollama | openai | anthropic
+        self.api_base = self.declare_parameter("api_base", "http://localhost:11434").value
+        self.model = self.declare_parameter("model", "qwen3-vl:2b").value
         self.api_key_env = self.declare_parameter("api_key_env", "").value  # 留空则按 provider 取默认
-        self.timeout = float(self.declare_parameter("request_timeout", 30.0).value)
+        self.timeout = float(self.declare_parameter("request_timeout", 60.0).value)
 
         # 抓取
         self.auto_grab = bool(self.declare_parameter("auto_grab", True).value)
@@ -346,6 +347,8 @@ class VlmGrabNode(Node):
         try:
             if self.provider == "anthropic":
                 text = self._call_anthropic(prompt, b64)
+            elif self.provider == "ollama":
+                text = self._call_ollama(prompt, b64)
             else:
                 text = self._call_openai(prompt, b64)
         except urllib.error.HTTPError as e:
@@ -361,10 +364,14 @@ class VlmGrabNode(Node):
         return os.environ.get(env, "")
 
     def _default_key_env(self):
-        return "ANTHROPIC_API_KEY" if self.provider == "anthropic" else "OPENAI_API_KEY"
+        if self.provider == "anthropic": return "ANTHROPIC_API_KEY"
+        if self.provider == "ollama": return ""
+        return "OPENAI_API_KEY"
 
     def _vlm_missing_reason(self):
         """未接入 VLM 大模型时返回原因字符串, 已接入(或本地模型)返回 None。"""
+        if self.provider == "ollama":
+            return None
         env_name = self.api_key_env or self._default_key_env()
         key = os.environ.get(env_name, "")
         is_cloud = ("api.openai.com" in self.api_base) or ("api.anthropic.com" in self.api_base)
@@ -374,6 +381,9 @@ class VlmGrabNode(Node):
 
     def _log_vlm_connectivity(self):
         """启动时输出 VLM 大模型接入情况, 便于一眼看出"是否接了大模型"。"""
+        if self.provider == "ollama":
+            self.get_logger().info("VLM 使用本地 Ollama: model=%s base=%s" % (self.model, self.api_base))
+            return
         env_name = self.api_key_env or self._default_key_env()
         key = os.environ.get(env_name, "")
         is_cloud = ("api.openai.com" in self.api_base) or ("api.anthropic.com" in self.api_base)
@@ -396,6 +406,19 @@ class VlmGrabNode(Node):
                                      headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=self.timeout) as r:
             return json.loads(r.read().decode("utf-8"))
+
+    def _call_ollama(self, prompt, b64):
+        url = self.api_base.rstrip("/") + "/api/generate"
+        body = {
+            "model": self.model,
+            "prompt": prompt,
+            "images": [b64],
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0}
+        }
+        resp = self._post(url, {}, body)
+        return resp.get("response", "")
 
     def _call_openai(self, prompt, b64):
         url = self.api_base.rstrip("/") + "/chat/completions"
@@ -502,7 +525,7 @@ class VlmGrabNode(Node):
         """计算并(若合法)设置目标点。返回 (ok, dis, reason)。安全加固集中在这里。
 
         只缓存与 z_offset 无关的量 (相机系 x,y 和实测深度 dis), z=dis+z_offset 推迟到
-        广播时实时计算, 这样运行中 ros2 param set z_offset 能立刻生效。
+        广播时实时计算, 这样运行中 ros2 param set z_offset能立刻生效。
         """
         dis = self._median_depth(depth, px, py, 5)
         if dis <= 0:

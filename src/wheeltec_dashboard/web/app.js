@@ -51,6 +51,7 @@
   let armVlmConfirmPub = null; // /vlm/confirm publisher (确认/取消抓取)
   let kcfBboxPub = null;       // /kcf_node/select_bbox publisher (KCF 手动框选)
   let simLaunchPub = null;     // /sim_launch/cmd publisher (网页一键启停 Gazebo 仿真)
+  let armSimTrajPub = null;    // /lebai_trajectory_controller/joint_trajectory (仿真臂关节控制)
   let initialPosePub = null;   // /initialpose publisher (Nav2 2D Pose Estimate · AMCL)
   let rechargeFlagPub = null;  // /robot_recharge_flag publisher (自动回充 1开/0关)
   let securityPub = null;      // /chassis_security publisher (固件安全等级 0/1)
@@ -230,6 +231,10 @@
     if (simLaunchPub) {
       try { simLaunchPub.unadvertise(); } catch (_) { /* ignore */ }
       simLaunchPub = null;
+    }
+    if (armSimTrajPub) {
+      try { armSimTrajPub.unadvertise(); } catch (_) { /* ignore */ }
+      armSimTrajPub = null;
     }
     if (initialPosePub) {
       try { initialPosePub.unadvertise(); } catch (_) { /* ignore */ }
@@ -581,6 +586,12 @@
       ros, name: '/sim_launch/cmd', messageType: 'std_msgs/msg/String',
     });
     simLaunchPub.advertise();
+    // 仿真臂关节控制: 直接发 JointTrajectory 给 Gazebo 里的 ros2_control 控制器
+    armSimTrajPub = new ROSLIB.Topic({
+      ros, name: '/lebai_trajectory_controller/joint_trajectory',
+      messageType: 'trajectory_msgs/msg/JointTrajectory',
+    });
+    armSimTrajPub.advertise();
     sub('/sim_launch/status', 'std_msgs/msg/String', (msg) => {
       let obj = null;
       try { obj = JSON.parse(msg.data || '{}'); } catch (_) { return; }
@@ -2104,6 +2115,61 @@
     }
   }
 
+  // ---------- 单帧快照轮询（替代 multipart/x-mixed-replace 长连接）----------
+  // 浏览器经 WSL2 的 localhost 转发 / 某些代理访问时, MJPEG 长连接常被缓冲住:
+  // HTTP 200 到了但后续帧刷不到 <img> -> onerror -> "无法加载流"。改用 /snapshot
+  // 短请求按帧轮询(每帧独立请求、立即结束), 跨浏览器/转发/代理都稳, 后端一有帧
+  // 就出图、不必手动刷新。隐藏页签的 <img> 跳过请求以省带宽。
+  const snapState = new Map();   // img -> { alive, firstOk, t }(链式轮询状态)
+
+  function snapshotUrl(topic) {
+    const q = Math.max(1, Math.min(100, parseInt(camQuality.value, 10) || 60));
+    const params = `topic=${encodeURIComponent(topic)}&quality=${q}&_=${Date.now()}`;
+    // 默认走"同源代理" /video/snapshot —— 由 web_server(:8000) 在 WSL 本地转发到
+    // web_video_server, 浏览器只连 8000(能过 WSL2 localhost 转发), 避免直连 8081 空响应。
+    // 若手填了"基址"覆盖(camBase, 如局域网直连/反代场景), 则按它直连 /snapshot。
+    const override = (camBase && camBase.value || '').trim();
+    if (override) return `${override.replace(/\/+$/, '')}/snapshot?${params}`;
+    return `/video/snapshot?${params}`;
+  }
+
+  function stopSnapshot(img) {
+    const st = snapState.get(img);
+    if (st) { st.alive = false; if (st.t) clearTimeout(st.t); snapState.delete(img); }
+  }
+
+  // 自限速链式轮询: 每路面板最多 1 个在途请求, 上一张完成后才发下一张, 失败则退避。
+  // (旧版用固定 setInterval 不等返回就发, 失败时请求疯狂堆积, 把经 WSL 转发的
+  //  web_video_server 冲爆 -> ERR_EMPTY_RESPONSE。改链式后最多 ~每面板 1 个并发。)
+  function startSnapshot(img, topic, errEl) {
+    stopSnapshot(img);
+    if (!img || !topic) return;
+    const st = { alive: true, firstOk: false, t: null };
+    snapState.set(img, st);
+    const next = (delay) => { if (st.alive) st.t = setTimeout(loop, delay); };
+    function loop() {
+      if (!st.alive) return;
+      if (!img.offsetParent) { next(300); return; }   // 隐藏页签: 慢轮询, 不请求
+      const pre = new Image();
+      pre.onload = () => {
+        if (!st.alive) return;
+        img.src = pre.src;
+        if (!st.firstOk) { st.firstOk = true; if (errEl) errEl.hidden = true; }
+        next(120);                                     // 成功: 隔 120ms 再来(≈8fps 上限)
+      };
+      pre.onerror = () => {
+        if (!st.alive) return;
+        if (!st.firstOk && errEl) {
+          errEl.hidden = false;
+          errEl.textContent = '无法加载流，检查 web_video_server 与话题';
+        }
+        next(500);                                     // 失败: 退避 500ms, 不猛刷
+      };
+      pre.src = snapshotUrl(topic);
+    }
+    loop();
+  }
+
   function applyCam(slot) {
     const img = document.querySelector(`.cam-img[data-slot="${slot}"]`);
     const topicInput = document.querySelector(`.cam-topic[data-slot="${slot}"]`);
@@ -2111,21 +2177,10 @@
     const errEl = document.querySelector(`.cam-err[data-slot="${slot}"]`);
     if (!img || !topicInput || !enable) return;
     errEl.hidden = true;
-    if (!enable.checked) {
-      showPlaceholder(slot, '已禁用');
-      return;
-    }
+    if (!enable.checked) { stopSnapshot(img); showPlaceholder(slot, '已禁用'); return; }
     const topic = topicInput.value.trim();
-    if (!topic) {
-      showPlaceholder(slot, '未设置 topic');
-      return;
-    }
-    img.onerror = () => {
-      // Swap to landscape placeholder so the tile stays presentable.
-      showPlaceholder(slot, '无法加载流，检查 web_video_server 与相机话题');
-    };
-    img.onload = () => { errEl.hidden = true; };
-    img.src = buildStreamUrl(topic);
+    if (!topic) { stopSnapshot(img); showPlaceholder(slot, '未设置 topic'); return; }
+    startSnapshot(img, topic, errEl);
   }
 
   function applyAllCams() {
@@ -2156,18 +2211,12 @@
     const frame = img.closest('.cam-frame');
     const errEl = frame ? frame.querySelector('.cam-err') : null;
     if (!topic) {
-      img.onerror = null;
+      stopSnapshot(img);
       img.src = CAM_PLACEHOLDER;
       if (errEl) { errEl.hidden = false; errEl.textContent = '未设置 topic'; }
       return;
     }
-    img.onerror = () => {
-      img.onerror = null;
-      img.src = CAM_PLACEHOLDER;
-      if (errEl) { errEl.hidden = false; errEl.textContent = '无法加载流，检查 web_video_server 与话题'; }
-    };
-    img.onload = () => { if (errEl) errEl.hidden = true; };
-    img.src = buildStreamUrl(topic);
+    startSnapshot(img, topic, errEl);
   }
   function applyAllFnStreams() {
     document.querySelectorAll('.fn-img').forEach(applyFnStream);
@@ -2178,8 +2227,8 @@
   function kickVisibleFnStreams(root) {
     if (!root) return;
     root.querySelectorAll('.fn-img').forEach((img) => {
-      if (!img.offsetParent) return;                                  // display:none
-      if ((img.src || '').indexOf(CAM_PLACEHOLDER) === -1) return;    // 已在播放
+      if (!img.offsetParent) return;            // display:none
+      if (snapState.has(img)) return;           // 已在轮询
       applyFnStream(img);
     });
   }
@@ -2204,6 +2253,22 @@
   document.querySelectorAll('#subpanel-line .fn-img').forEach(applyFnStream);
   // 首页（系统总览）默认可见，其"相机原始流"卡片也立即拉流。
   kickVisibleFnStreams($('panel-overview'));
+
+  // ---------- 视频流兜底：定时确保"可见但还没在轮询"的面板启动起来 ----------
+  // 快照轮询本身逐帧自愈(后端晚起/重启都会自动出图), 这里只是兜底:
+  // 把当前可见、却还没在轮询的相机/功能流启动起来(切页/首次显示时补漏)。
+  function retryErroredStreams() {
+    kickVisibleFnStreams(document);                       // fn-img(功能页/机械臂仿真)
+    document.querySelectorAll('.cam-img[data-slot]').forEach((img) => {
+      if (!img.offsetParent) return;                      // 隐藏页签
+      if (snapState.has(img)) return;                     // 已在轮询
+      const slot = img.dataset.slot;
+      const enable = document.querySelector(`.cam-enable[data-slot="${slot}"]`);
+      if (enable && !enable.checked) return;              // 用户主动禁用
+      applyCam(slot);
+    });
+  }
+  setInterval(retryErroredStreams, 5000);
 
   // ---------- 仿真启停 (sim_launcher: /sim_launch/cmd + /sim_launch/status) ----------
   function sendSimCmd(text) {
@@ -4619,6 +4684,76 @@
       });
     });
   }
+
+  // ---- 仿真关节控制（"机械臂仿真"页）: 滑块 -> JointTrajectory -> Gazebo ros2_control ----
+  // 与真机控制(走乐白驱动服务)互不干扰; 仿真里 /joint_states 的关节与真机同名 lebai_joint_1..6。
+  const ARMSIM_JOINTS = ['lebai_joint_1', 'lebai_joint_2', 'lebai_joint_3',
+                         'lebai_joint_4', 'lebai_joint_5', 'lebai_joint_6'];
+  const armSimSliders = Array.from(document.querySelectorAll('#panel-armsim .armsim-j'));
+  const armSimVals = Array.from(document.querySelectorAll('#panel-armsim .armsim-val'));
+  const armSimStatusEl = $('armsim-traj-status');
+
+  function armSimSetStatus(text) { if (armSimStatusEl) armSimStatusEl.textContent = text; }
+
+  function armSimShowVals() {
+    armSimSliders.forEach((sl, i) => { if (armSimVals[i]) armSimVals[i].textContent = sl.value + '°'; });
+  }
+  armSimSliders.forEach((sl) => sl.addEventListener('input', armSimShowVals));
+  armSimShowVals();
+
+  function armSimCurrentRad() {
+    if (!ARMSIM_JOINTS.every((n) => armJointMap.has(n))) return null;
+    return ARMSIM_JOINTS.map((n) => armJointMap.get(n).pos);
+  }
+
+  function armSimSend(points, label) {
+    if (!armSimTrajPub) { armSimSetStatus('rosbridge 未连接，无法控制'); return; }
+    armSimTrajPub.publish(new ROSLIB.Message({ joint_names: ARMSIM_JOINTS, points }));
+    armSimSetStatus(label + ' 已下发 ' + new Date().toLocaleTimeString());
+  }
+
+  // 时长按最大关节行程估算(~0.6 rad/s, 限 1.5~8s); 收不到当前关节角时退回 3s。
+  function armSimRunTo(targetRad, label) {
+    const cur = armSimCurrentRad();
+    let dur = 3;
+    if (cur) {
+      const maxDelta = Math.max(...targetRad.map((v, i) => Math.abs(v - cur[i])));
+      dur = Math.min(8, Math.max(1.5, maxDelta / 0.6));
+    }
+    const sec = Math.floor(dur);
+    armSimSend([{ positions: targetRad, time_from_start: { sec, nanosec: Math.round((dur - sec) * 1e9) } }], label);
+  }
+
+  const armSimRunBtn = $('armsim-traj-run');
+  if (armSimRunBtn) armSimRunBtn.addEventListener('click', () => {
+    const target = armSimSliders.map((sl) => parseFloat(sl.value) * Math.PI / 180);
+    armSimRunTo(target, '目标 [' + armSimSliders.map((sl) => sl.value + '°').join(', ') + ']');
+  });
+
+  const armSimZeroBtn = $('armsim-traj-zero');
+  if (armSimZeroBtn) armSimZeroBtn.addEventListener('click', () => {
+    armSimSliders.forEach((sl) => { sl.value = 0; });
+    armSimShowVals();
+    armSimRunTo([0, 0, 0, 0, 0, 0], '回零位');
+  });
+
+  const armSimDemoBtn = $('armsim-traj-demo');
+  if (armSimDemoBtn) armSimDemoBtn.addEventListener('click', () => {
+    armSimSend([
+      { positions: [0.6, -0.4, 0.5, 0.3, 0.5, 0], time_from_start: { sec: 3, nanosec: 0 } },
+      { positions: [-0.6, -0.4, 0.5, 0.3, -0.5, 0], time_from_start: { sec: 6, nanosec: 0 } },
+      { positions: [0, 0, 0, 0, 0, 0], time_from_start: { sec: 9, nanosec: 0 } },
+    ], '演示动作');
+  });
+
+  const armSimFillBtn = $('armsim-traj-fill');
+  if (armSimFillBtn) armSimFillBtn.addEventListener('click', () => {
+    const cur = armSimCurrentRad();
+    if (!cur) { armSimSetStatus('未收到 /joint_states（仿真是否已启动？）'); return; }
+    armSimSliders.forEach((sl, i) => { sl.value = Math.round(cur[i] * 180 / Math.PI); });
+    armSimShowVals();
+    armSimSetStatus('已同步当前关节角');
+  });
 
   // 位姿运动 IK：末端 X/Y/Z + RPY -> /motion_service/move_joint|move_line
   // （is_joint_pose=false，逆解在乐白控制器内完成）。arm_demo ik_demo 的面板版。

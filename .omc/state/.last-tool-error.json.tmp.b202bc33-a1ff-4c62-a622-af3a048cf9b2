@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"sed -n '8,15p' /home/li/Lab/src/wheeltec_gazebo/worlds/wheeltec_slam_nav.world; echo ===; sed -n '8,13p' /home/li/Lab/src/wheeltec_gazebo/worlds/wheeltec_vla_nav.world; echo ===; sed -n '7...",
+  "error": "Exit code 1\n  Wheeltec 底盘本身由 launch 用 xacro 生成\n  (urdf/wheeltec_gazebo.xacro), 不写死在世界里, 方便换车型/换传感器。\n\n  所有障碍物都来自本机 ~/.gazebo/models 下的标准模型, 用与 grab_world.world 相同的\n  绝对路径 URI(model://XXX), 无需联网下载。若你的 home 不是\n  /home/user(如 /home/li), 把下面所有 /home/user/ 批量替换成你的实际家目录即可\n  (grab_world.world 同此约定)。\n\n(eval):1: == not found",
+  "timestamp": "2026-06-12T08:29:52.154Z",
+  "retry_count": 1
+}
