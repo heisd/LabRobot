@@ -73,6 +73,13 @@ public:
         //pub
         image_pub_=this->create_publisher<sensor_msgs::msg::Image>("/KCF_image",1);
         vel_pub_ =this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel",1);
+        
+        // 检查是否有显示支持
+        if (getenv("DISPLAY") == NULL) {
+            this->has_display = false;
+        } else {
+            this->has_display = true;
+        }
     }
     //ros::Publisher pub;
     PID *linear_PID;
@@ -91,6 +98,7 @@ public:
     bool LAB = false;
     int center_x;
     KCFTracker tracker;
+    bool has_display = true;
     
     void PIDcallback();
 

@@ -5,12 +5,19 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+execute_process(COMMAND uname -m OUTPUT_VARIABLE MACHINES)
+if (${MACHINES} MATCHES "x86_64")
+  set(HOST_PLATFORM "x64")
+else()
+  set(HOST_PLATFORM "arm64")
+endif ()
+
 include_directories(
   include
 )
 
 link_directories(
-  lib/arm64
+  lib/${HOST_PLATFORM}
 )
 #ament_index_register_resource("ros1_bridge_foreign_mapping")
 install(DIRECTORY launch config feedback_voice

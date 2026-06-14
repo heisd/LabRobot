@@ -15,13 +15,19 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# Architecture Detection
+execute_process(COMMAND uname -m OUTPUT_VARIABLE MACHINES)
+if (${MACHINES} MATCHES "x86_64")
+  set(HOST_PLATFORM "x64")
+else()
+  set(HOST_PLATFORM "arm64")
+endif ()
+message(STATUS "Architecture: ${MACHINES}, using lib/${HOST_PLATFORM}")
+
 # find dependencies
 find_package(ament_cmake REQUIRED)
-#find_package(actionlib REQUIRED)
-#find_package(actionlib_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
-
 find_package(rclcpp REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -30,27 +36,12 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(bodyreader_msg REQUIRED)
-find_package(image_transport REQUIRED)                         # CHANGE
+find_package(image_transport REQUIRED)
 find_package(cv_bridge REQUIRED)  
 find_package(rosidl_default_generators REQUIRED)
-# uncomment the following section in order to fill in
-# further dependencies manually.
-# find_package(<dependency> REQUIRED)
-#rosidl_generate_interfaces(${PROJECT_NAME}
-# )
-
-
-link_directories(lib)
-
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
-  # the following line skips the linter which checks for copyrights
-  # uncomment the line when a copyright and license is not present in all source files
-  #set(ament_cmake_copyright_FOUND TRUE)
-  # the following line skips cpplint (only works in a git repo)
-  # uncomment the line when this package is not in a git repo
-  #set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 endif()
 
@@ -58,58 +49,70 @@ include_directories(
   include
 )
 
-link_directories(
-  lib lib/Plugins lib/Plugins/openni2 lib/Plugins/obt/3rdparty/lib
+# Only link SDK libraries if they exist (for ARM compatibility)
+# On x86_64, we use the MediaPipe Python node instead of C++ main
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/lib/${HOST_PLATFORM}/libastra.so")
+    link_directories(
+      lib/${HOST_PLATFORM} 
+      lib/${HOST_PLATFORM}/Plugins 
+      lib/${HOST_PLATFORM}/Plugins/openni2 
+      lib/${HOST_PLATFORM}/Plugins/obt/3rdparty/lib
+    )
+    
+    # We only build the C++ nodes that need the SDK if the SDK is present
+    add_executable(main_cpp src/main.cpp)
+    ament_target_dependencies(main_cpp rclcpp bodyreader_msg sensor_msgs)
+    target_link_libraries(main_cpp astra astra_core astra_core_api)
+    
+    add_executable(bodydata_process src/bodydata_process.cpp)
+    ament_target_dependencies(bodydata_process rclcpp bodyreader_msg sensor_msgs std_msgs geometry_msgs)
+    target_link_libraries(bodydata_process astra astra_core astra_core_api)
+
+    add_executable(follower src/follower.cpp)
+    ament_target_dependencies(follower rclcpp bodyreader_msg sensor_msgs std_msgs geometry_msgs)
+    target_link_libraries(follower astra astra_core astra_core_api)
+
+    add_executable(interaction src/interaction.cpp)
+    ament_target_dependencies(interaction rclcpp bodyreader_msg geometry_msgs)
+    target_link_libraries(interaction astra astra_core astra_core_api)
+
+    add_executable(feedback src/feedback.cpp)
+    ament_target_dependencies(feedback rclcpp bodyreader_msg geometry_msgs)
+    target_link_libraries(feedback astra astra_core astra_core_api)
+
+    add_executable(image_trans src/image_trans.cpp)
+    ament_target_dependencies(image_trans rclcpp bodyreader_msg sensor_msgs image_transport)
+    target_link_libraries(image_trans astra astra_core astra_core_api)
+else()
+    message(WARNING "Orbbec SDK not found for ${HOST_PLATFORM}. C++ nodes requiring SDK will not be built.")
+    # On x64 without SDK, we can still build nodes that DON'T need the SDK 
+    # (though in this package most do). 
+    # For now, we rely on the MediaPipe Python replacement for 'main'.
+endif()
+
+# Install Python scripts (including the new MediaPipe replacement for 'main')
+install(PROGRAMS 
+    src/mediapipe_bodyreader.py 
+    src/mediapipe_body_process.py
+    scripts/display.py 
+    scripts/compressed.py 
+    DESTINATION lib/${PROJECT_NAME}
 )
 
-#add_executable(wheeltec_robot_node src/wheeltec_robot.cpp src/Quaternion_Solution.cpp)
-#ament_target_dependencies(wheeltec_robot_node tf2_ros tf2 tf2_geometry_msgs rclcpp std_msgs nav_msgs std_srvs sensor_msgs ackermann_msgs serial )
+# Rename the python script to 'main' in the install directory to match launch files
+# Or just handle it in launch. For now, we'll keep it as mediapipe_bodyreader.py
+# and modify the launch file or use an alias. 
 
-add_executable(main src/main.cpp)
-ament_target_dependencies(main rclcpp bodyreader_msg sensor_msgs)
-target_link_libraries(main astra ${catkin_LIBRARIES} astra astra_core astra_core_api)
-
-add_executable(bodydata_process src/bodydata_process.cpp)
-ament_target_dependencies(bodydata_process rclcpp bodyreader_msg sensor_msgs std_msgs geometry_msgs)
-target_link_libraries(bodydata_process astra astra_core astra_core_api)
-
-#add_executable(color-test src/color-test.cpp)
-#add_dependencies(color-test ${${PROJECT_NAME}_EXPORTED_TARGETS})
-#target_link_libraries(color-test ${catkin_LIBRARIES} astra astra_core astra_core_api)
-
-add_executable(follower src/follower.cpp)
-ament_target_dependencies(follower rclcpp bodyreader_msg sensor_msgs std_msgs geometry_msgs)
-target_link_libraries(follower astra astra_core astra_core_api)
-
-add_executable(interaction src/interaction.cpp)
-ament_target_dependencies(interaction rclcpp bodyreader_msg geometry_msgs)
-target_link_libraries(interaction astra astra_core astra_core_api)
-
-
-add_executable(feedback src/feedback.cpp)
-ament_target_dependencies(feedback rclcpp bodyreader_msg geometry_msgs)
-target_link_libraries(feedback astra astra_core astra_core_api)
-
-
-add_executable(image_trans src/image_trans.cpp)
-ament_target_dependencies(image_trans rclcpp bodyreader_msg sensor_msgs image_transport)
-target_link_libraries(image_trans astra astra_core astra_core_api)
-
-
-install(PROGRAMS scripts/display.py scripts/compressed.py DESTINATION lib/${PROJECT_NAME})
-
-install(TARGETS
-main bodydata_process follower interaction feedback image_trans
-
-DESTINATION lib/${PROJECT_NAME}
-  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-)
 install(
   DIRECTORY launch audio
   DESTINATION share/${PROJECT_NAME}
 )
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/lib/${HOST_PLATFORM}/")
+    install(DIRECTORY lib/${HOST_PLATFORM}/
+      DESTINATION lib/
+    )
+endif()
 
 ament_package()
 

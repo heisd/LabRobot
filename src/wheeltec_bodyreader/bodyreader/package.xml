@@ -34,6 +34,7 @@
   <depend>bodyreader_msg</depend>
   <depend>nav_msgs</depend>
   <depend>image_transport</depend>
+  <depend>python3-mediapipe</depend>
   <test_depend>boost</test_depend>
   <export>
     <build_type>ament_cmake</build_type>

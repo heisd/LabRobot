@@ -58,6 +58,32 @@ source install/setup.bash
 | [yolo_ros](https://github.com/mgonzs13/yolo_ros) | `src/yolo_ros` | YOLO 检测（Ultralytics），底盘 `wheeltec_yolo` 视觉跟随与机械臂 `grab_demo` YOLO 抓取共用 |
 | [serial](https://github.com/jinmenglei/serial) | `src/serial_ros2` | 串口通信库（`serial` 包），`turn_on_wheeltec_robot` 依赖 |
 
+## 编译与架构修复记录 (Maintenance Logs)
+
+### 2026-06-14: x86_64 架构编译与 WSL 兼容性修复
+针对 x86_64 架构（如 WSL2、普通 PC）下的编译报错进行了专项修复，主要解决硬编码架构路径、缺失依赖库及编译器兼容性问题。
+
+1. **wheeltec_robot_kcf**:
+   - **问题**: `ImageConverter` 类缺少 `has_display` 成员导致编译失败。
+   - **修复**: 补全类定义，并增加对 `DISPLAY` 环境变量的检测。在无显示环境（如 WSL 纯命令行）下自动禁用 OpenCV GUI 窗口，防止运行时崩溃。
+2. **wheeltec_mic_ros2**:
+   - **问题**: `CMakeLists.txt` 硬编码了 `arm64` 的库路径。
+   - **修复**: 修改为通过 `uname -m` 自动检测架构，x86_64 下自动链接 `lib/x64` 目录，ARM 下链接 `lib/arm64`。
+3. **astra_camera**:
+   - **问题**: 源码包内缺失本地 `openni2_redist` 预编译库，导致链接与安装失败。
+   - **修复**: 将依赖重定向至系统安装的 `libopenni2-dev`。修改 `CMakeLists.txt` 使用 `find_library` 定位系统库，并移除/注释掉对缺失本地目录的引用。
+4. **orb_slam2_ros**:
+   - **问题**: Boost 序列化库在 Ubuntu 22.04 (Humble) 下存在 `library_version_type` 类型未定义错误。
+   - **修复**: 在 `BoostArchiver.h` 中增加版本宏判断，针对新版 Boost 包含正确的兼容头文件。
+
+5. **bodyreader**:
+   - **问题**: 该包强依赖奥比中光（Orbbec）的闭源 Astra Body Tracking SDK，且源码包内仅含 `aarch64` 架构库，导致 x86_64 架构下无法编译。
+   - **修复**: 
+     - 进行了核心逻辑的**跨平台重构**：引入了基于 **Google MediaPipe** 的 Python 实现 (`mediapipe_bodyreader.py` 和 `mediapipe_body_process.py`)。
+     - 重构后的 Python 节点可以订阅标准 ROS2 图像话题，并发布与原包完全一致的 `bodyreader_msg/Bodylist` 消息。
+     - 修改了 `CMakeLists.txt` 使其支持架构自适应：在 ARM64 环境下仍优先编译 C++ SDK 节点，而在 x86_64 环境下自动切换为 MediaPipe 方案。
+   - **状态**: 已修复。现在该包在 x86_64/WSL 环境下已能顺利编译并通过 `final.launch.py` 启动（运行需安装 `mediapipe` 库）。
+
 ## 常用文档速查
 
 - [`docs/wheeltec/ROS2-V3.5(humble)常用指令.txt`](docs/wheeltec/ROS2-V3.5(humble)常用指令.txt) — 移动底盘常用 ROS2 命令速查

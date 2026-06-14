@@ -125,12 +125,23 @@ ament_target_dependencies(${PROJECT_NAME}
   ${dependencies}
   )
 
+find_library(OpenNI2_LIBRARY NAMES OpenNI2)
+find_path(OpenNI2_INCLUDE_DIR NAMES OpenNI.h PATH_SUFFIXES ni2 openni2)
+if(OpenNI2_LIBRARY AND OpenNI2_INCLUDE_DIR)
+  set(OpenNI2_LIBRARIES ${OpenNI2_LIBRARY})
+  set(OpenNI2_INCLUDE_DIRS ${OpenNI2_INCLUDE_DIR})
+  message(STATUS "Found OpenNI2: ${OpenNI2_LIBRARIES}")
+  message(STATUS "OpenNI2 include: ${OpenNI2_INCLUDE_DIRS}")
+else()
+  message(FATAL_ERROR "OpenNI2 not found")
+endif()
+
 target_link_libraries(${PROJECT_NAME}
   ${OpenCV_LIBS}
   Eigen3::Eigen
   ${GLOG_LIBRARIES}
   ${LIBUVC_LIBRARIES}
-  "${ORBBEC_OPENNI2_REDIST}/libOpenNI2_astra.so"
+  ${OpenNI2_LIBRARIES}
   )
 
 add_executable(${PROJECT_NAME}_node
@@ -145,6 +156,7 @@ target_include_directories(${PROJECT_NAME}_node PUBLIC
   ${LIBUVC_INCLUDE_DIRS}
   ${LIBUVC_INCLUDE_DIRS}
   ${GLOG__INCLUDE_DIRS}
+  ${OpenNI2_INCLUDE_DIRS}
   )
 
 ament_target_dependencies(${PROJECT_NAME}_node
@@ -156,7 +168,7 @@ target_link_libraries(${PROJECT_NAME}_node
   Eigen3::Eigen
   ${GLOG_LIBRARIES}
   ${LIBUVC_LIBRARIES}
-  "${ORBBEC_OPENNI2_REDIST}/libOpenNI2_astra.so"
+  ${OpenNI2_LIBRARIES}
   ${PROJECT_NAME}
   )
 
@@ -170,6 +182,7 @@ target_include_directories(list_devices_node PUBLIC
   ${OpenCV_INCLUDED_DIRS}
   ${LIBUVC_INCLUDE_DIRS}
   ${GLOG__INCLUDE_DIRS}
+  ${OpenNI2_INCLUDE_DIRS}
   )
 
 ament_target_dependencies(list_devices_node
@@ -180,7 +193,7 @@ target_link_libraries(list_devices_node
   Eigen3::Eigen
   ${GLOG_LIBRARIES}
   ${LIBUVC_LIBRARIES}
-  "${ORBBEC_OPENNI2_REDIST}/libOpenNI2_astra.so"
+  ${OpenNI2_LIBRARIES}
   ${PROJECT_NAME}
   )
 
@@ -195,6 +208,7 @@ target_include_directories(clean_shm_node PUBLIC
   ${OpenCV_INCLUDED_DIRS}
   ${LIBUVC_INCLUDE_DIRS}
   ${GLOG__INCLUDE_DIRS}
+  ${OpenNI2_INCLUDE_DIRS}
   )
 
 ament_target_dependencies(clean_shm_node
@@ -206,7 +220,7 @@ target_link_libraries(clean_shm_node
   Eigen3::Eigen
   ${GLOG_LIBRARIES}
   ${LIBUVC_LIBRARIES}
-  "${ORBBEC_OPENNI2_REDIST}/libOpenNI2_astra.so"
+  ${OpenNI2_LIBRARIES}
   ${PROJECT_NAME}
   )
 
@@ -216,14 +230,14 @@ install(TARGETS ${PROJECT_NAME}
   RUNTIME DESTINATION bin
   )
 
-install(FILES ${ORBBEC_OPENNI2_REDIST}/libOpenNI2_astra.so
-  DESTINATION lib/
-  )
+# install(FILES ${ORBBEC_OPENNI2_REDIST}/libOpenNI2_astra.so
+#   DESTINATION lib/
+#   )
 
 
-install(DIRECTORY ${ORBBEC_OPENNI2_REDIST}/OpenNI2
-  DESTINATION lib/
-  )
+# install(DIRECTORY ${ORBBEC_OPENNI2_REDIST}/OpenNI2
+#   DESTINATION lib/
+#   )
 
 install(TARGETS list_devices_node
   clean_shm_node
