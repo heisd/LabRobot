@@ -27,6 +27,12 @@ public:
 private:
 	int confidence;
 	float time_per_order;
+	std::string audio_device;
+	std::string appid;
+	std::string source_path;
+	std::string denoise_sound_path;
+	char *package_path;
+	char *APPID;
 
 	rclcpp::Time start_time,last_time;
 	rclcpp::Publisher<std_msgs::msg::String>::SharedPtr voice_words_pub;

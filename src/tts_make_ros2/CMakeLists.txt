@@ -9,9 +9,13 @@ include_directories(
   include
 )
 
-link_directories(
-  libs/x64
-)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+  link_directories(libs/x64)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+  link_directories(libs/arm64)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "i386" OR CMAKE_SYSTEM_PROCESSOR MATCHES "i686")
+  link_directories(libs/x86)
+endif()
 
 install(DIRECTORY launch config 
   DESTINATION share/${PROJECT_NAME})

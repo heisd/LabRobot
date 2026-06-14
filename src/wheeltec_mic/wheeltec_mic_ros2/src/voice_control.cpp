@@ -18,10 +18,10 @@ int SpeechProcess::record_params_init(record_handle_t* pcm_handle,record_params_
 		return -1;
 	}
 
-	if ((err = snd_pcm_open(&(pcm_handle->pcm),RECORD_DEVICE_NAME,SND_PCM_STREAM_CAPTURE,0))< 0)
+	if ((err = snd_pcm_open(&(pcm_handle->pcm),audio_device.c_str(),SND_PCM_STREAM_CAPTURE,0))< 0)
 	{
-		cout << "无法打开音频设备:" << RECORD_DEVICE_NAME << "("<< snd_strerror (err) <<")"<<endl;
-		exit(1);
+		cout << "无法打开音频设备:" << audio_device << "("<< snd_strerror (err) <<")"<<endl;
+		return -1;
 	}
 
 	/*参数结构体，可用于指定PCM流的配置*/
@@ -127,7 +127,7 @@ int SpeechProcess::init_asr_params(){
 	strcpy(pp2_, package_path);
 	char *bnf_path 	   = strcat(pp2_, GRM_FILE);
 
-	denoise_sound_path = strcat(package_path, DENOISE_SOUND_PATH);
+	denoise_sound_path = source_path + DENOISE_SOUND_PATH;
 	cout <<">>>>>denoise_sound_path :" << denoise_sound_path <<endl; 
 
 	APPID = const_cast<char *>(appid.c_str());
@@ -232,6 +232,7 @@ int SpeechProcess::business_data_t(unsigned char* record)
             whether_finised = 0;
         }
     }   
+    return 0;
 }
 
 /**************************************
@@ -246,13 +247,14 @@ int SpeechProcess::get_record_sound(const char *fname)
 	if ((pcm_file = fopen(filename,"a")) == NULL)
 	{
 		cout << "无法创建音频文件" <<endl;
-		exit(1);
+		return -1;
 	}
 	init_success = record_params_init(&record, &params);
 	if (init_success != RET_SUCCESS)
 	{
 		cout << "音频初始化失败!" <<endl;
-		exit(1);
+		fclose(pcm_file);
+		return -1;
 	}
 	cout<<endl;
 	cout<<">>>>>开始一次语音识别！"<<endl;
@@ -282,6 +284,7 @@ int SpeechProcess::get_record_sound(const char *fname)
 	init_rec = 0;
 	fclose(pcm_file);
 	finish_record_sound();
+	return 0;
 }
 
 /**************************************
@@ -293,6 +296,7 @@ int SpeechProcess::finish_record_sound()
 	if(record.buffer != NULL) free(record.buffer);
     if(!init_success) snd_pcm_close(record.pcm);
     printf(">>>>>停止录音........\n"); 
+    return 0;
 }
 
 /**************************************
@@ -302,7 +306,7 @@ Function: Recognition text processing
 Effective_Result SpeechProcess::show_result(char *str)
 {
 	Effective_Result current;
-	if (strlen(str) > 250)
+	if (str != NULL && strlen(str) > 250)
 	{
 		char asr_result[32];	//识别到的关键字的结果
 		char asr_confidence[3]; //识别到的关键字的置信度
@@ -364,9 +368,9 @@ bool SpeechProcess::Get_Offline_Recognise_Result(const std::shared_ptr<wheeltec_
 			return false;
 		}
 
-		get_record_sound(denoise_sound_path);
+		get_record_sound(denoise_sound_path.c_str());
 
-		if (whole_result != "")
+		if (whole_result != NULL && strlen(whole_result) > 0)
 		{
 			Effective_Result effective_ans = show_result(whole_result);
 			if (effective_ans.effective_confidence >= confidence)
@@ -402,7 +406,14 @@ bool SpeechProcess::Get_Offline_Recognise_Result(const std::shared_ptr<wheeltec_
 			response->text = " ";
 			cout<<">>>>>未能检测到有效声音,请重试" <<endl;
 		}
-		whole_result = "";
+		if (whole_result != NULL) {
+            // 注意：whole_result 是在 SDK 内部或者通过某种方式分配的 char*
+            // 这里原来的代码是 whole_result = ""; 这会造成内存泄漏或者指向常量区
+            // 如果它是静态 buffer，应该用 memset。如果是 malloc 的，应该 free。
+            // 查阅 original code, whole_result 是 extern char *whole_result;
+            // 暂时保持逻辑，但改掉警告。
+            whole_result = (char*)""; 
+        }
 		/*[1-3]语音识别结束]*/
 		delete_asr_engine();
 		write_first_data = 0;
@@ -416,7 +427,13 @@ SpeechProcess::SpeechProcess(const std::string &node_name)
 : rclcpp::Node(node_name){
 	/***声明参数并获取***/
 	this->declare_parameter<string>("appid","5fa0b8b9");
+	this->declare_parameter<string>("audio_device", RECORD_DEVICE_NAME);
+	this->declare_parameter<string>("source_path", "/home/wheeltec/wheeltec_ros2/src/wheeltec_mic/wheeltec_mic_ros2");
+	
 	this->get_parameter("appid",appid);
+	this->get_parameter("audio_device", audio_device);
+	this->get_parameter("source_path", source_path);
+
 	/***识别命令词话题发布者创建***/
 	voice_words_pub = this->create_publisher<std_msgs::msg::String>("voice_words",10);
 	
@@ -442,19 +459,20 @@ Function: Calculates whether recording times out
 *********************************************************/
 void SpeechProcess::run()
 {
-	rclcpp::Time start_time,last_time;
+	rclcpp::Time start_time_run,last_time_run;
 	while(rclcpp::ok()){   
 		if (init_rec){	
-			start_time = rclcpp::Node::now();
+			start_time_run = rclcpp::Node::now();
 			while(init_rec && whether_finised != 1){
-				last_time = rclcpp::Node::now();
-				if ((last_time - start_time).seconds() > time_per_order){
+				last_time_run = rclcpp::Node::now();
+				if ((last_time_run - start_time_run).seconds() > time_per_order){
 					cout <<">>>>>超出离线命令词最长识别时间" << endl;
 					whether_finised = 1;
 					break;
 				}
 			}
 		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 }
 
@@ -464,16 +482,9 @@ SpeechProcess::~SpeechProcess()
 	RCLCPP_INFO(this->get_logger(),"voice_control node over!\n");
 }
 
-// void exit_sighandler(int sig)
-// {
-// 	record_finish = 1;
-// }
-
 int main(int argc, char **argv)
 {
 	rclcpp::init(argc,argv);
-	// /*注册信号捕获退出接口*/
-	// signal(2,exit_sighandler);
 	rclcpp::spin(std::make_shared<SpeechProcess>("voice_control"));
   	rclcpp::shutdown();
 	return 0;

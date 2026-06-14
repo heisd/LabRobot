@@ -91,6 +91,7 @@ public:
     bool LAB = false;
     int center_x;
     KCFTracker tracker;
+    bool has_display = true;
     
     void PIDcallback();
 

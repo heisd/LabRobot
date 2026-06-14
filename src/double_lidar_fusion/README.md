@@ -29,6 +29,8 @@ double_lidar_fusion/
 
 ### `lidar_fusion`(可执行文件:`lidar_fusion`)
 
+**重要提示**: 经测试发现，**雷达 1 (Lidar 1) 目前无法正常使用**。融合节点会自动识别此状态并降级为仅使用雷达 2 的数据。
+
 订阅(两路**各自独立订阅**并缓存最新帧,QoS 为 `SensorDataQoS`/best-effort,
 兼容 reliable 与 best-effort 的雷达驱动):
 - `scan1_topic`(默认 `/scan1`)— 雷达 1 `sensor_msgs/LaserScan`
