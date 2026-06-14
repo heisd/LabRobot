@@ -15,10 +15,11 @@
    * web_video_server 只由 dashboard.launch.py 启动一个（:8081），
      不要再手动 `ros2 run web_video_server web_video_server`，否则会出现两个
      同名 /web_video_server 节点；
-   * 机械臂驱动默认不启（start_arm 默认 false）——grab_demo 的各抓取 launch
-     （color_grab / yolo_grab / …）自带 lebai 驱动 + 机械臂相机，叠加会重复。
-     先跑了本 bringup 再启抓取 launch 时，第二份相机驱动会报“设备占用”，
-     属预期，可忽略或用 start_arm_camera:=false 先关掉本侧。
+   * 机械臂驱动默认随 bringup 启动（start_arm 默认 true，含 MoveIt），这样面板
+     一开机就能收到 /robot_status 判机械臂在线。但 grab_demo 的各抓取 launch
+     （color_grab / yolo_grab / …）自带同一套 lebai 驱动 + 机械臂相机，叠加会重复：
+     要单独跑抓取 launch 时，先用 start_arm:=false（并按需 start_arm_camera:=false）
+     关掉本侧驱动/相机，否则会出现重名驱动节点、相机“设备占用”等冲突。
 
 分阶段启动（与 vla_bringup 一致的错峰思路）：
   t=0s 底盘 turn_on_wheeltec_robot（串口驱动 + EKF→odom_combined TF + URDF）
@@ -108,9 +109,10 @@ def generate_launch_description():
                               description='麦克风阵列 + 离线识别 + TTS'),
         DeclareLaunchArgument('start_dashboard', default_value='true',
                               description='Web 仪表盘(rosbridge+http+web_video_server+watchdog)'),
-        DeclareLaunchArgument('start_arm', default_value='false',
-                              description='lebai LM3 机械臂驱动(MoveIt)。grab_demo 抓取 launch '
-                                          '自带驱动，二者别同时开'),
+        DeclareLaunchArgument('start_arm', default_value='true',
+                              description='lebai LM3 机械臂驱动(含 MoveIt)，发布 /robot_status 等，'
+                                          '面板据此判机械臂在线。grab_demo 抓取 launch 自带同一套驱动，'
+                                          '要单独跑抓取 launch 前先 start_arm:=false 避免重复'),
         DeclareLaunchArgument('start_llm', default_value='true',
                               description='AI 对话后端 ollama_ros_chat(/chat_service 服务 + '
                                           'topic_server 流式)。需本机 ollama 在跑，'
