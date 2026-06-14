@@ -23,9 +23,11 @@
 
 分阶段启动（与 vla_bringup 一致的错峰思路）：
   t=0s 底盘 turn_on_wheeltec_robot（串口驱动 + EKF→odom_combined TF + URDF）
-  t=2s 雷达（双雷达 + 融合）、车上相机 /camera/*、机械臂相机 /camera_arm/*、
+  t=2s 雷达（双雷达 + 融合）、车上相机 /camera/*、
        超声波转换（底盘 Distance -> /ultrasonic/A..F + /ultrasonic/points）
   t=4s Web 仪表盘（rosbridge :9090 + http :8000 + web_video_server :8081 + watchdog）
+  t=5s 机械臂相机 /camera_arm/*（错峰: 比车上相机晚几秒, 等其先占好 USB 设备/UVC
+       接口, 避免两台同款 Orbbec 同在 USB2 总线时同时打开而 Resource busy）
   t=6s 语音（麦克风阵列 + 离线识别 + TTS）、AI 对话(ollama_ros_chat)、可选 lebai 机械臂
 
 导航/VLA 仍用 vla_navigation/vla_bringup.launch.py（其 start_base 等开关可与
@@ -193,7 +195,10 @@ def generate_launch_description():
     for action in base:
         ld.add_action(action)
     ld.add_action(TimerAction(period=2.0,
-                              actions=lidar + car_camera + arm_camera + ultrasonic))
+                              actions=lidar + car_camera + ultrasonic))
     ld.add_action(TimerAction(period=4.0, actions=dashboard))
+    # 机械臂相机错峰: 比车上相机(t=2s)晚几秒启动, 等它先占好 USB 设备/UVC 接口,
+    # 避免两台同款 Orbbec(同在 USB2 总线)同时打开时 Resource busy / 抢 UVC interface。
+    ld.add_action(TimerAction(period=5.0, actions=arm_camera))
     ld.add_action(TimerAction(period=6.0, actions=voice + arm + llm))
     return ld
