@@ -44,6 +44,15 @@ def generate_launch_description() -> LaunchDescription:
             output='screen',
             parameters=[{'port': ws_port}],
         ),
+        # rosapi: 提供 /rosapi/* 服务(节点/话题/参数枚举)。rosbridge_websocket 本身
+        # 不带这些服务, 缺了面板的 getNodes 会报 "Service /rosapi/nodes does not exist"
+        # (系统总览/3D 视图拿不到节点列表)。与 rosbridge 同属 rosbridge_suite。
+        Node(
+            package='rosapi',
+            executable='rosapi_node',
+            name='rosapi',
+            output='screen',
+        ),
         Node(
             package='wheeltec_dashboard',
             executable='web_server',
