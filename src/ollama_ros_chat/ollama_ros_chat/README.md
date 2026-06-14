@@ -127,25 +127,34 @@ bool is_done
 | 默认 system prompt | 系统提示词 | `"You are a helpful assistant"` |
 | `use_model` | 使用的模型 | 启动时通过 `/api/tags` 拉取后，自动选用列表第一个 |
 
+## 安装 Ollama
+
+### 1. 自动安装 (推荐)
+对于大多数 Linux 系统，可以使用以下命令一键安装：
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+### 2. 手动安装或查看详细文档
+请访问 [Ollama 官网](https://ollama.com/) 或其 [GitHub 仓库](https://github.com/ollama/ollama) 获取针对不同操作系统（Linux, macOS, Windows）的安装包和详细说明。
+
+### 3. 本机状态
+**重要提示**：本机器人（ARM 核心版）已经**预装并配置好了 Ollama 环境**。
+- Ollama 服务默认已作为系统服务运行，并监听 `http://localhost:11434`。
+- 本机已预先拉取了适合本硬件性能的轻量级模型（如 `qwen2:1.5b`）。
+- **您可以直接进入下方的“编译与运行”阶段，无需重复安装 Ollama。**
+
 ## 编译与运行
-
-在 ROS2 (推荐 Humble) 工作空间根目录下：
-
+...
 ```bash
-cd ~/wheeltec_S300
-colcon build --packages-select ollama_ros_msgs ollama_ros_chat
-source install/setup.bash
-```
+# 1. 确认 Ollama 已在后台运行 (本机默认已启动)
+ollama list  # 查看已安装模型
 
-先确保本机已安装并启动 Ollama，且至少拉取了一个模型，例如：
+# 2. 如果需要拉取新模型 (可选)
+ollama pull qwen2:1.5b
 
-```bash
-# 安装 Ollama 后
-ollama pull qwen2:1.5b   # 或任意其他模型
-ollama serve             # 通常已经作为后台服务启动
-```
-
-启动服务端：
+# 3. 启动服务端
+...
 
 ```bash
 ros2 launch ollama_ros_chat ollama_ros_chat.launch.py

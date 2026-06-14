@@ -2,6 +2,48 @@
 
 A ROS2 driver for Orbbec 3D cameras
 
+## 常见问题与修复 (Troubleshooting & Fixes)
+
+### 1. UVC 摄像头找不到 (Astra Pro / Gemini Pro)
+如果你看到 `uvc_find_device: No such device (-4)` 错误：
+- **原因**：部分 Astra Pro 或 Gemini Pro 的彩色端 Product ID 是 `0x0511`，而驱动默认是 `0x0501`。
+- **修复**：修改 `astra_camera/launch/astra_pro.launch.xml` 里的 `uvc_product_id` 为 `0x0511`：
+  ```xml
+  <arg name="uvc_product_id" default="0x0511"/>
+  ```
+- **验证**：运行 `lsusb` 确认是否有 `2bc5:0511`。
+
+### 2. 权限与资源占用 (Resource Busy)
+如果显示 `Resource busy` 或出现 `Segmentation fault` (exit code -11)：
+- **解决权限**：
+  ```bash
+  cd src/ros2_astra_camera/astra_camera/scripts
+  sudo ./install.sh
+  sudo udevadm control --reload-rules && sudo udevadm trigger
+  ```
+- **清理进程**：
+  ```bash
+  killall -9 astra_camera_node
+  ```
+
+## 如何查看数据 (How to View)
+
+### 1. 命令行查看话题
+```bash
+ros2 topic list | grep camera
+```
+
+### 2. RViz2 可视化
+启动 `rviz2` 后：
+- 添加 **Image** 插件，话题选 `/camera/color/image_raw`。
+- 添加 **PointCloud2** 插件，话题选 `/camera/depth/points`。
+- **重要**：在 RViz 的插件设置中，将 **Reliability Policy** 改为 **Best Effort**。
+
+### 3. 简单图像窗口
+```bash
+ros2 run image_view image_view --ros-args -r image:=/camera/color/image_raw
+```
+
 ## Install dependencies
 
 ### ROS2

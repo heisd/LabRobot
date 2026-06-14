@@ -47,7 +47,7 @@ def generate_launch_description():
 
     video_device = LaunchConfiguration('video_device')
     video_device_arg = DeclareLaunchArgument(
-         'video_device', default_value='/dev/Astra_Gemini',
+         'video_device', default_value='/dev/video0',
          description='video device serial name.')
 
     parser = argparse.ArgumentParser(description='usb_cam demo')

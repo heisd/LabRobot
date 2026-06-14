@@ -5,7 +5,6 @@
 ## 概述
 
 基于 Orbbec OpenNI2 / OB SDK 实现的 ROS2 多设备深度相机驱动,支持彩色、深度、IR、点云、IMU 等数据流,可同时驱动多台同型号或不同型号相机。
-
 ## 目录结构
 
 ```
@@ -14,24 +13,19 @@ astra_camera/
 ├── package.xml
 ├── include/                       # 头文件
 ├── src/
-│   ├── main.cpp                   # 主入口
-│   ├── ob_camera_node.cpp         # 单相机节点
-│   ├── ob_camera_node_factory.cpp # 多相机工厂
-│   ├── ob_camera_info.cpp         # 内/外参处理
-│   ├── ob_context.cpp             # SDK 上下文
-│   ├── ob_timer_filter.cpp        # 时间滤波
-│   ├── list_devices_node.cpp      # 列出当前所有连接设备
-│   ├── clean_up_shm_node.cpp      # 清理共享内存
-│   ├── dynamic_params.cpp         # 动态参数
-│   ├── ros_param_backend.cpp      # ROS 参数后端
-│   ├── ros_service.cpp            # service 实现
-│   ├── uvc_camera_driver.cpp      # UVC 相机(彩色)驱动
-│   ├── utils.cpp
-│   └── point_cloud_proc/          # 点云后处理
+│   ├── ...
 ├── config/                        # 标定/参数文件目录(空,运行时填充)
 ├── rviz/                          # RViz 预设
 ├── scripts/                       # 辅助脚本
+├── OutputPicture/                 # 相机拍摄的图像保存目录
 └── launch/                        # 每种型号一个 launch
+```
+
+## 数据保存
+
+相机捕获的静态图像或特定输出画面会保存在以下目录：
+`src/ros2_astra_camera-master/astra_camera/OutputPicture/`
+
     ├── astra.launch.xml
     ├── astra_pro.launch.xml / astro_pro_plus.launch.xml
     ├── dabai_dc1.launch.xml / dabai_dcw.launch.xml / dabai_dw.launch.xml
