@@ -2104,12 +2104,41 @@
     }
   }
 
+  // /stream 用 multipart/x-mixed-replace 的 MJPEG, 个别浏览器/网络/web_video_server
+  // 版本下渲染不出来(返回 200 但几乎立即关闭, <img> 收不到完整帧)。/snapshot 单帧
+  // JPEG 兼容性最好, 这里在流加载失败时自动回退到"轮询 /snapshot"模拟视频,
+  // 用 onload 链式调度避免请求堆积。
+  function buildSnapshotUrl(topic) {
+    if (!topic) return '';
+    const q = Math.max(1, Math.min(100, parseInt(camQuality.value, 10) || 60));
+    const params = new URLSearchParams({ topic, quality: String(q) });
+    params.set('_', String(Date.now()));
+    return `${videoBase()}/snapshot?${params.toString()}`;
+  }
+  const _snapGen = {};   // key -> 代号, 自增即可取消该 key 正在跑的轮询
+  function stopSnapshotPoll(key) { _snapGen[key] = (_snapGen[key] || 0) + 1; }
+  function startSnapshotPoll(key, img, topic, errEl) {
+    const gen = (_snapGen[key] = (_snapGen[key] || 0) + 1);
+    const tick = () => { if (_snapGen[key] === gen) img.src = buildSnapshotUrl(topic); };
+    img.onload = () => {
+      if (errEl) errEl.hidden = true;
+      if (_snapGen[key] === gen) setTimeout(tick, 120);   // ~8fps
+    };
+    img.onerror = () => {
+      if (_snapGen[key] !== gen) return;
+      if (errEl) { errEl.hidden = false; errEl.textContent = '无法加载流(快照亦失败)，检查 web_video_server 与相机话题'; }
+      setTimeout(tick, 1000);   // 失败放慢重试
+    };
+    tick();
+  }
+
   function applyCam(slot) {
     const img = document.querySelector(`.cam-img[data-slot="${slot}"]`);
     const topicInput = document.querySelector(`.cam-topic[data-slot="${slot}"]`);
     const enable = document.querySelector(`.cam-enable[data-slot="${slot}"]`);
     const errEl = document.querySelector(`.cam-err[data-slot="${slot}"]`);
     if (!img || !topicInput || !enable) return;
+    stopSnapshotPoll('cam:' + slot);   // 取消可能在跑的快照轮询
     errEl.hidden = true;
     if (!enable.checked) {
       showPlaceholder(slot, '已禁用');
@@ -2121,8 +2150,8 @@
       return;
     }
     img.onerror = () => {
-      // Swap to landscape placeholder so the tile stays presentable.
-      showPlaceholder(slot, '无法加载流，检查 web_video_server 与相机话题');
+      // MJPEG 流拉不动 -> 回退到轮询 /snapshot(单帧, 兼容性最好)
+      startSnapshotPoll('cam:' + slot, img, topic, errEl);
     };
     img.onload = () => { errEl.hidden = true; };
     img.src = buildStreamUrl(topic);
@@ -2152,6 +2181,8 @@
   // buildStreamUrl(), but each function page points its own <img> at a topic.
   function applyFnStream(img) {
     if (!img) return;
+    const key = 'fn:' + (img.id || img.dataset.topic || '');
+    stopSnapshotPoll(key);
     const topic = (img.dataset.topic || '').trim();
     const frame = img.closest('.cam-frame');
     const errEl = frame ? frame.querySelector('.cam-err') : null;
@@ -2162,9 +2193,8 @@
       return;
     }
     img.onerror = () => {
-      img.onerror = null;
-      img.src = CAM_PLACEHOLDER;
-      if (errEl) { errEl.hidden = false; errEl.textContent = '无法加载流，检查 web_video_server 与话题'; }
+      // MJPEG 流拉不动 -> 回退到轮询 /snapshot
+      startSnapshotPoll(key, img, topic, errEl);
     };
     img.onload = () => { if (errEl) errEl.hidden = true; };
     img.src = buildStreamUrl(topic);
