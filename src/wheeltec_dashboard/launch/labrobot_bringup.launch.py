@@ -15,15 +15,19 @@
    * web_video_server 只由 dashboard.launch.py 启动一个（:8081），
      不要再手动 `ros2 run web_video_server web_video_server`，否则会出现两个
      同名 /web_video_server 节点；
-   * 机械臂驱动默认不启（start_arm 默认 false）——grab_demo 的各抓取 launch
-     （color_grab / yolo_grab / …）自带 lebai 驱动 + 机械臂相机，叠加会重复。
-     先跑了本 bringup 再启抓取 launch 时，第二份相机驱动会报“设备占用”，
-     属预期，可忽略或用 start_arm_camera:=false 先关掉本侧。
+   * 机械臂驱动默认随 bringup 启动（start_arm 默认 true，含 MoveIt），这样面板
+     一开机就能收到 /robot_status 判机械臂在线。但 grab_demo 的各抓取 launch
+     （color_grab / yolo_grab / …）自带同一套 lebai 驱动 + 机械臂相机，叠加会重复：
+     要单独跑抓取 launch 时，先用 start_arm:=false（并按需 start_arm_camera:=false）
+     关掉本侧驱动/相机，否则会出现重名驱动节点、相机“设备占用”等冲突。
 
 分阶段启动（与 vla_bringup 一致的错峰思路）：
   t=0s 底盘 turn_on_wheeltec_robot（串口驱动 + EKF→odom_combined TF + URDF）
-  t=2s 雷达（双雷达 + 融合）、车上相机 /camera/*、机械臂相机 /camera_arm/*
+  t=2s 雷达（双雷达 + 融合）、车上相机 /camera/*、
+       超声波转换（底盘 Distance -> /ultrasonic/A..F + /ultrasonic/points）
   t=4s Web 仪表盘（rosbridge :9090 + http :8000 + web_video_server :8081 + watchdog）
+  t=5s 机械臂相机 /camera_arm/*（错峰: 比车上相机晚几秒, 等其先占好 USB 设备/UVC
+       接口, 避免两台同款 Orbbec 同在 USB2 总线时同时打开而 Resource busy）
   t=6s 语音（麦克风阵列 + 离线识别 + TTS）、AI 对话(ollama_ros_chat)、可选 lebai 机械臂
 
 导航/VLA 仍用 vla_navigation/vla_bringup.launch.py（其 start_base 等开关可与
@@ -90,6 +94,7 @@ def generate_launch_description():
     start_lidar = LaunchConfiguration('start_lidar')
     start_camera = LaunchConfiguration('start_camera')
     start_arm_camera = LaunchConfiguration('start_arm_camera')
+    start_ultrasonic = LaunchConfiguration('start_ultrasonic')
     start_voice = LaunchConfiguration('start_voice')
     start_dashboard = LaunchConfiguration('start_dashboard')
     start_arm = LaunchConfiguration('start_arm')
@@ -104,13 +109,18 @@ def generate_launch_description():
         DeclareLaunchArgument('start_arm_camera', default_value='true',
                               description='机械臂相机 Gemini(/camera_arm/color/image_raw)；'
                                           '抓取 launch 自带相机，叠加会报设备占用'),
+        DeclareLaunchArgument('start_ultrasonic', default_value='true',
+                              description='超声波距离转换 supersonic_converter（把底盘 Distance '
+                                          '拆成 /ultrasonic/A..F + /ultrasonic/points，面板超声波卡据此'
+                                          '判活）；机型经 ROBOT_TYPE 环境变量，默认 s300_mini'),
         DeclareLaunchArgument('start_voice', default_value='true',
                               description='麦克风阵列 + 离线识别 + TTS'),
         DeclareLaunchArgument('start_dashboard', default_value='true',
                               description='Web 仪表盘(rosbridge+http+web_video_server+watchdog)'),
-        DeclareLaunchArgument('start_arm', default_value='false',
-                              description='lebai LM3 机械臂驱动(MoveIt)。grab_demo 抓取 launch '
-                                          '自带驱动，二者别同时开'),
+        DeclareLaunchArgument('start_arm', default_value='true',
+                              description='lebai LM3 机械臂驱动(含 MoveIt)，发布 /robot_status 等，'
+                                          '面板据此判机械臂在线。grab_demo 抓取 launch 自带同一套驱动，'
+                                          '要单独跑抓取 launch 前先 start_arm:=false 避免重复'),
         DeclareLaunchArgument('start_llm', default_value='true',
                               description='AI 对话后端 ollama_ros_chat(/chat_service 服务 + '
                                           'topic_server 流式)。需本机 ollama 在跑，'
@@ -140,6 +150,10 @@ def generate_launch_description():
     arm_camera = _opt_include(
         '机械臂相机', 'astra_camera', 'launch/gemini_arm.launch.xml',
         condition=IfCondition(start_arm_camera))
+    # 超声波转换：依赖底盘发布的 Distance(robot_interfaces/Supersonic)，故与传感器同批起
+    ultrasonic = _opt_include(
+        '超声波转换', 'wheeltec_ultrasonic', 'launch/supersonic+converter.launch.py',
+        condition=IfCondition(start_ultrasonic))
 
     # ---- t=4s 仪表盘（rosbridge + 静态页 + 唯一的 web_video_server + watchdog）
     dashboard = _opt_include(
@@ -180,7 +194,11 @@ def generate_launch_description():
         ld.add_action(action)
     for action in base:
         ld.add_action(action)
-    ld.add_action(TimerAction(period=2.0, actions=lidar + car_camera + arm_camera))
+    ld.add_action(TimerAction(period=2.0,
+                              actions=lidar + car_camera + ultrasonic))
     ld.add_action(TimerAction(period=4.0, actions=dashboard))
+    # 机械臂相机错峰: 比车上相机(t=2s)晚几秒启动, 等它先占好 USB 设备/UVC 接口,
+    # 避免两台同款 Orbbec(同在 USB2 总线)同时打开时 Resource busy / 抢 UVC interface。
+    ld.add_action(TimerAction(period=5.0, actions=arm_camera))
     ld.add_action(TimerAction(period=6.0, actions=voice + arm + llm))
     return ld

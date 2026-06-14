@@ -378,8 +378,16 @@ bool WebVideoServer::handle_list_streams(const async_web_server_cpp::HttpRequest
 int main(int argc, char **argv)
 {
   rclcpp::init(argc, argv);
-  auto nh = std::make_shared<rclcpp::Node>("web_video_server");
-  auto private_nh = std::make_shared<rclcpp::Node>("_web_video_server");
+  // 让 launch 下发的参数(port/address 等)真正生效。
+  // 原代码把参数读取放在单独的 "_web_video_server" 节点上, 而 launch 的参数是按本
+  // 可执行的节点名 "web_video_server" 下发的, 落不到 "_web_video_server", 于是
+  // get_parameter("port") 永远失败、退回默认 8080(前端却按 8081 取流 -> 连接被拒)。
+  // 改为: 参数与业务共用同一个 "web_video_server" 节点, 并开启
+  // automatically_declare_parameters_from_overrides, 使 get_parameter 能取到 8081。
+  rclcpp::NodeOptions options;
+  options.automatically_declare_parameters_from_overrides(true);
+  auto nh = std::make_shared<rclcpp::Node>("web_video_server", options);
+  auto private_nh = nh;
 
   web_video_server::WebVideoServer server(nh, private_nh);
   server.setup_cleanup_inactive_streams();
