@@ -28,7 +28,7 @@ LabRobot/
 
 ```bash
 # 克隆并拉取子模块（yolo_ros、serial_ros2）
-git clone --recurse-submodules <repo_url>
+git clone --recurse-submodules --branch origin_code https://github.com/heisd/LabRobot.git
 cd LabRobot
 # 或已克隆的仓库：
 git submodule update --init --recursive
