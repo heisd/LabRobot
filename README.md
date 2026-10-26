@@ -37,7 +37,8 @@ git submodule update --init --recursive
 rosdep install --from-paths src --ignore-src -r -y
 
 # 编译整个工作空间
-colcon build --packages-skip-build-finished --continue-on-error
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install
 source install/setup.bash
 ```
 
@@ -60,7 +61,69 @@ source install/setup.bash
 
 ## 常用文档速查
 
-- [`docs/wheeltec/ROS2-V3.5(humble)常用指令.txt`](docs/wheeltec/ROS2-V3.5(humble)常用指令.txt) — 移动底盘常用 ROS2 命令速查
+- [`docs/wheeltec/ROS2-V3.5(humble)常用指令.txt`](docs/wheeltec/ROS2-V3.5%28humble%29常用指令.txt) — 移动底盘常用 ROS2 命令速查
 - [`docs/lebai/DEBUG_README.md`](docs/lebai/DEBUG_README.md) — VSCode 下 ROS2 节点（C++）gdb 调试指南
 - [`docs/lebai/DEBUG_ABOUT_OBJECT_GRAB.md`](docs/lebai/DEBUG_ABOUT_OBJECT_GRAB.md) — 颜色识别抓取相关问题（TF 树/可视化）调试记录
 - [`docs/lebai/更新记录.txt`](docs/lebai/更新记录.txt) — 模型/功能更新记录
+
+## 环境与系统分层
+
+主工作空间以 ROS 2 Humble 为基础，底盘、机械臂、视觉与交互包共用一份 `src/`，但各子系统的硬件和外部依赖仍需分别配置。
+
+| 层次 | 主要内容 | 首要验证 |
+| --- | --- | --- |
+| 底盘 | 串口驱动、轮速、里程计与传感器 | 通信、TF、里程计 |
+| 导航 | SLAM、定位、Nav2 与巡航 | 地图、坐标系、目标可达性 |
+| 机械臂 | SDK、状态、MoveIt 与轨迹 | 连接、关节与控制器 |
+| 视觉抓取 | 相机、识别、TF 与抓取服务 | 相机内参、手眼标定、目标坐标 |
+| 交互 | Web、视频、语音等 | 后端接口与依赖服务 |
+
+移动机械臂的完整动作依赖多层协同；仓库包含这些功能包，不代表首次克隆后无需标定即可执行所有流程。
+
+## 首次构建与子模块检查
+
+```bash
+git submodule status
+colcon list
+```
+
+克隆时若没有带 `--recurse-submodules`，先在仓库根目录执行前文的子模块初始化。YOLO 和串口库的来源由 [.gitmodules](./.gitmodules) 指定，不能用一个 Python 包安装步骤替代源码子模块。
+
+首次使用建议只构建准备验证的功能及依赖，例如：
+
+```bash
+colcon build --symlink-install --packages-up-to grab_demo
+source install/setup.bash
+```
+
+该命令仍需该包依赖已安装。TensorRT、相机 SDK、机械臂 SDK、模型权重和设备参数应按子系统指南补齐。构建失败时先看首个失败包，不将后续依赖中止都视为独立故障。
+
+## 建议验证路线
+
+1. 按 [底盘指南](./docs/wheeltec.md) 确认车型、设备与底盘通信。
+2. 按 [机械臂指南](./docs/lebai.md) 确认驱动、关节状态与模型。
+3. 选择实机或 [机械臂仿真](./src/lebai_gazebo/GAZEBO_GUIDE.md)，分别核对控制器。
+4. 检查图像、深度、相机内参和 TF 后，再运行识别。
+5. 确认目标位姿后连接抓取服务，最后验证移动与抓取协同。
+
+不要同时让多个未协调的控制节点向同一个执行器下发命令。底盘已有速度仲裁相关设计，详细优先级见底盘文档。
+
+## 接口与排障入口
+
+```bash
+ros2 node list
+ros2 topic list -t
+ros2 service list -t
+ros2 action list -t
+```
+
+| 现象 | 建议排查 |
+| --- | --- |
+| 找不到 serial / YOLO 消息包 | 子模块状态、依赖与重新构建 |
+| 相机画面正常但抓取偏移 | 深度、内参、手眼标定与 TF |
+| MoveIt 可规划但实体不执行 | SDK 连接、控制器名称和 Action 服务 |
+| 底盘移动指令没有效果 | 当前控制来源、仲裁话题与下位机通信 |
+| 仿真与实机行为不一致 | 使用的 launch、硬件接口与控制器配置 |
+| 大包编译资源不足 | 降低并行度、缩小包范围，再参考虚拟内存笔记 |
+
+[docs/](./docs) 和各包 README 是详细参数的主要来源；根目录仅汇总整体关系与首次操作路线。本次文档整理没有替代实际硬件、标定或全工作空间运行验证。
